@@ -321,6 +321,9 @@ namespace IronPython.Compiler.Syntax {
             if (current == '\\' && IsNewLine(Peek(1))) {
                 AdvanceChar();
                 ConsumeNewLine();
+                if (_index >= _source.Length) {
+                    NeedsMoreInput = true;
+                }
                 return;
             }
             if (TryLexInterpolatedString()) return;
@@ -432,6 +435,10 @@ namespace IronPython.Compiler.Syntax {
         }
 
         private void FinishInput() {
+            if (_brackets.Count > 0
+                || (_indentation.Count > 1 && !EndsWithBlankLine())) {
+                NeedsMoreInput = true;
+            }
             if (!_reportedFinalNewLine
                 && _lineHasContent) {
                 _reportedFinalNewLine = true;
@@ -461,6 +468,18 @@ namespace IronPython.Compiler.Syntax {
             }
             _tokens.Add(EndMarker(_index, _line, _column));
             _ended = true;
+        }
+
+        private bool EndsWithBlankLine() {
+            int index = _source.Length - 1;
+            if (index < 0 || !IsNewLine(_source[index])) return false;
+            index--;
+            while (index >= 0 && _source[index] == '\r') index--;
+            while (index >= 0 && (_source[index] == ' ' || _source[index] == '\t'
+                || _source[index] == '\f')) {
+                index--;
+            }
+            return index >= 0 && IsNewLine(_source[index]);
         }
 
         private void LexIdentifier() {

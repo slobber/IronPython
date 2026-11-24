@@ -34,6 +34,7 @@ namespace IronPython.Compiler {
 
         protected static CodeContext/*!*/ CreateTopLevelCodeContext(PythonDictionary/*!*/ dict, LanguageContext/*!*/ context) {
             ModuleContext modContext = new ModuleContext(dict, (PythonContext)context);
+            modContext.InitializeBuiltins(moduleBuiltins: false);
             return modContext.GlobalContext;
         }
 

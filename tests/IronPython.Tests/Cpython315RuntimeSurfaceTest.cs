@@ -1,9 +1,14 @@
 using IronPython.Compiler;
+using IronPython.Compiler.Ast;
 using IronPython.Hosting;
 using IronPython.Runtime;
+using Microsoft.Scripting;
 using Microsoft.Scripting.Hosting;
+using Microsoft.Scripting.Hosting.Providers;
+using Microsoft.Scripting.Runtime;
 using NUnit.Framework;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace IronPython.Tests {
     [TestFixture]
@@ -366,6 +371,135 @@ namespace IronPython.Tests {
                     Is.EqualTo("Pair"));
                 Assert.That(scope.GetVariable<string>("pair_text"), Is.EqualTo("Pair[int]"));
             });
+        }
+
+        [Test]
+        public void GeneratedParserKeepsFunctionGlobalWritesInTheCallingScope() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "py_func_called = False\n" +
+                    "def py_func():\n" +
+                    "    global py_func_called\n" +
+                    "    py_func_called = True\n",
+                    scope);
+                PythonFunction function = scope.GetVariable<PythonFunction>("py_func");
+                engine.Operations.Invoke(function);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            bool autoDetectResult = scope.GetVariable<bool>("py_func_called");
+
+            ScriptScope statementScope = engine.CreateScope();
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.CreateScriptSourceFromString(
+                    "py_func_called = False\n" +
+                    "def py_func():\n" +
+                    "    global py_func_called\n" +
+                    "    py_func_called = True\n",
+                    SourceCodeKind.Statements).Execute(statementScope);
+                engine.Operations.Invoke(
+                    statementScope.GetVariable<PythonFunction>("py_func"));
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+            Assert.Multiple(() => {
+                Assert.That(autoDetectResult, Is.True);
+                Assert.That(statementScope.GetVariable<bool>("py_func_called"), Is.True);
+            });
+        }
+
+        [Test]
+        public void GeneratedParserBindsGlobalDeclarationsAsGlobals() {
+            const string source =
+                "py_func_called = False\n" +
+                "def py_func():\n" +
+                "    global py_func_called\n" +
+                "    py_func_called = True\n";
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            SourceUnit sourceUnit = pythonContext.CreateSnippet(
+                source,
+                "<global-binding>",
+                SourceCodeKind.AutoDetect);
+            var compilerContext = new CompilerContext(
+                sourceUnit,
+                new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
+                ErrorSink.Default);
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                using Parser parser = Parser.CreateParser(compilerContext, new PythonOptions());
+                PythonAst ast = parser.ParseFile(true, true);
+                ast.Bind();
+                Assert.That(
+                    ast.CompilationMode.GetType().Name,
+                    Is.EqualTo("LookupCompilationMode"));
+                var suite = (SuiteStatement)ast.Body;
+                FunctionDefinition function = suite.Statements.OfType<FunctionDefinition>().Single();
+                Assert.That(
+                    function.Variables!["py_func_called"].Kind,
+                    Is.EqualTo(VariableKind.Global));
+                var functionSuite = (SuiteStatement)function.Body;
+                var assignment = (AssignmentStatement)functionSuite.Statements[1];
+                Assert.That(
+                    ((NameExpression)assignment.Left[0]).Reference.PythonVariable!.Kind,
+                    Is.EqualTo(VariableKind.Global));
+
+                var globals = new PythonDictionary {
+                    ["__builtins__"] = pythonContext.BuiltinModuleDict,
+                    ["__name__"] = "<global-binding>",
+                    ["__package__"] = null
+                };
+                var moduleContext = new ModuleContext(globals, pythonContext);
+                ast.ToScriptCode().Run(moduleContext.GlobalScope);
+                var functionValue = (PythonFunction)globals["py_func"];
+                engine.Operations.Invoke(functionValue);
+                Assert.That(globals["py_func_called"], Is.True);
+
+                var lookupGlobals = new PythonDictionary {
+                    ["__builtins__"] = pythonContext.BuiltinModuleDict,
+                    ["__name__"] = "<lookup-global-binding>",
+                    ["__package__"] = null
+                };
+                var lookupContext = new ModuleContext(lookupGlobals, pythonContext);
+                ast.MakeLookupCode().ToScriptCode().Run(lookupContext.GlobalScope);
+                var lookupFunction = (PythonFunction)lookupGlobals["py_func"];
+                engine.Operations.Invoke(lookupFunction);
+                Assert.That(lookupGlobals["py_func_called"], Is.True);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void ParenthesizedComparisonsRemainIndependentOperands() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "left = (1 is 1)\n" +
+                    "right = (2 is 2)\n" +
+                    "result = left != right\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            Assert.That(scope.GetVariable<bool>("result"), Is.False);
         }
 
         [Test]

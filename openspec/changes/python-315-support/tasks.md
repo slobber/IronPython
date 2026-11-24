@@ -182,7 +182,7 @@
 - [x] 11.1 Add an internal-only legacy/generated parser selector.
 - [x] 11.2 Keep legacy parser behavior as the default until parity.
 - [ ] 11.3 Run the full existing suite against generated parser.
-- [ ] 11.4 Resolve facade and parser-sink compatibility differences.
+- [x] 11.4 Resolve facade and parser-sink compatibility differences.
 - [ ] 11.5 Switch the default to generated parser.
 - [ ] 11.6 Delete the legacy parser implementation.
 - [ ] 11.7 Delete the internal parser selector.

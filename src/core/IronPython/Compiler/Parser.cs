@@ -146,7 +146,7 @@ namespace IronPython.Compiler {
         public PythonAst ParseFile(bool makeModule, bool returnValue) {
             try {
                 if (UseGeneratedParser) {
-                    return ParseGeneratedFile();
+                    return ParseGeneratedFile(makeModule, returnValue);
                 }
                 return ParseFileWorker(makeModule, returnValue);
             } catch (DecoderFallbackException dfe) {
@@ -154,7 +154,7 @@ namespace IronPython.Compiler {
             }
         }
 
-        private PythonAst ParseGeneratedFile() {
+        private PythonAst ParseGeneratedFile(bool makeModule, bool returnValue) {
             string source = _sourceReader.ReadToEnd();
             PegParser parser = CreateGeneratedParser(source, out PythonTokenizer tokenizer);
             PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
@@ -162,7 +162,15 @@ namespace IronPython.Compiler {
                 throw CreateGeneratedParseError(parser, tokenizer, result);
             }
             NotifyGeneratedParserSink(module);
-            return PublicAstLowerer.LowerModule(module, _context);
+            if (returnValue) {
+                ((PythonCompilerOptions)_context.Options).CompilationMode =
+                    CompilationMode.Lookup;
+            }
+            return PublicAstLowerer.LowerModule(
+                module,
+                _context,
+                makeModule,
+                returnValue);
         }
 
         private static PegParser CreateGeneratedParser(
@@ -375,19 +383,25 @@ namespace IronPython.Compiler {
         private PythonAst ParseGeneratedInteractiveCode(
             out ScriptCodeParseResult properties) {
             properties = ScriptCodeParseResult.Complete;
-            string source = _sourceReader.ReadToEnd();
+            string source = EnsureTrailingNewLine(_sourceReader.ReadToEnd());
             PegParser parser = CreateGeneratedParser(source, out PythonTokenizer tokenizer);
             PegParseResult result = parser.Parse(PythonGeneratedParser.InteractiveStartRule);
             if (!result.Success
                 || result.Value is not IronPython.Compiler.Syntax.Ast.Interactive interactive) {
                 if (tokenizer.NeedsMoreInput) {
+                    _errorCode = ErrorCodes.IncompleteStatement;
                     properties = ScriptCodeParseResult.IncompleteStatement;
                     return null;
                 }
+                _errorCode = ErrorCodes.SyntaxError;
                 properties = ScriptCodeParseResult.Invalid;
                 return null;
             }
 
+            if (tokenizer.NeedsMoreInput) {
+                properties = ScriptCodeParseResult.IncompleteStatement;
+                return null;
+            }
             if (interactive.Body.Count == 0) {
                 properties = ScriptCodeParseResult.Empty;
                 return null;
@@ -399,17 +413,17 @@ namespace IronPython.Compiler {
         }
 
         private PythonAst ParseGeneratedSingleStatement() {
-            string source = _sourceReader.ReadToEnd();
+            string source = EnsureTrailingNewLine(_sourceReader.ReadToEnd());
             PegParser parser = CreateGeneratedParser(source, out PythonTokenizer tokenizer);
-            PegParseResult result = parser.Parse(PythonGeneratedParser.InteractiveStartRule);
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
             if (!result.Success
-                || result.Value is not IronPython.Compiler.Syntax.Ast.Interactive interactive) {
+                || result.Value is not IronPython.Compiler.Syntax.Ast.Module module) {
                 throw CreateGeneratedParseError(parser, tokenizer, result);
             }
-            NotifyGeneratedParserSink(interactive);
+            NotifyGeneratedParserSink(module);
             return CreateGeneratedStatementAst(
-                interactive.Body,
-                printExpressions: true);
+                module.Body,
+                printExpressions: false);
         }
 
         private PythonAst ParseGeneratedTopExpression() {
@@ -429,6 +443,13 @@ namespace IronPython.Compiler {
                 false,
                 _context,
                 Array.Empty<int>());
+        }
+
+        private static string EnsureTrailingNewLine(string source) {
+            return source.Length == 0 || source[source.Length - 1] == '\n'
+                || source[source.Length - 1] == '\r'
+                ? source
+                : source + "\n";
         }
 
         private PythonAst CreateGeneratedStatementAst(

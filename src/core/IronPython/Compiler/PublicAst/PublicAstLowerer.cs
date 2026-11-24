@@ -19,6 +19,21 @@ namespace IronPython.Compiler.PublicAst {
         public static CompilerAst.PythonAst LowerModule(
             AstNodes.Module module,
             CompilerContext context) {
+            return LowerModule(module, context, true, false);
+        }
+
+        public static CompilerAst.PythonAst LowerModule(
+            AstNodes.Module module,
+            CompilerContext context,
+            bool makeModule) {
+            return LowerModule(module, context, makeModule, false);
+        }
+
+        public static CompilerAst.PythonAst LowerModule(
+            AstNodes.Module module,
+            CompilerContext context,
+            bool makeModule,
+            bool returnValue) {
             if (module == null) throw new ArgumentNullException(nameof(module));
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -34,16 +49,27 @@ namespace IronPython.Compiler.PublicAst {
                 CompilerAst.Statement[] statements = module.Body
                     .Select(LowerStatement)
                     .ToArray();
-                return new CompilerAst.PythonAst(
-                    new CompilerAst.SuiteStatement(statements),
-                    true,
-                    ModuleOptions.ExecOrEvalCode,
+                if (returnValue && statements.Length > 0
+                    && statements[statements.Length - 1] is CompilerAst.ExpressionStatement expression) {
+                    statements[statements.Length - 1] = new CompilerAst.ReturnStatement(
+                        expression.Expression) {
+                        IndexSpan = expression.Expression.IndexSpan
+                    };
+                }
+                ModuleOptions languageFeatures =
+                    ((PythonCompilerOptions)context.Options).Module;
+                var ast = new CompilerAst.PythonAst(
+                    makeModule,
+                    languageFeatures,
                     false,
-                    context,
-                    locations.LineStarts) {
-                    SkipNamedExpressionCheck = true,
-                    SkipStarredExpressionCheck = true
-                };
+                    context);
+                ast.ParsingFinished(
+                    locations.LineStarts,
+                    new CompilerAst.SuiteStatement(statements),
+                    languageFeatures);
+                ast.SkipNamedExpressionCheck = true;
+                ast.SkipStarredExpressionCheck = true;
+                return ast;
             } finally {
                 _sourceLocations = null;
             }
@@ -996,7 +1022,7 @@ namespace IronPython.Compiler.PublicAst {
                 HeaderIndex = GetStartOffset(source)
             };
             function.IsGenerator = ContainsYield(body);
-            function.GeneratorStop = true;
+            function.GeneratorStop = function.IsGenerator;
             function.Decorators = decorators.Select(LowerExpression).ToArray();
             function.ReturnAnnotation = returns is null
                 ? null!
@@ -1055,7 +1081,7 @@ namespace IronPython.Compiler.PublicAst {
                 LowerParameters(lambda.Args, null),
                 new CompilerAst.ReturnStatement(body));
             function.IsGenerator = ContainsYield(lambda.Body);
-            function.GeneratorStop = true;
+            function.GeneratorStop = function.IsGenerator;
             return new CompilerAst.LambdaExpression(function);
         }
 
@@ -1167,18 +1193,26 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         private static CompilerAst.Expression LowerComparison(AstNodes.Compare comparison) {
-            CompilerAst.Expression result = LowerExpression(
+            CompilerAst.Expression result = LowerComparisonOperand(
                 comparison.Comparators[comparison.Comparators.Count - 1]);
             for (int i = comparison.Ops.Count - 1; i >= 0; i--) {
                 CompilerAst.Expression left = i == 0
-                    ? LowerExpression(comparison.Left)
-                    : LowerExpression(comparison.Comparators[i - 1]);
+                    ? LowerComparisonOperand(comparison.Left)
+                    : LowerComparisonOperand(comparison.Comparators[i - 1]);
                 result = new CompilerAst.BinaryExpression(
                     LowerCompareOperator(comparison.Ops[i]),
                     left,
                     result);
             }
             return result;
+        }
+
+        private static CompilerAst.Expression LowerComparisonOperand(
+            AstNodes.ExprBase expression) {
+            CompilerAst.Expression lowered = LowerExpression(expression);
+            return expression is AstNodes.Compare
+                ? new CompilerAst.ParenthesisExpression(lowered)
+                : lowered;
         }
 
         private static CompilerAst.ComprehensionIterator[] LowerComprehensionIterators(

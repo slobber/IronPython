@@ -330,6 +330,30 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void PreservesParenthesizedComparisonNesting() {
+            const string source = "(value is sentinel) != (other is sentinel)\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : result.ToString());
+            var outer = (PublicAst.Compare)((PublicAst.Expr)((PublicAst.Module)result.Value).Body.Single()).Value;
+            Assert.Multiple(() => {
+                Assert.That(outer.Left, Is.InstanceOf<PublicAst.Compare>());
+                Assert.That(outer.Ops, Has.Count.EqualTo(1));
+                Assert.That(outer.Ops[0], Is.InstanceOf<PublicAst.NotEq>());
+                Assert.That(outer.Comparators, Has.Count.EqualTo(1));
+                Assert.That(outer.Comparators[0], Is.InstanceOf<PublicAst.Compare>());
+            });
+        }
+
+        [Test]
         public void BuildsTypeAliasAndTypeParameters() {
             var tokenizer = new PythonTokenizer("type Pair[T] = int\n");
             var parser = new PegParser(
