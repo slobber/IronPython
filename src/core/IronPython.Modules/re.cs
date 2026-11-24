@@ -243,6 +243,15 @@ namespace IronPython.Modules {
                 return Match.MakeMatch(_re.Match(input.Substring(0, endpos), pos), this, input, pos, endpos);
             }
 
+            public Match? prefixmatch(object? @string) => match(@string);
+
+            public Match? prefixmatch(object? @string, int pos) => match(@string, pos);
+
+            public Match? prefixmatch(
+                object? @string,
+                [DefaultParameterValue(0)] int pos,
+                int endpos) => match(@string, pos, endpos);
+
             private Regex? _re_fullmatch;
             private Regex GetRegexFullMatch(CodeContext /*!*/ context) {
                 if (_re_fullmatch == null) {

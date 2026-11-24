@@ -1591,6 +1591,11 @@ namespace IronPython.Runtime.Operations {
                 }
             }
 
+            // PEP 560 requires __mro_entries__ before metaclass discovery;
+            // otherwise function objects with __mro_entries__ contribute the
+            // metaclass of the function object instead of their replacement type.
+            bases = PythonType.ResolveMroEntries(parentContext, bases);
+
             // Discover metaclass
             object? metaclass = null;
             if (keywords is not null && keywords.TryGetValueNoMissing("metaclass", out metaclass)) {

@@ -346,7 +346,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             return type;
         }
 
-        private static PythonTuple ResolveMroEntries(
+        internal static PythonTuple ResolveMroEntries(
             CodeContext context,
             PythonTuple bases) {
             var resolved = new List<object>(bases.Count);
@@ -360,7 +360,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 } else if (baseType is not PythonType
                     && PythonOps.TryGetBoundAttr(context, baseType, "__mro_entries__", out object? callback)
                     && callback is not null) {
-                    object replacement = PythonCalls.Call(context, callback, baseType, bases)!;
+                    object replacement = PythonCalls.Call(context, callback, bases)!;
                     if (replacement is PythonTuple tuple) {
                         foreach (object item in tuple) resolved.Add(item);
                     } else if (replacement is IEnumerable enumerable && replacement is not string) {

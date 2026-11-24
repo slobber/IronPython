@@ -354,6 +354,22 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void PreservesCallsInSubscriptAssignmentTargets() {
+            const string source = "globals()['value'] = 1\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(result.Success, Is.True);
+            var assignment = (PublicAst.Assign)((PublicAst.Module)result.Value).Body.Single();
+            var target = (PublicAst.Subscript)assignment.Targets.Single();
+            Assert.That(target.Value, Is.InstanceOf<PublicAst.Call>());
+        }
+
+        [Test]
         public void BuildsTypeAliasAndTypeParameters() {
             var tokenizer = new PythonTokenizer("type Pair[T] = int\n");
             var parser = new PegParser(

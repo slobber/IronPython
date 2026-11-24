@@ -905,13 +905,13 @@ namespace IronPython.Compiler.PublicAst {
         public override object Handle_t_primary_2(
             PegActionContext context,
             PegActionArguments arguments) {
-            return Handle_primary_2(context, arguments);
+            return Handle_primary_1(context, arguments);
         }
 
         public override object Handle_t_primary_3(
             PegActionContext context,
             PegActionArguments arguments) {
-            return Handle_primary_3(context, arguments);
+            return Handle_primary_2(context, arguments);
         }
 
         public override object Handle_t_primary_4(

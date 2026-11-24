@@ -280,7 +280,7 @@
 - [x] 16.4 Implement `frozendict`.
 - [x] 16.5 Implement `sentinel`.
 - [ ] 16.6 Implement lazy imports and importlib integration.
-- [ ] 16.7 Implement module attribute customization APIs.
+- [x] 16.7 Implement module attribute customization APIs.
 - [ ] 16.8 Implement importlib resources and metadata changes.
 - [ ] 16.9 Implement package startup configuration files.
 - [ ] 16.10 Implement `concurrent.interpreters` using isolated IronPython

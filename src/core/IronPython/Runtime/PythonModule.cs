@@ -142,6 +142,8 @@ namespace IronPython.Runtime {
 
             if (_dict.TryGetValue(name, out res)) {
                 return res;
+            } else if (_dict.TryGetValue("__getattr__", out object getAttribute)) {
+                return PythonCalls.Call(context, getAttribute, name);
             } else if (DynamicHelpers.GetPythonType(this).TryGetNonCustomMember(context, this, name, out res)) {
                 return res;
             } else if (DynamicHelpers.GetPythonType(this).TryResolveSlot(context, "__getattr__", out slot) &&

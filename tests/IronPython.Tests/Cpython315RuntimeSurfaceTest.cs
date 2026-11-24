@@ -503,6 +503,53 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void FromImportUsesModuleGetattr() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "from typing import Pattern, Match\n" +
+                    "result = Pattern is not None and Match is not None\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            Assert.That(scope.GetVariable<bool>("result"), Is.True);
+        }
+
+        [Test]
+        public void PrefixMatchAndTypedDictClassSyntaxAreAvailable() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "import re\n" +
+                    "from typing import TypedDict\n" +
+                    "class Movie(TypedDict):\n" +
+                    "    title: str\n" +
+                    "match_prefix = re.compile('ab').prefixmatch('abc').group()\n" +
+                    "typed_dict_name = Movie.__name__\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            Assert.Multiple(() => {
+                Assert.That(scope.GetVariable<string>("match_prefix"), Is.EqualTo("ab"));
+                Assert.That(scope.GetVariable<string>("typed_dict_name"), Is.EqualTo("Movie"));
+            });
+        }
+
+        [Test]
         public void LazyImportsResolveOnAccessAndCall() {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true

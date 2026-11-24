@@ -76,15 +76,14 @@ namespace IronPython.Runtime {
             PythonContext pc = context.LanguageContext;
             if (from is PythonModule scope) {
                 object ret;
-                if (scope.GetType() == typeof(PythonModule)) {
-                    if (scope.__dict__.TryGetValue(name, out ret)) {
-                        return ret;
-                    }
-                } else {
-                    // subclass of module, it could have overridden __getattr__ or __getattribute__
-                    if (PythonOps.TryGetBoundAttr(context, scope, name, out ret)) {
-                        return ret;
-                    }
+                if (scope.__dict__.TryGetValue(name, out ret)) {
+                    return ret;
+                }
+                // Module-level __getattr__ is part of the public import protocol,
+                // not only an extension point for module subclasses.
+                ret = scope.GetAttributeNoThrow(context, name);
+                if (!ReferenceEquals(ret, OperationFailed.Value)) {
+                    return ret!;
                 }
 
                 if (pc.ImportLibBootstrap is null && scope.__dict__._storage.TryGetPath(out object path)) {
