@@ -7,6 +7,7 @@ using System.Linq;
 using System.Numerics;
 using IronPython.Compiler.Generated;
 using IronPython.Compiler.Syntax;
+using IronPython.Runtime.Operations;
 using AstNodes = IronPython.Compiler.Syntax.Ast;
 
 namespace IronPython.Compiler.PublicAst {
@@ -3890,6 +3891,21 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         private static object ParseNumber(string text) {
+            try {
+                return ParseNumberWorker(text);
+            } catch (FormatException) {
+                string kind = text.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                    ? "hexadecimal"
+                    : text.StartsWith("0o", StringComparison.OrdinalIgnoreCase)
+                        ? "octal"
+                        : text.StartsWith("0b", StringComparison.OrdinalIgnoreCase)
+                            ? "binary"
+                            : "decimal";
+                throw PythonOps.SyntaxError("invalid {0} literal", kind);
+            }
+        }
+
+        private static object ParseNumberWorker(string text) {
             string normalized = text.Replace("_", string.Empty);
             if (normalized.EndsWith("j", StringComparison.OrdinalIgnoreCase)) {
                 string imaginary = normalized.Substring(0, normalized.Length - 1);

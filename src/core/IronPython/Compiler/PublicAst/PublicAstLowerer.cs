@@ -119,7 +119,10 @@ namespace IronPython.Compiler.PublicAst {
                 _ => throw Unsupported(statement)
             };
             SetLocation(lowered, statement);
-            int headerIndex = GetStartOffset(statement);
+            int headerIndex = Math.Clamp(
+                GetStartOffset(statement),
+                lowered.StartIndex,
+                lowered.EndIndex);
             switch (lowered) {
                 case CompilerAst.WhileStatement @while:
                     @while.HeaderIndex = headerIndex;
