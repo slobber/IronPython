@@ -40,6 +40,35 @@ namespace IronPython.Modules {
     public static partial class PythonNT {
         public const string __doc__ = "Provides low-level operating system access for files, the environment, etc...";
 
+        public static PythonTuple _path_splitroot([NotNone] string path) {
+            string root = GetPathRoot(path);
+            return PythonTuple.MakeTuple(root, path.Substring(root.Length));
+        }
+
+        public static PythonTuple _path_splitroot_ex([NotNone] string path) {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+                string root = path.Length > 0 && path[0] == '/' ? "/" : string.Empty;
+                return PythonTuple.MakeTuple(string.Empty, root, path.Substring(root.Length));
+            }
+
+            string normalized = path.Replace('/', '\\');
+            string fullRoot = GetPathRoot(normalized);
+            if (fullRoot.Length >= 2 && fullRoot[1] == ':') {
+                return PythonTuple.MakeTuple(fullRoot.Substring(0, 2), "\\", path.Substring(fullRoot.Length));
+            }
+            return PythonTuple.MakeTuple(fullRoot, string.Empty, path.Substring(fullRoot.Length));
+        }
+
+        private static string GetPathRoot(string path) {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+                return path.Length > 0 && path[0] == '/' ? "/" : string.Empty;
+            }
+
+            string normalized = path.Replace('/', '\\');
+            string root = Path.GetPathRoot(normalized) ?? string.Empty;
+            return path.Substring(0, root.Length);
+        }
+
         /* TODO: missing functions/classes:
          * Windows:
          * {'execve', '_isdir', 'getlogin', 'get_inheritable', 'statvfs_result', 'readlink', 'stat_float_times', 'getppid',

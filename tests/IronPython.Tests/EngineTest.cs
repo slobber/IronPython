@@ -55,7 +55,7 @@ namespace IronPythonTest {
             var current = System.Reflection.Assembly.GetExecutingAssembly().Location;
             var found = false;
             while (!found && !string.IsNullOrEmpty(current)) {
-                var test = Path.Combine(current, "src", "core", "IronPython.StdLib", "lib");
+                var test = Path.Combine(current, "src", "core", "IronPython");
                 if (Directory.Exists(test)) {
                     return current;
                 }

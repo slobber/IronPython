@@ -71,7 +71,7 @@ namespace IronPythonTest {
 
             // for importlib.reload
             var paths = new List<string>(engine.GetSearchPaths()) {
-                Path.Combine(CaseExecuter.FindRoot(), "src", "core", "IronPython.StdLib", "lib"),
+                CaseExecuter.GetStdLibPath(),
                 pal.Root
             };
             engine.SetSearchPaths(paths);

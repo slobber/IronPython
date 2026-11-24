@@ -34,6 +34,26 @@ namespace IronPython.Modules {
         public static PythonTuple lookup(CodeContext/*!*/ context, [NotNone] string encoding)
             => PythonOps.LookupEncoding(context, encoding);
 
+        public static string _normalize_encoding([NotNone] string encoding) {
+            var result = new StringBuilder(encoding.Length);
+            bool previousWasSeparator = false;
+            foreach (char c in encoding) {
+                if (char.IsLetterOrDigit(c) || c == '.') {
+                    result.Append(c);
+                    previousWasSeparator = false;
+                } else if (!previousWasSeparator) {
+                    result.Append('_');
+                    previousWasSeparator = true;
+                }
+            }
+
+            int start = 0;
+            int end = result.Length;
+            while (start < end && result[start] == '_') start++;
+            while (end > start && result[end - 1] == '_') end--;
+            return result.ToString(start, end - start);
+        }
+
         [LightThrowing]
         public static object lookup_error(CodeContext/*!*/ context, [NotNone] string name)
             => PythonOps.LookupEncodingError(context, name);

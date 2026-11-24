@@ -141,7 +141,7 @@ namespace IronPython.Compiler {
 
             foreach (var a in args) {
                 var arg = a.Trim();
-                if (arg.StartsWith("#", StringComparison.Ordinal)) {
+                if (arg.StartsWith('#')) {
                     continue;
                 }
 
@@ -259,7 +259,7 @@ namespace IronPython.Compiler {
                             break;
                     }
                 } else {
-                    if (arg.StartsWith("@", StringComparison.Ordinal)) {
+                    if (arg.StartsWith('@')) {
                         var respFile = Path.GetFullPath(arg.Substring(1));
                         if (respFiles == null) {
                             respFiles = new List<string>();

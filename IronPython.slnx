@@ -7,6 +7,12 @@
   <Folder Name="/DLR/Tests/">
     <Project Path="src/dlr/tests/ClrAssembly/ClrAssembly.csproj" />
   </Folder>
+  <Folder Name="/Compiler/">
+    <Project Path="src/compiler/IronPython.Compiler.Syntax/IronPython.Compiler.Syntax.csproj" />
+    <Project Path="src/compiler/IronPython.ParserGenerator.Core/IronPython.ParserGenerator.Core.csproj" />
+    <Project Path="src/compiler/IronPython.ParserGenerator.Cli/IronPython.ParserGenerator.Cli.csproj" />
+    <Project Path="src/compiler/IronPython.ParserGenerator.SourceGenerator/IronPython.ParserGenerator.SourceGenerator.csproj" />
+  </Folder>
   <Folder Name="/Solution Items/">
     <File Path=".editorconfig" />
     <File Path=".gitignore" />
@@ -23,11 +29,6 @@
     <File Path="eng/net10.0.props" />
     <File Path="eng/net11.0-windows.props" />
     <File Path="eng/net11.0.props" />
-    <File Path="eng/net462.props" />
-    <File Path="eng/net8.0-windows.props" />
-    <File Path="eng/net8.0.props" />
-    <File Path="eng/net9.0-windows.props" />
-    <File Path="eng/net9.0.props" />
     <File Path="eng/netstandard2.0.props" />
     <File Path="eng/Tasks.Targets" />
   </Folder>
@@ -61,9 +62,7 @@
   <Project Path="src/core/IronPython/IronPython.csproj" />
   <Project Path="src/executables/IronPython.Compiler/IronPython.Compiler.csproj" />
   <Project Path="src/executables/IronPython.Console/IronPython.Console.csproj" />
-  <Project Path="src/executables/IronPython.Console32/IronPython.Console32.csproj" />
   <Project Path="src/executables/IronPython.Window/IronPython.Window.csproj" />
-  <Project Path="src/executables/IronPython.Window32/IronPython.Window32.csproj" />
   <Project Path="src/extensions/IronPython.SQLite/IronPython.SQLite.csproj" />
   <Project Path="src/extensions/IronPython.Wpf/IronPython.Wpf.csproj" />
   <Project Path="src/roslyn/IronPython.Analyzer/IronPython.Analyzer.csproj" />

@@ -1,0 +1,46 @@
+{
+  "cpython": {
+    "tag": "v3.15.2",
+    "commit": "5e58eaad7c58df58dfa8ea549c87996e01dd1077"
+  },
+  "compilerInputs": {
+    "grammar": {
+      "path": "src/compiler/cpython/3.15.2/python.gram",
+      "sha256": "36722C947A268326F585C12C1BE2B7BE62CB8034AD0CCEBC85807B41795A30E6"
+    },
+    "asdl": {
+      "path": "src/compiler/cpython/3.15.2/Python.asdl",
+      "sha256": "9C267C7FDBD0523BF99B8817E8EECCAEAAA2CF4A1828511820FF0AADA0A775CC"
+    }
+  },
+  "standardLibrary": {
+    "repository": "../IronPython.StdLib",
+    "branch": "python-3.15",
+    "libPath": "lib"
+  },
+  "platforms": [
+    "windows-x64",
+    "windows-arm64",
+    "linux-x64",
+    "linux-arm64",
+    "macos-arm64"
+  ],
+  "frameworks": [
+    "net10.0",
+    "net11.0"
+  ],
+  "inScopeCategories": [
+    "language",
+    "stdlib",
+    "typing",
+    "async",
+    "native-module"
+  ],
+  "waiverCategories": [
+    "platform-unavailable",
+    "cpython-c-api",
+    "cpython-internal",
+    "stress-resource",
+    "product-boundary"
+  ]
+}

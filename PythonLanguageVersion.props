@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <PythonLanguageMajorVersion>3</PythonLanguageMajorVersion>
+    <PythonLanguageMinorVersion>15</PythonLanguageMinorVersion>
+    <PythonLanguageMicroVersion>2</PythonLanguageMicroVersion>
+    <PythonLanguageReleaseLevel>final</PythonLanguageReleaseLevel>
+    <PythonLanguageReleaseSerial>0</PythonLanguageReleaseSerial>
+  </PropertyGroup>
+</Project>

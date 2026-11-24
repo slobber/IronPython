@@ -4,8 +4,9 @@ Param(
     [Parameter(Position=1)]
     [String] $target = "build",
     [String] $configuration = "Release",
-    [String[]] $frameworks=@('net462','net8.0','net10.0'),
+    [String[]] $frameworks=@('net10.0','net11.0'),
     [String] $platform = $null,  # auto-detect
+    [String] $stdlib = $null,
     [switch] $runIgnored,
     [int] $jobs = [System.Environment]::ProcessorCount
 )
@@ -16,6 +17,10 @@ $ErrorActionPreference="Continue"
 [bool] $global:isUnix = [System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Unix
 
 $_BASEDIR = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
+if (-not $stdlib) {
+    $stdlib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($_BASEDIR, "..", "IronPython.StdLib"))
+}
+$env:CYBERSTONE_IRONPYTHON_STDLIB = $stdlib
 
 function Main([String] $target, [String] $configuration) {
     # verify that the DLR submodule has been initialized
@@ -29,7 +34,7 @@ function Main([String] $target, [String] $configuration) {
         }
     }
 
-    dotnet msbuild Build.proj /m /t:$target /p:Configuration=$configuration /verbosity:minimal /nologo /p:Platform="Any CPU" /bl:build-$target-$configuration.binlog
+    dotnet msbuild Build.proj /m /t:$target /p:Configuration=$configuration "/p:StdLibRoot=$stdlib" /verbosity:minimal /nologo /p:Platform="Any CPU" /bl:build-$target-$configuration.binlog
     # use the exit code of msbuild as the exit code for this script
     $global:Result = $LastExitCode
 }
@@ -234,50 +239,11 @@ function Test([String] $target, [String] $configuration, [String[]] $frameworks,
 }
 
 function Ngen([String] $configuration) {
-    if ($global:isUnix) {
-        Write-Warning "ngen is only available on Windows"
-        return
-    }
-
-    $binDir = [System.IO.Path]::Combine($_BASEDIR, "bin", $configuration, "net462")
-    $frameworkDir = [System.IO.Path]::Combine($env:SystemRoot, "Microsoft.NET")
-
-    # ipy.exe is AnyCPU so ngen needs to match the bitness of the process it will run as
-    $targets = @(
-        @{ exe = "ipy.exe"; framework = $(if ([System.Environment]::Is64BitOperatingSystem) { "Framework64" } else { "Framework" }) },
-        @{ exe = "ipy32.exe"; framework = "Framework" }
-    )
-
-    foreach ($target in $targets) {
-        $exePath = [System.IO.Path]::Combine($binDir, $target.exe)
-        if (!(Test-Path $exePath)) {
-            Write-Error "Could not find $exePath, build the $configuration configuration first"
-            $global:Result = -1
-            return
-        }
-
-        $ngen = [System.IO.Path]::Combine($frameworkDir, $target.framework, "v4.0.30319", "ngen.exe")
-
-        # installing the exe also compiles its static dependencies (IronPython, Microsoft.Scripting, etc.),
-        & $ngen install $exePath /nologo
-        if ($LastExitCode -ne 0) { $global:Result = $LastExitCode }
-
-        # but modules loaded at runtime have to be listed explicitly and bound using the exe's configuration
-        $assemblies = @([System.IO.Path]::Combine($binDir, "IronPython.Modules.dll")) + @(Get-ChildItem -Path ([System.IO.Path]::Combine($binDir, "DLLs")) -Filter "IronPython.*.dll" | ForEach-Object { $_.FullName })
-        foreach ($assembly in $assemblies) {
-            & $ngen install $assembly /ExeConfig:$exePath /nologo
-            if ($LastExitCode -ne 0) { $global:Result = $LastExitCode }
-        }
-    }
+    Write-Warning "NGen is only available for the retired .NET Framework targets."
 }
 
 function ReadyToRun([String] $configuration, [String[]] $frameworks) {
     foreach ($framework in $frameworks) {
-        if ($framework -eq "net462") {
-            Write-Warning "ReadyToRun is not available for $framework, use the ngen target instead"
-            continue
-        }
-
         $binDir = [System.IO.Path]::Combine($_BASEDIR, "bin", $configuration, $framework)
         $workDir = [System.IO.Path]::Combine($_BASEDIR, "obj", "ReadyToRun", $configuration, $framework)
         $publishDir = [System.IO.Path]::Combine($workDir, "publish")

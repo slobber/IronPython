@@ -3,6 +3,7 @@
 // See the LICENSE file in the project root for more information.
 
 using System;
+using System.Buffers.Binary;
 using System.Diagnostics;
 using System.Threading;
 
@@ -13,6 +14,8 @@ using IronPython.Runtime.Operations;
 namespace IronPython.Modules {
     public static class PythonImport {
         public const string __doc__ = "Provides functions for programmatically creating and importing modules and packages.";
+        public const int pyc_magic_number_token = 0x0A0D0E52; // Python 3.15 magic 3666 plus b"\r\n".
+        public const string check_hash_based_pycs = "never";
 
         internal const int PythonSource = 1;
         internal const int PythonCompiled = 2;
@@ -78,12 +81,28 @@ namespace IronPython.Modules {
             // TODO: implement this properly - https://github.com/IronLanguages/ironpython3/issues/1430
         }
 
+        public static Bytes source_hash(CodeContext/*!*/ context, long key, object source) {
+            if (source is not IBufferProtocol bufferProtocol) {
+                throw PythonOps.TypeError("expected a bytes-like object, got '{0}'", PythonOps.GetPythonTypeName(source));
+            }
+
+            using IPythonBuffer buffer = bufferProtocol.GetBuffer();
+            ulong hash = SipHash13(unchecked((ulong)key), 0, buffer.AsReadOnlySpan());
+            byte[] result = new byte[sizeof(ulong)];
+            BinaryPrimitives.WriteUInt64LittleEndian(result, hash);
+            return Bytes.Make(result);
+        }
+
         public static object init_frozen(string name) {
             return null;
         }
 
         public static object get_frozen_object(string name) {
             throw PythonOps.ImportError("No such frozen object named {0}", name);
+        }
+
+        public static object find_frozen(string name) {
+            return null;
         }
 
         public static int is_builtin(CodeContext/*!*/ context, string/*!*/ name) {
@@ -113,5 +132,50 @@ namespace IronPython.Modules {
         public static void _fix_co_filename() {
             throw new NotImplementedException();
         }
+
+        private static ulong SipHash13(ulong k0, ulong k1, ReadOnlySpan<byte> source) {
+            ulong v0 = k0 ^ 0x736f6d6570736575UL;
+            ulong v1 = k1 ^ 0x646f72616e646f6dUL;
+            ulong v2 = k0 ^ 0x6c7967656e657261UL;
+            ulong v3 = k1 ^ 0x7465646279746573UL;
+            int offset = 0;
+
+            while (source.Length - offset >= sizeof(ulong)) {
+                ulong value = BinaryPrimitives.ReadUInt64LittleEndian(source.Slice(offset, sizeof(ulong)));
+                offset += sizeof(ulong);
+                v3 ^= value;
+                SipRound(ref v0, ref v1, ref v2, ref v3);
+                v0 ^= value;
+            }
+
+            ulong tail = (ulong)source.Length << 56;
+            for (int i = 0; i < source.Length - offset; i++) {
+                tail |= (ulong)source[offset + i] << (i * 8);
+            }
+
+            v3 ^= tail;
+            SipRound(ref v0, ref v1, ref v2, ref v3);
+            v0 ^= tail;
+            v2 ^= 0xff;
+            SipRound(ref v0, ref v1, ref v2, ref v3);
+            SipRound(ref v0, ref v1, ref v2, ref v3);
+            SipRound(ref v0, ref v1, ref v2, ref v3);
+            return (v0 ^ v1) ^ (v2 ^ v3);
+        }
+
+        private static void SipRound(ref ulong v0, ref ulong v1, ref ulong v2, ref ulong v3) {
+            SipHalfRound(ref v0, ref v1, ref v2, ref v3, 13, 16);
+            SipHalfRound(ref v2, ref v1, ref v0, ref v3, 17, 21);
+        }
+
+        private static void SipHalfRound(ref ulong a, ref ulong b, ref ulong c, ref ulong d, int s, int t) {
+            a += b;
+            c += d;
+            b = RotateLeft(b, s) ^ a;
+            d = RotateLeft(d, t) ^ c;
+            a = RotateLeft(a, 32);
+        }
+
+        private static ulong RotateLeft(ulong value, int amount) => (value << amount) | (value >> (64 - amount));
     }
 }

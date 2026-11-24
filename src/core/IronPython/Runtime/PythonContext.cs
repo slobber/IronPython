@@ -42,6 +42,8 @@ namespace IronPython.Runtime {
 
     public sealed partial class PythonContext : LanguageContext {
         internal static readonly string/*!*/ IronPythonDisplayName = CurrentVersion.DisplayName;
+        internal List<object> AuditHooks { get; } = new List<object>();
+        internal object AuditHooksLock { get; } = new object();
         internal const string/*!*/ IronPythonNames = "IronPython;Python;py";
         internal const string/*!*/ IronPythonFileExtensions = ".py";
 
@@ -230,11 +232,24 @@ namespace IronPython.Runtime {
                     // add DLLs directory for user-defined extention modules
                     path.append(Path.Combine(entry, "DLLs"));
 
+                    // Prefer the configured sibling stdlib checkout in all build configurations.
+                    string configuredStdLib = Environment.GetEnvironmentVariable("CYBERSTONE_IRONPYTHON_STDLIB");
+                    if (!string.IsNullOrEmpty(configuredStdLib)) {
+                        string configuredStdLibPath = Path.Combine(configuredStdLib, "lib");
+                        if (Directory.Exists(configuredStdLibPath))
+                            path.append(configuredStdLibPath);
+                    }
+
 #if DEBUG
-                    // For developer use, add src/core/IronPython.StdLib/lib
-                    string devStdLib = Path.Combine(entry, @"../../../src/core/IronPython.StdLib/lib");
-                    if (Directory.Exists(devStdLib))
-                        path.append(devStdLib);
+                    // For developer use, also probe the conventional sibling checkout.
+                    string siblingStdLib = Path.Combine(entry, @"../../../../IronPython.StdLib/lib");
+                    if (Directory.Exists(siblingStdLib))
+                        path.append(siblingStdLib);
+
+                    // Compatibility with the previous in-repository submodule layout.
+                    string legacyStdLib = Path.Combine(entry, @"../../../src/core/IronPython.StdLib/lib");
+                    if (Directory.Exists(legacyStdLib))
+                        path.append(legacyStdLib);
 #else
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
                         var dirs = new string[] { "lib", "DLLs" };
@@ -717,7 +732,7 @@ namespace IronPython.Runtime {
         public override Version LanguageVersion => GetPythonVersion();
 
         internal static Version GetPythonVersion()
-            => new AssemblyName(typeof(PythonContext).Assembly.FullName).Version;
+            => PythonLanguageVersion.AssemblyVersion;
 
         internal FloatFormat FloatFormat { get; set; }
 
@@ -1881,9 +1896,9 @@ namespace IronPython.Runtime {
         }
 
         private void SetVersionVariables(PythonDictionary dict) {
-            dict["implementation"] = new SimpleNamespace(new Dictionary<string, object>() { { "cache_tag", $"ironpython-{VersionInfo.Instance.major}{VersionInfo.Instance.minor}" }, { "name", "ironpython" }, { "version", VersionInfo.Instance }, { "hexversion", VersionInfo.Instance.GetHexVersion() } });
-            dict["version_info"] = VersionInfo.Instance;
-            dict["hexversion"] = VersionInfo.Instance.GetHexVersion();
+            dict["implementation"] = new SimpleNamespace(new Dictionary<string, object>() { { "cache_tag", $"ironpython-{VersionInfo.Language.major}{VersionInfo.Language.minor}" }, { "name", "ironpython" }, { "version", VersionInfo.Implementation }, { "hexversion", VersionInfo.Implementation.GetHexVersion() } });
+            dict["version_info"] = VersionInfo.Language;
+            dict["hexversion"] = VersionInfo.Language.GetHexVersion();
             dict["version"] = _initialVersionString ?? GetVersionString();
         }
 
@@ -1903,7 +1918,7 @@ namespace IronPython.Runtime {
             string configuration = Runtime.ClrModule.IsDebug ? " DEBUG" : string.Empty;
             string bitness = (IntPtr.Size * 8).ToString();
 
-            return $"{VersionInfo.Instance.GetVersionString()}{configuration} ({Runtime.ClrModule.FileVersion})\n" +
+            return $"{VersionInfo.Language.GetVersionString()}{configuration} (IronPython {CurrentVersion.ProductVersion}, {Runtime.ClrModule.FileVersion})\n" +
                 $"[{Runtime.ClrModule.TargetFramework} on {Runtime.ClrModule.FrameworkDescription} ({bitness}-bit)]";
         }
 

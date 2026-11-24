@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AssemblyName>IronPython.ParserGenerator.Cli</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\IronPython.ParserGenerator.Core\IronPython.ParserGenerator.Core.csproj" />
+    <Using Remove="Microsoft.Scripting.Runtime.NotNullAttribute" />
+  </ItemGroup>
+</Project>

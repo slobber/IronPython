@@ -59,17 +59,14 @@ For more information see the [.NET Foundation Code of Conduct](https://dotnetfou
 
 ## State of the Project
 
-The current target is Python 3.4, although features and behaviors from later versions may be included.
+This repository is migrating directly to final CPython 3.15.2 semantics. The
+migration is in progress; the presence of Python 3.15 version metadata does not
+yet mean that the interpreter is fully compatible.
 
-See the following lists for features from each version of CPython that have been implemented:
-
-- [What's New In Python 3.0](WhatsNewInPython30.md)
-- [What's New In Python 3.1](WhatsNewInPython31.md)
-- [What's New In Python 3.2](WhatsNewInPython32.md)
-- [What's New In Python 3.3](WhatsNewInPython33.md)
-- [What's New In Python 3.4](WhatsNewInPython34.md)
-- [What's New In Python 3.5](WhatsNewInPython35.md)
-- [What's New In Python 3.6](WhatsNewInPython36.md)
+- [OpenSpec change](openspec/changes/python-315-support/proposal.md)
+- [Migration task list](openspec/changes/python-315-support/tasks.md)
+- [Python 3.15 feature matrix](docs/python-3.15-migration-matrix.md)
+- [Phase 0 baseline](docs/python-3.15-phase0-baseline.md)
 
 ## Contributing
 
@@ -152,4 +149,15 @@ See the [building document](https://github.com/IronLanguages/ironpython3/wiki/Bu
 
 ## Supported Platforms
 
-IronPython 3 targets .NET Framework 4.6.2, .NET Standard 2.0, .NET 8.0, and .NET 10.0. The support for .NET and .NET Core follow the lifecycle defined on [.NET and .NET Core Support Policy](https://dotnet.microsoft.com/platform/support/policy/dotnet-core).
+CyberStone.IronPython targets .NET 10 and later on:
+
+- Windows x64 and arm64
+- Linux x64 and arm64
+- macOS arm64
+
+See [Python 3.15 compatibility](docs/python-3.15-compatibility.md) for version
+field semantics, the unsupported CPython C-extension boundary, and the
+NumSharp/.NET numerical path.
+
+.NET Framework, .NET 8/9, x86, and Intel macOS are not supported targets for
+the Python 3.15 line.

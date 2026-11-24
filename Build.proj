@@ -12,6 +12,8 @@
     <UtilsDir>$(RootDir)eng\utils</UtilsDir>
     <BinDir>$(RootDir)bin</BinDir>
     <BuildSysDir>$(RootDir)eng</BuildSysDir>
+    <StdLibRoot Condition=" '$(StdLibRoot)' == '' ">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\IronPython.StdLib'))</StdLibRoot>
+    <StdLibCommit>35cc51492e70bfd8a4863b11755ecfc077bfa7c3</StdLibCommit>
   </PropertyGroup>
 
   <Import Project="$(BuildSysDir)\Tasks.targets" />
@@ -35,6 +37,8 @@
       PackageDir=$(PackageDir);
       PackageVersion=$(PackageVersion);
       BuildSysDir=$(BuildSysDir);
+      StdLibRoot=$(StdLibRoot);
+      StdLibCommit=$(StdLibCommit);
     </BuildProperties>
   </PropertyGroup>
 
@@ -51,7 +55,18 @@
     <MSBuild Projects="$(Solution)" Targets="Restore" />
   </Target>
 
-  <Target Name="Build" DependsOnTargets="RestoreReferences">
+  <Target Name="ValidateStdLib">
+    <Error Condition="!Exists('$(StdLibRoot)')" Text="IronPython.StdLib was not found at $(StdLibRoot)." />
+    <Exec Command="git -C &quot;$(StdLibRoot)&quot; rev-parse HEAD" ConsoleToMSBuild="true" StandardOutputImportance="Low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="ActualStdLibCommit" />
+    </Exec>
+    <PropertyGroup>
+      <ActualStdLibCommit>$([System.String]::Copy('$(ActualStdLibCommit)').Trim())</ActualStdLibCommit>
+    </PropertyGroup>
+    <Error Condition="'$(ActualStdLibCommit)' != '$(StdLibCommit)'" Text="IronPython.StdLib commit mismatch. Expected $(StdLibCommit), found $(ActualStdLibCommit)." />
+  </Target>
+
+  <Target Name="Build" DependsOnTargets="ValidateStdLib;RestoreReferences">
     <MSBuild
       Projects="$(Solution)"
       Targets="Build"
@@ -116,7 +131,7 @@
   </Target>
 
   <Target Name="_CopyStdLib" DependsOnTargets="_MakeStageDir">
-    <MSBuild Projects="$(RootDir)\src\core\IronPython.StdLib\IronPython.StdLib.pyproj"
+    <MSBuild Projects="$(StdLibRoot)\IronPython.StdLib.pyproj"
              Properties="OutputPath=$(StageDir);StdLibDirName=$(StdLibDirName)"
              Targets="Stage" />
   </Target>

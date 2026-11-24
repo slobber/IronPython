@@ -1,12 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project>
   <Import Project="$(MSBuildThisFileDirectory)\CurrentVersion.props" />
+  <Import Project="$(MSBuildThisFileDirectory)\PythonLanguageVersion.props" />
 
   <PropertyGroup>
     <!-- These are normally set by Build.proj, except when building from VS. -->
     <RootDir Condition=" '$(RootDir)' == '' ">$(MSBuildThisFileDirectory)</RootDir>
     <BuildSysDir Condition=" '$(BuildSysDir)' == '' ">$(RootDir)eng</BuildSysDir>
     <UtilsDir Condition=" '$(UtilsDir)' == '' ">$(RootDir)eng\utils</UtilsDir>
+    <StdLibRoot Condition=" '$(StdLibRoot)' == '' ">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\IronPython.StdLib'))</StdLibRoot>
+    <StdLibCommit>35cc51492e70bfd8a4863b11755ecfc077bfa7c3</StdLibCommit>
 
     <Mono Condition=" '$(Mono)' == '' AND '$(MSBuildRuntimeType)' == 'Mono' ">true</Mono>
     
@@ -27,9 +30,9 @@
     <FileVersion>$(MajorVersion).$(MinorVersion).$(MicroVersion).$(AssemblyFileRevision)</FileVersion>
     <InformationalVersion>$(MSBuildProjectName) $(MajorVersion).$(MinorVersion).$(MicroVersion) $(ReleaseLevel) $(ReleaseSerial)</InformationalVersion>
 
-    <PythonSymbols>PYTHON_$(MajorVersion)$(MinorVersion)</PythonSymbols>
-    <PythonSymbols Condition="'$(MajorVersion)$(MinorVersion)' >= '36'">$(PythonSymbols);PYTHON_36_OR_GREATER</PythonSymbols>
-    <PythonSymbols Condition="'$(MajorVersion)$(MinorVersion)' >= '37'">$(PythonSymbols);PYTHON_37_OR_GREATER</PythonSymbols>
+    <PythonSymbols>PYTHON_$(PythonLanguageMajorVersion)$(PythonLanguageMinorVersion)</PythonSymbols>
+    <PythonSymbols>$(PythonSymbols);PYTHON_36_OR_GREATER</PythonSymbols>
+    <PythonSymbols>$(PythonSymbols);PYTHON_37_OR_GREATER</PythonSymbols>
 
     <GenerateAssemblyTitleAttribute>false</GenerateAssemblyTitleAttribute>
 
@@ -63,6 +66,11 @@
 
   <ItemGroup>
     <SourceRoot Include="$(MSBuildThisFileDirectory)/" />
+    <AssemblyMetadata Include="PythonLanguageMajorVersion" Value="$(PythonLanguageMajorVersion)" />
+    <AssemblyMetadata Include="PythonLanguageMinorVersion" Value="$(PythonLanguageMinorVersion)" />
+    <AssemblyMetadata Include="PythonLanguageMicroVersion" Value="$(PythonLanguageMicroVersion)" />
+    <AssemblyMetadata Include="PythonLanguageReleaseLevel" Value="$(PythonLanguageReleaseLevel)" />
+    <AssemblyMetadata Include="PythonLanguageReleaseSerial" Value="$(PythonLanguageReleaseSerial)" />
   </ItemGroup>
 
   <!-- Signing -->
@@ -118,6 +126,7 @@
     <WarningLevel>4</WarningLevel>
     <PlatformTarget>AnyCPU</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
+    <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <LangVersion>latest</LangVersion>
     <EnableNETAnalyzers>true</EnableNETAnalyzers>
   </PropertyGroup>

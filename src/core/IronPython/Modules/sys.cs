@@ -85,6 +85,31 @@ namespace IronPython.Modules {
         public static readonly BuiltinFunction __displayhook__ = displayhook;
 
         public const int dllhandle = 0;
+        public static string pycache_prefix;
+
+        public static void audit(CodeContext context, [NotNone] string eventName, [NotNone] params object[] args) {
+            if (eventName is null) throw PythonOps.TypeError("audit() argument 1 must be str, not None");
+
+            PythonContext pythonContext = context.LanguageContext;
+            object[] hooks;
+            lock (pythonContext.AuditHooksLock) {
+                hooks = pythonContext.AuditHooks.ToArray();
+            }
+
+            object eventArgs = PythonTuple.MakeTuple(args);
+            foreach (object hook in hooks) {
+                PythonCalls.Call(context, hook, eventName, eventArgs);
+            }
+        }
+
+        public static void addaudithook(CodeContext context, object hook) {
+            if (hook is null) throw PythonOps.TypeError("addaudithook() argument must be callable, not None");
+
+            PythonContext pythonContext = context.LanguageContext;
+            lock (pythonContext.AuditHooksLock) {
+                pythonContext.AuditHooks.Add(hook);
+            }
+        }
 
         [PythonHidden]
         [Documentation(@"excepthook(exctype, value, traceback) -> None

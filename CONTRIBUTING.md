@@ -14,7 +14,14 @@ Also, [Collaborative Github Workflow](http://www.eqqon.com/index.php/Collaborati
 
 # Ideas for contributions
 
-For our first release, we are currently aiming for a Python 3.4 compatible version of IronPython. To that end we have created checklists in order to help keep track of what remains to be done:
+This branch is migrating directly to CPython 3.15.2 semantics. The active work
+plan and acceptance criteria are tracked in:
+
+- [OpenSpec proposal](openspec/changes/python-315-support/proposal.md)
+- [OpenSpec design](openspec/changes/python-315-support/design.md)
+- [Implementation tasks](openspec/changes/python-315-support/tasks.md)
+
+The historical Python 3.4-3.6 checklists remain available for lineage:
 
 * [What's New In Python 3.0](WhatsNewInPython30.md)
 * [What's New In Python 3.1](WhatsNewInPython31.md)

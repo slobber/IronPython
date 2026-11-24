@@ -15,6 +15,9 @@ using Microsoft.Scripting.Runtime;
 using Microsoft.Scripting.Utils;
 
 using IronPython.Compiler.Ast;
+using IronPython.Compiler.Generated;
+using IronPython.Compiler.PublicAst;
+using IronPython.Compiler.Syntax;
 using IronPython.Runtime;
 using IronPython.Runtime.Exceptions;
 using IronPython.Runtime.Operations;
@@ -34,6 +37,8 @@ namespace IronPython.Compiler {
     // that's probably about all you need to know to get stuck in.
 
     public class Parser : IDisposable { // TODO: remove IDisposable
+        internal static bool UseGeneratedParser { get; set; }
+
         // immutable properties:
         private readonly Tokenizer _tokenizer;
 
@@ -53,6 +58,7 @@ namespace IronPython.Compiler {
         // state:
         private TokenWithSpan _token;
         private TokenWithSpan _lookahead;
+        private TokenWithSpan? _secondLookahead;
         private Stack<FunctionDefinition> _functions;
         private Stack<ClassDefinition> _classes;
         private bool _fromFutureAllowed;
@@ -129,9 +135,66 @@ namespace IronPython.Compiler {
         //file_input: (Newline | stmt)* ENDMARKER
         public PythonAst ParseFile(bool makeModule, bool returnValue) {
             try {
+                if (UseGeneratedParser) {
+                    return ParseGeneratedFile();
+                }
                 return ParseFileWorker(makeModule, returnValue);
             } catch (DecoderFallbackException dfe) {
                 throw BadSourceError(dfe);
+            }
+        }
+
+        private PythonAst ParseGeneratedFile() {
+            string source = _sourceReader.ReadToEnd();
+            var tokenizer = new PythonTokenizer(source);
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+            if (!result.Success || result.Value is not IronPython.Compiler.Syntax.Ast.Module module) {
+                PegParseFailure failure = parser.LastFailure;
+                throw PythonOps.SyntaxError(
+                    failure?.Message ?? "invalid syntax",
+                    _sourceUnit,
+                    SourceSpan.Invalid,
+                    ErrorCodes.SyntaxError);
+            }
+            NotifyGeneratedParserSink(module);
+            return PublicAstLowerer.LowerModule(module, _context);
+        }
+
+        private void NotifyGeneratedParserSink(IronPython.Compiler.Syntax.Ast.Module module) {
+            ParserSink sink = ParserSink;
+            if (sink != null) {
+                new GeneratedParserSinkWalker(sink).Visit(module);
+            }
+        }
+
+        private sealed class GeneratedParserSinkWalker : IronPython.Compiler.Syntax.Ast.PythonAstWalker {
+            private readonly ParserSink _sink;
+
+            public GeneratedParserSinkWalker(ParserSink sink) {
+                _sink = sink;
+            }
+
+            protected override void VisitNode(IronPython.Compiler.Syntax.Ast.PythonAstNode node) {
+                if (node is IronPython.Compiler.Syntax.Ast.Name name) {
+                    _sink.StartName(ToSourceSpan(name), name.Id);
+                }
+                base.VisitNode(node);
+            }
+
+            private static SourceSpan ToSourceSpan(IronPython.Compiler.Syntax.Ast.PythonAstNode node) {
+                var start = new SourceLocation(
+                    0,
+                    node.LineNumber ?? 1,
+                    (node.ColumnOffset ?? 0) + 1);
+                var end = new SourceLocation(
+                    0,
+                    node.EndLineNumber ?? node.LineNumber ?? 1,
+                    (node.EndColumnOffset ?? node.ColumnOffset ?? 0) + 1);
+                return new SourceSpan(start, end);
             }
         }
 
@@ -320,6 +383,7 @@ namespace IronPython.Compiler {
             _languageFeatures = languageFeatures;
             _token = new TokenWithSpan();
             _lookahead = new TokenWithSpan();
+            _secondLookahead = null;
             _fromFutureAllowed = true;
             _functions = null;
             _privatePrefix = null;
@@ -411,6 +475,15 @@ namespace IronPython.Compiler {
         //stmt: simple_stmt | compound_stmt
         //compound_stmt: if_stmt | while_stmt | for_stmt | try_stmt | with_stmt | funcdef | classdef | decorated | async_stmt
         private Statement ParseStmt() {
+            // Temporary migration bridge: the legacy parser does not yet implement
+            // lazy-import semantics. Parse the 3.15 soft keyword as an eager import
+            // so the 3.15 standard library can be exercised until the new parser lands.
+            if (PeekToken() is NameToken { Name: "lazy" } &&
+                PeekSecondToken() is { Kind: TokenKind.KeywordImport or TokenKind.KeywordFrom }) {
+                NextToken();
+                return ParseSimpleStmt();
+            }
+
             switch (PeekToken().Kind) {
                 case TokenKind.KeywordIf:
                     return ParseIfStmt();
@@ -3448,12 +3521,22 @@ namespace IronPython.Compiler {
 
         private Token NextToken() {
             _token = _lookahead;
-            FetchLookahead();
+            if (_secondLookahead is not null) {
+                _lookahead = _secondLookahead.Value;
+                _secondLookahead = null;
+            } else {
+                FetchLookahead();
+            }
             return _token.Token;
         }
 
         private Token PeekToken() {
             return _lookahead.Token;
+        }
+
+        private Token PeekSecondToken() {
+            _secondLookahead ??= new TokenWithSpan(_tokenizer.GetNextToken(), _tokenizer.TokenSpan);
+            return _secondLookahead.Value.Token;
         }
 
         private void FetchLookahead() {

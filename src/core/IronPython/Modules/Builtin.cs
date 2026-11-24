@@ -187,7 +187,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             "eval compiles the code as if were an expression\n" +
             "single compiles a single statement\n\n" +
             "source can either be a string, bytes or an AST object")]
-        public static object compile(CodeContext/*!*/ context, [NotNone] _ast.AST source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] _ast.AST source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
@@ -206,7 +206,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         }
 
         [Documentation("")] // provided by first overload
-        public static object compile(CodeContext/*!*/ context, [NotNone] IBufferProtocol source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] IBufferProtocol source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
@@ -221,7 +221,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         }
 
         [Documentation("")] // provided by first overload
-        public static object compile(CodeContext/*!*/ context, [NotNone] string source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] string source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);

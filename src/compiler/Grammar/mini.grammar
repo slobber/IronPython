@@ -1,0 +1,2 @@
+# Minimal grammar used to prove the incremental source-generator pipeline.
+start: NAME "=" INTEGER EOF;

@@ -2,7 +2,7 @@
 <Project Sdk="Microsoft.Build.NoTargets/3.3.0">
 
   <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
+    <TargetFramework>net10.0</TargetFramework>
     <OutputType>Exe</OutputType>
     <AssemblyName>ipy</AssemblyName>
     <UseAppHost>false</UseAppHost>
@@ -19,7 +19,7 @@
 
   <PropertyGroup>
     <!-- nuspec properties -->
-    <PackageId>IronPython.Console</PackageId>
+    <PackageId>CyberStone.IronPython.Console</PackageId>
     <Title>IronPython Command-line Interpreter</Title>
     <Version>$(PackageVersion)</Version>
     <Authors>IronPython Contributors, Microsoft</Authors>

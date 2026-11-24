@@ -78,7 +78,7 @@ namespace IronPythonTest.Cases {
             var current = System.Reflection.Assembly.GetExecutingAssembly().Location;
             var found = false;
             while (!found && !string.IsNullOrEmpty(current)) {
-                var test = Path.Combine(current, "src", "core", "IronPython.StdLib", "lib");
+                var test = Path.Combine(current, "src", "core", "IronPython");
                 if (Directory.Exists(test)) {
                     return current;
                 }
@@ -88,12 +88,26 @@ namespace IronPythonTest.Cases {
             return string.Empty;
         }
 
+        internal static string GetStdLibPath() {
+            var configured = Environment.GetEnvironmentVariable("CYBERSTONE_IRONPYTHON_STDLIB");
+            if (!string.IsNullOrEmpty(configured)) {
+                var configuredPath = Path.Combine(configured, "lib");
+                if (Directory.Exists(configuredPath)) return configuredPath;
+            }
+
+            var root = FindRoot();
+            var siblingPath = Path.GetFullPath(Path.Combine(root, "..", "IronPython.StdLib", "lib"));
+            if (Directory.Exists(siblingPath)) return siblingPath;
+
+            return Path.Combine(root, "src", "core", "IronPython.StdLib", "lib");
+        }
+
         private static void AddSearchPaths(ScriptEngine engine) {
             var paths = new List<string>(engine.GetSearchPaths());
             if (!paths.Any(x => x.Contains("stdlib", StringComparison.OrdinalIgnoreCase))) {
                 var root = FindRoot();
                 if (!string.IsNullOrEmpty(root)) {
-                    paths.Insert(0, Path.Combine(root, "src", "core", "IronPython.StdLib", "lib"));
+                    paths.Insert(0, GetStdLibPath());
                 }
             }
             engine.SetSearchPaths(paths);
@@ -149,7 +163,7 @@ namespace IronPythonTest.Cases {
         }
 
         private static string GetIronPythonPath() {
-            var path = Path.Combine(FindRoot(), "src", "core", "IronPython.StdLib", "lib");
+            var path = GetStdLibPath();
             if (Directory.Exists(path)) {
                 return path;
             }

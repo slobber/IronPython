@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFrameworks>net462;netstandard2.0;net8.0;net10.0;net11.0</TargetFrameworks>
+    <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <BaseAddress>879755264</BaseAddress>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
@@ -28,6 +28,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\..\compiler\IronPython.Compiler.Syntax\IronPython.Compiler.Syntax.csproj" />
     <ProjectReference Include="..\..\dlr\src\core\Microsoft.Dynamic\Microsoft.Dynamic.csproj" />
   </ItemGroup>
 
@@ -50,15 +51,11 @@
     <PackageReference Include="Mono.Unix" Version="7.1.0-final.1.21458.1" />
   </ItemGroup>
 
-  <ItemGroup Condition="'$(IsFullFramework)' == 'true' OR '$(TargetFramework)' == 'netstandard2.0'">
-    <PackageReference Include="System.Memory" Version="4.6.3" />
-  </ItemGroup>
-
   <ItemGroup>
     <None Include="Lib\**\*.py" Link="lib\%(RecursiveDir)%(Filename)%(Extension)">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
-    <None Include="..\IronPython.StdLib\lib\os.py" Link="lib\os.py">
+    <None Include="$(StdLibRoot)\lib\os.py" Link="lib\os.py">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
   </ItemGroup>
@@ -66,8 +63,8 @@
   <ItemGroup>
     <EmbeddedResource Include="Modules\unicodedata\IPyUnicodeData.txt.gz" />
     <EmbeddedResource Include="Modules\unicodedata\IPyUnicodeData-3.2.0.txt.gz" />
-    <EmbeddedResource Include="..\IronPython.StdLib\lib\importlib\_bootstrap.py" Link="Modules\_bootstrap.py" />
-    <EmbeddedResource Condition="'$(MajorVersion)$(MinorVersion)' >= '36'" Include="..\IronPython.StdLib\lib\importlib\_bootstrap_external.py" Link="Modules\_bootstrap_external.py" />
+    <EmbeddedResource Include="$(StdLibRoot)\lib\importlib\_bootstrap.py" Link="Modules\_bootstrap.py" />
+    <EmbeddedResource Condition="'$(PythonLanguageMajorVersion)$(PythonLanguageMinorVersion)' >= '36'" Include="$(StdLibRoot)\lib\importlib\_bootstrap_external.py" Link="Modules\_bootstrap_external.py" />
   </ItemGroup>
 
   <ItemGroup>
@@ -89,10 +86,16 @@
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
       <OutputItemType>Analyzer</OutputItemType>
     </ProjectReference>
+    <ProjectReference Include="..\..\compiler\IronPython.ParserGenerator.SourceGenerator\IronPython.ParserGenerator.SourceGenerator.csproj">
+      <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
+      <OutputItemType>Analyzer</OutputItemType>
+    </ProjectReference>
   </ItemGroup>
 
-  <ItemGroup Condition=" '$(TargetFramework)' == 'netstandard2.0' ">
-    <PackageReference Include="System.Text.Encoding.CodePages" Version="4.7.0" />
+  <ItemGroup>
+    <AdditionalFiles Include="$(RootDir)src\compiler\Grammar\mini.grammar" />
+    <AdditionalFiles Include="$(RootDir)src\compiler\cpython\3.15.2\python.gram" />
+    <AdditionalFiles Include="$(RootDir)src\compiler\cpython\3.15.2\Python.asdl" />
   </ItemGroup>
 
   <Import Project="$(AfterTargetFiles)" />

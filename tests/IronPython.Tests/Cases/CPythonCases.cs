@@ -18,7 +18,7 @@ namespace IronPythonTest.Cases {
 
     internal class CPythonCaseGenerator : CommonCaseGenerator<CPythonCases> {
         protected override IEnumerable<TestInfo> GetTests() {
-            var libFolder = Path.Combine("src", "core", "IronPython.StdLib", "lib");
+            var libFolder = CaseExecuter.GetStdLibPath();
             var suiteFolder = Path.Combine("tests", "suite", "stdlib");
 
             return GetTestInfo(category, "test")
@@ -30,7 +30,7 @@ namespace IronPythonTest.Cases {
             IEnumerable<TestInfo> GetTestInfo(string category, string folder) {
                 var root = CaseExecuter.FindRoot();
                 var altFolder = Path.GetDirectoryName(folder); // drop the trailing test (or tests) folder
-                var fullPath = Path.GetFullPath(Path.Combine(root, libFolder, folder));
+                var fullPath = Path.Combine(libFolder, folder);
                 var altFullPath = Path.GetFullPath(Path.Combine(root, suiteFolder, altFolder));
                 foreach (var filename in Directory.EnumerateFiles(fullPath, "test_*.py", SearchOption.AllDirectories)) {
                     var altFilename = Path.GetFullPath(Path.Combine(altFullPath, Path.GetRelativePath(fullPath, filename)));

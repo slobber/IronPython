@@ -1,0 +1,17 @@
+[
+  {
+    "name": "arithmetic",
+    "category": "language",
+    "source": "print(1 + 2)\n"
+  },
+  {
+    "name": "exception_fields",
+    "category": "language",
+    "source": "try:\n    raise ValueError('boom')\nexcept ValueError as exc:\n    print(type(exc).__name__, str(exc), repr(exc))\n"
+  },
+  {
+    "name": "typing_alias",
+    "category": "typing",
+    "source": "type Pair[T] = tuple[T, T]\nprint(Pair[int].__args__)\n"
+  }
+]
