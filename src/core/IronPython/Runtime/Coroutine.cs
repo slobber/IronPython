@@ -226,7 +226,7 @@ namespace IronPython.Runtime {
         }
 
         /// <summary>Enables <c>await coroutine</c> from C# code.</summary>
-        public TaskAwaiter<object?> GetAwaiter() => EnsureTask().GetAwaiter();
+        public TaskAwaiter<object?> GetAwaiter() => AsTask().GetAwaiter();
 
         internal Task<object?> Task => EnsureTask();
 
