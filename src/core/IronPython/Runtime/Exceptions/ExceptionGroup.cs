@@ -57,24 +57,34 @@ namespace IronPython.Runtime.Exceptions {
         [PythonType("BaseExceptionGroup"), PythonHidden, DynamicBaseType, Serializable]
         public class _BaseExceptionGroup : BaseException, ICodeFormattable {
             private PythonTuple _exceptions = PythonTuple.EMPTY;
+            private object? _message;
+            private bool _exceptionsWereTuple;
+            private string? _exceptionsContainerName;
 
             public _BaseExceptionGroup([NotNone] PythonType type) : base(type) {
             }
 
             public void __init__([NotNone] object message, [NotNone] object exceptions) {
-                if (exceptions is null || exceptions is SetCollection) {
-                    throw PythonOps.TypeError("second argument (exceptions) must be a sequence");
-                }
-                PythonTuple items = PythonTuple.Make(exceptions);
-                Initialize(message, items);
-            }
-
-            private void Initialize(object message, PythonTuple items) {
                 if (message is not string) {
                     throw PythonOps.TypeError(
                         "argument 1 must be str, not {0}",
                         PythonOps.GetPythonTypeName(message));
                 }
+                if (exceptions is null || exceptions is SetCollection) {
+                    throw PythonOps.TypeError("second argument (exceptions) must be a sequence");
+                }
+                _exceptionsWereTuple = exceptions is PythonTuple;
+                _exceptionsContainerName = PythonOps.GetPythonTypeName(exceptions);
+                PythonTuple items = PythonTuple.Make(exceptions);
+                Initialize(message, items);
+                base.__init__(message, exceptions);
+            }
+
+            public void __init__([NotNone] object message, [NotNone] object exceptions, [NotNone] params object[] extra) {
+                throw PythonOps.TypeError("BaseExceptionGroup.__new__() takes exactly 2 arguments");
+            }
+
+            private void Initialize(object message, PythonTuple items) {
                 if (items.Count == 0) {
                     throw PythonOps.ValueError("second argument (exceptions) must be a non-empty sequence");
                 }
@@ -88,8 +98,10 @@ namespace IronPython.Runtime.Exceptions {
                     if (PythonOps.IsInstance(DefaultContext.Default, this, Exception) &&
                         !PythonOps.IsInstance(DefaultContext.Default, item, Exception)) {
                         throw PythonOps.TypeError(
-                            "Cannot nest BaseExceptions in an {0}",
-                            PythonOps.GetPythonTypeName(this));
+                            "Cannot nest BaseExceptions in {0}",
+                            PythonOps.GetPythonTypeName(this) == "ExceptionGroup"
+                                ? "an ExceptionGroup"
+                                : "'" + PythonOps.GetPythonTypeName(this) + "'");
                     }
                 }
                 InitializeUnchecked(message, items);
@@ -97,10 +109,17 @@ namespace IronPython.Runtime.Exceptions {
 
             private void InitializeUnchecked(object message, PythonTuple items) {
                 _exceptions = items;
+                _message = message;
+            }
+
+            private void InitializeDerived(object message, PythonTuple items) {
+                InitializeUnchecked(message, items);
+                _exceptionsWereTuple = true;
+                _exceptionsContainerName = "tuple";
                 base.__init__(message, items);
             }
 
-            public object? message => args is PythonTuple tuple && tuple.Count > 0 ? tuple[0] : null;
+            public object? message => _message;
 
             public PythonTuple exceptions => _exceptions;
 
@@ -114,7 +133,7 @@ namespace IronPython.Runtime.Exceptions {
                     var group = (_BaseExceptionGroup)Activator.CreateInstance(
                         GetType(),
                         DynamicHelpers.GetPythonType(this))!;
-                    group.InitializeUnchecked(message ?? string.Empty, derivedExceptions);
+                    group.InitializeDerived(message ?? string.Empty, derivedExceptions);
                     result = group;
                 } else {
                     result = PythonCalls.Call(
@@ -137,19 +156,39 @@ namespace IronPython.Runtime.Exceptions {
             }
 
             public PythonTuple split(CodeContext context, [NotNone] object condition) {
+                ValidateCondition(context, condition);
+                if (condition is PythonType groupMatcher &&
+                    PythonOps.IsInstance(context, this, groupMatcher)) {
+                    return PythonTuple.MakeTuple(this, null);
+                }
                 var matching = new List<object>();
                 var rest = new List<object>();
                 SplitChildren(context, condition, matching, rest);
                 return PythonTuple.MakeTuple(
-                    matching.Count == 0 ? null : derive(context, PythonTuple.Make(matching)),
-                    rest.Count == 0 ? null : derive(context, PythonTuple.Make(rest)));
+                    matching.Count == 0
+                        ? null
+                        : matching.Count == _exceptions.Count
+                            ? this
+                            : derive(context, PythonTuple.Make(matching)),
+                    rest.Count == 0
+                        ? null
+                        : rest.Count == _exceptions.Count
+                            ? this
+                            : derive(context, PythonTuple.Make(rest)));
             }
 
             public object? subgroup(CodeContext context, [NotNone] object condition) {
+                ValidateCondition(context, condition);
+                if (condition is PythonType groupMatcher &&
+                    PythonOps.IsInstance(context, this, groupMatcher)) {
+                    return this;
+                }
                 var matching = new List<object>();
                 var rest = new List<object>();
                 SplitChildren(context, condition, matching, rest);
-                return matching.Count == 0 ? null : derive(context, PythonTuple.Make(matching));
+                if (matching.Count == 0) return null;
+                if (matching.Count == _exceptions.Count) return this;
+                return derive(context, PythonTuple.Make(matching));
             }
 
             private void SplitChildren(
@@ -187,7 +226,37 @@ namespace IronPython.Runtime.Exceptions {
                 string items = string.Join(
                     ", ",
                     _exceptions.Select(exception => PythonOps.Repr(context, exception)));
-                return $"{DynamicHelpers.GetPythonType(this).Name}({PythonOps.Repr(context, message)}, [{items}])";
+                bool tupleStyle = _exceptionsWereTuple
+                    || args is not PythonTuple argumentTuple
+                    || argumentTuple.Count < 2;
+                string sequence;
+                if (tupleStyle) {
+                    sequence = $"({items}{(_exceptions.Count == 1 ? "," : string.Empty)})";
+                } else if (_exceptionsContainerName == "deque") {
+                    sequence = $"deque([{items}])";
+                } else {
+                    sequence = $"[{items}]";
+                }
+                return $"{DynamicHelpers.GetPythonType(this).Name}({PythonOps.Repr(context, message)}, {sequence})";
+            }
+
+            private static void ValidateCondition(CodeContext context, object condition) {
+                if (condition is PythonType type &&
+                    !PythonOps.IsSubClass(context, type, DynamicHelpers.GetPythonTypeFromType(typeof(BaseException)))) {
+                    throw PythonOps.TypeError("expected exception type, tuple of exception types, or callable");
+                }
+                if (condition is PythonTuple types) {
+                    foreach (object value in types) {
+                        if (value is not PythonType exceptionType ||
+                            !PythonOps.IsSubClass(context, exceptionType, DynamicHelpers.GetPythonTypeFromType(typeof(BaseException)))) {
+                            throw PythonOps.TypeError("expected exception type, tuple of exception types, or callable");
+                        }
+                    }
+                    return;
+                }
+                if (condition is not PythonType && !PythonOps.IsCallable(context, condition)) {
+                    throw PythonOps.TypeError("expected a callable object or tuple of types");
+                }
             }
 
             private static bool Matches(CodeContext context, object condition, object exception) {
