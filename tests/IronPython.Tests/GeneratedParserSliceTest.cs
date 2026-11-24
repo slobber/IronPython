@@ -429,6 +429,8 @@ namespace IronPython.Tests {
         [TestCase("async def f(x):\n    await x\n")]
         [TestCase("async def f(xs):\n    async for x in xs:\n        pass\n")]
         [TestCase("async def f(ctx):\n    async with ctx:\n        pass\n")]
+        [TestCase("async def f(xs):\n    return [x async for x in xs]\n")]
+        [TestCase("async def f(xs):\n    return (x async for x in xs)\n")]
         public void GeneratedGrammarAcceptsRepresentativePython315Syntax(string source) {
             var tokenizer = new PythonTokenizer(source);
             var actions = new PythonGrammarActionHandler();

@@ -2255,7 +2255,7 @@ namespace IronPython.Runtime.Operations {
                 if (newmod is PythonModule scope) {
                     context.SetVariable(name, scope.__dict__[name]);
                 } else if (newmod is NamespaceTracker nt) {
-                    object value = NamespaceTrackerOps.GetCustomMember(context, nt, name);
+                    object? value = NamespaceTrackerOps.GetCustomMember(context, nt, name);
                     if (value != OperationFailed.Value) {
                         context.SetVariable(name, value);
                     }

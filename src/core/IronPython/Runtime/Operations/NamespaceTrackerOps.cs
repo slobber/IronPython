@@ -17,6 +17,9 @@ using IronPython.Runtime.Types;
 
 namespace IronPython.Runtime.Operations {
     public static class NamespaceTrackerOps {
+        private static readonly ConditionalWeakTable<NamespaceTracker, NamespaceImportState> ImportStates =
+            new ConditionalWeakTable<NamespaceTracker, NamespaceImportState>();
+
         [SpecialName, PropertyMethod]
         public static object? Get__file__(NamespaceTracker self) {
             if (self.PackageAssemblies.Count == 1) {
@@ -73,7 +76,12 @@ namespace IronPython.Runtime.Operations {
         }
 
         [SpecialName]
-        public static object GetCustomMember(CodeContext/*!*/ context, NamespaceTracker/*!*/ self, string name) {
+        public static object? GetCustomMember(CodeContext/*!*/ context, NamespaceTracker/*!*/ self, string name) {
+            if (name == "__spec__") {
+                return ImportStates.TryGetValue(self, out NamespaceImportState? state)
+                    ? state.Spec
+                    : null;
+            }
             if (self.TryGetValue(name, out MemberTracker mt)) {
                 if (mt.MemberType == TrackerTypes.Namespace || mt.MemberType == TrackerTypes.TypeGroup) {
                     return mt;
@@ -86,6 +94,18 @@ namespace IronPython.Runtime.Operations {
             }
 
             return OperationFailed.Value;
+        }
+
+        internal static void SetSpec(NamespaceTracker tracker, object spec) {
+            ImportStates.AddOrUpdate(tracker, new NamespaceImportState(spec));
+        }
+
+        private sealed class NamespaceImportState {
+            public NamespaceImportState(object spec) {
+                Spec = spec;
+            }
+
+            public object Spec { get; }
         }
     }
 }

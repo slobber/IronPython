@@ -1108,10 +1108,16 @@ namespace IronPython.Runtime {
                 // deferring, which would run the path finder a second time
                 if (FindPathSpec(context, fullname, path, target) is object spec) return spec;
 
-                // we return "this" as the loader for the module, which uses the legacy load_module
-                // rather than exec_module since types and namespaces don't support setting
-                // the module attributes (__name__, etc.)
-                return PythonCalls.CallWithKeywordArgs(context, context.LanguageContext.ImportLibModuleSpec, [fullname, this, member is NamespaceTracker], ["is_package"]);
+                object? moduleSpec = PythonCalls.CallWithKeywordArgs(
+                    context,
+                    context.LanguageContext.ImportLibModuleSpec,
+                    [fullname, this, member is NamespaceTracker],
+                    ["is_package"]);
+                if (moduleSpec is null) return null;
+                if (member is NamespaceTracker namespaceTracker) {
+                    NamespaceTrackerOps.SetSpec(namespaceTracker, moduleSpec);
+                }
+                return moduleSpec;
             }
 
             public object? find_module(CodeContext/*!*/ context, [NotNone] string fullname, object? path = null) {
@@ -1158,6 +1164,25 @@ namespace IronPython.Runtime {
                 return member;
             }
 
+            public object? create_module(object? spec) => null; // importlib allocates the PythonModule shell
+
+            /// <summary>
+            /// Importlib 3.15 uses exec_module for meta-path loaders. CLR namespaces and types are
+            /// represented by existing objects rather than a mutable PythonModule, so install the
+            /// discovered object into sys.modules where importlib can retrieve it.
+            /// </summary>
+            public void exec_module(CodeContext/*!*/ context, [NotNone] PythonModule module) {
+                if (!PythonOps.TryGetBoundAttr(context, module, "__spec__", out object? spec)
+                    || !PythonOps.TryGetBoundAttr(context, spec, "name", out object? rawName)
+                    || rawName is not string fullname) {
+                    throw PythonOps.ImportError("CLR module has no valid __spec__.name");
+                }
+
+                object member = FindMember(context, fullname)
+                    ?? throw PythonOps.ImportError("No module named {0}", fullname);
+                context.LanguageContext.SystemStateModules[fullname] = member;
+            }
+
             /// <summary>
             /// Looks up a name in the runtime's globals, a top-level namespace or type, or a child of a namespace that has been imported.
             /// Returns the same object as attribute access on the namespace.
@@ -1183,7 +1208,7 @@ namespace IronPython.Runtime {
 
                 if (parent is null) return null;
 
-                object member = NamespaceTrackerOps.GetCustomMember(context, parent, name);
+                object? member = NamespaceTrackerOps.GetCustomMember(context, parent, name);
                 return member == OperationFailed.Value ? null : member;
             }
         }

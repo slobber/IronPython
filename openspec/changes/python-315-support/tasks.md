@@ -217,9 +217,9 @@
 
 - [x] 13.1 Preserve `async def`, `await`, `async for`, and `async with`
   parsing under the new grammar.
-- [ ] 13.2 Verify lazy-start coroutine semantics.
-- [ ] 13.3 Implement coroutine `send`, `throw`, and `close` parity.
-- [ ] 13.4 Verify async-generator `asend`, `athrow`, and `aclose`.
+- [x] 13.2 Verify lazy-start coroutine semantics.
+- [x] 13.3 Implement coroutine `send`, `throw`, and `close` parity.
+- [x] 13.4 Verify async-generator `asend`, `athrow`, and `aclose`.
 - [ ] 13.5 Implement async comprehensions and async-generator expressions.
 - [ ] 13.6 Implement `contextvars` propagation through .NET tasks.
 - [ ] 13.7 Implement `ExceptionGroup` and `except*` lowering.
@@ -233,11 +233,11 @@
 ## 14. P0: matrix multiplication
 
 - [x] 14.1 Verify `@` precedence and AST shape under the new grammar.
-- [ ] 14.2 Verify `__matmul__` and `__rmatmul__` dispatch.
-- [ ] 14.3 Verify `@=` and `__imatmul__` dispatch.
-- [ ] 14.4 Verify `operator.matmul` and `operator.imatmul`.
-- [ ] 14.5 Verify error messages and unsupported-operand behavior.
-- [ ] 14.6 Add focused NumSharp/CLR interop smoke tests.
+- [x] 14.2 Verify `__matmul__` and `__rmatmul__` dispatch.
+- [x] 14.3 Verify `@=` and `__imatmul__` dispatch.
+- [x] 14.4 Verify `operator.matmul` and `operator.imatmul`.
+- [x] 14.5 Verify error messages and unsupported-operand behavior.
+- [x] 14.6 Add focused NumSharp/CLR interop smoke tests.
 
 ## 15. Remaining Python language features
 
