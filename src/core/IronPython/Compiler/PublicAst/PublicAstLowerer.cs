@@ -2,6 +2,7 @@
 using System;
 using System.Linq;
 using IronPython.Runtime;
+using IronPython.Runtime.Operations;
 using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
 using CompilerAst = IronPython.Compiler.Ast;
@@ -519,6 +520,7 @@ namespace IronPython.Compiler.PublicAst {
                 statements);
             var tests = new System.Collections.Generic.List<CompilerAst.IfStatementTest>();
             foreach (AstNodes.MatchCase matchCase in match.Cases) {
+                ValidatePatternBindings(matchCase.Pattern);
                 PatternResult pattern = LowerPattern(matchCase.Pattern, subject);
                 CompilerAst.Expression condition = pattern.Condition;
                 if (matchCase.Guard is not null) {
@@ -535,6 +537,87 @@ namespace IronPython.Compiler.PublicAst {
                 tests.ToArray(),
                 new CompilerAst.EmptyStatement()));
             return new CompilerAst.SuiteStatement(statements.ToArray());
+        }
+
+        private static void ValidatePatternBindings(AstNodes.Pattern pattern) {
+            var seen = new System.Collections.Generic.HashSet<string>(StringComparer.Ordinal);
+            CollectPatternBindings(pattern, seen);
+        }
+
+        private static void CollectPatternBindings(
+            AstNodes.Pattern pattern,
+            System.Collections.Generic.HashSet<string> seen) {
+            switch (pattern) {
+                case AstNodes.MatchAs asPattern:
+                    AddPatternBinding(asPattern.Name, seen);
+                    if (asPattern.Pattern != null) {
+                        CollectPatternBindings(asPattern.Pattern, seen);
+                    }
+                    break;
+                case AstNodes.MatchStar star:
+                    AddPatternBinding(star.Name, seen);
+                    break;
+                case AstNodes.MatchSequence sequence:
+                    foreach (AstNodes.Pattern item in sequence.Patterns) {
+                        CollectPatternBindings(item, seen);
+                    }
+                    break;
+                case AstNodes.MatchMapping mapping:
+                    AddPatternBinding(mapping.Rest, seen);
+                    var literalKeys = new System.Collections.Generic.HashSet<object?>();
+                    foreach (AstNodes.ExprBase key in mapping.Keys) {
+                        if (key is AstNodes.Constant constant
+                            && !literalKeys.Add(constant.Value)) {
+                            throw PythonOps.SyntaxError(
+                                "mapping pattern checks duplicate key ({0})",
+                                constant.Value?.ToString() ?? "None");
+                        }
+                    }
+                    foreach (AstNodes.Pattern item in mapping.Patterns) {
+                        CollectPatternBindings(item, seen);
+                    }
+                    break;
+                case AstNodes.MatchClass classPattern:
+                    foreach (AstNodes.Pattern item in classPattern.Patterns) {
+                        CollectPatternBindings(item, seen);
+                    }
+                    foreach (AstNodes.Pattern item in classPattern.KwdPatterns) {
+                        CollectPatternBindings(item, seen);
+                    }
+                    break;
+                case AstNodes.MatchOr orPattern:
+                    System.Collections.Generic.HashSet<string>? alternativeBindings = null;
+                    foreach (AstNodes.Pattern alternative in orPattern.Patterns) {
+                        var bindings = new System.Collections.Generic.HashSet<string>(
+                            StringComparer.Ordinal);
+                        CollectPatternBindings(alternative, bindings);
+                        if (alternativeBindings == null) {
+                            alternativeBindings = bindings;
+                        } else if (!alternativeBindings.SetEquals(bindings)) {
+                            throw PythonOps.SyntaxError(
+                                "alternative patterns bind different names");
+                        }
+                    }
+                    if (alternativeBindings != null) {
+                        foreach (string name in alternativeBindings) {
+                            AddPatternBinding(name, seen);
+                        }
+                    }
+                    break;
+            }
+        }
+
+        private static void AddPatternBinding(
+            string? name,
+            System.Collections.Generic.HashSet<string> seen) {
+            if (string.IsNullOrEmpty(name) || string.Equals(name, "_", StringComparison.Ordinal)) {
+                return;
+            }
+            if (!seen.Add(name)) {
+                throw PythonOps.SyntaxError(
+                    "multiple assignments to name '{0}' in pattern",
+                    name);
+            }
         }
 
         private static PatternResult LowerPattern(
@@ -655,10 +738,12 @@ namespace IronPython.Compiler.PublicAst {
                 assignments);
             bool hasStar = sequence.Patterns.Any(item => item is AstNodes.MatchStar);
             if (!hasStar) {
-                CompilerAst.Expression condition = new CompilerAst.BinaryExpression(
-                    PythonOperator.Equal,
-                    length,
-                    new CompilerAst.ConstantExpression(sequence.Patterns.Count));
+                CompilerAst.Expression condition = And(
+                    IsPatternSequence(subject),
+                    new CompilerAst.BinaryExpression(
+                        PythonOperator.Equal,
+                        length,
+                        new CompilerAst.ConstantExpression(sequence.Patterns.Count)));
                 for (int i = 0; i < sequence.Patterns.Count; i++) {
                     CompilerAst.Expression element = NewMatchTemp(
                         new CompilerAst.IndexExpression(
@@ -677,10 +762,12 @@ namespace IronPython.Compiler.PublicAst {
                 .First(item => item.pattern is AstNodes.MatchStar)
                 .index;
             int suffixCount = sequence.Patterns.Count - starIndex - 1;
-            CompilerAst.Expression conditionWithStar = new CompilerAst.BinaryExpression(
-                PythonOperator.GreaterThanOrEqual,
-                length,
-                new CompilerAst.ConstantExpression(sequence.Patterns.Count - 1));
+            CompilerAst.Expression conditionWithStar = And(
+                IsPatternSequence(subject),
+                new CompilerAst.BinaryExpression(
+                    PythonOperator.GreaterThanOrEqual,
+                    length,
+                    new CompilerAst.ConstantExpression(sequence.Patterns.Count - 1)));
             for (int i = 0; i < sequence.Patterns.Count; i++) {
                 if (i == starIndex) continue;
                 CompilerAst.Expression element = NewMatchTemp(
@@ -717,9 +804,7 @@ namespace IronPython.Compiler.PublicAst {
             AstNodes.MatchMapping mapping,
             CompilerAst.Expression subject) {
             var assignments = new System.Collections.Generic.List<CompilerAst.Statement>();
-            CompilerAst.Expression condition = And(
-                Call("hasattr", subject, Constant("__getitem__")),
-                Call("hasattr", subject, Constant("keys")));
+            CompilerAst.Expression condition = IsPatternMapping(subject);
             for (int i = 0; i < mapping.Patterns.Count; i++) {
                 CompilerAst.Expression key = LowerExpression(mapping.Keys[i]);
                 condition = And(
@@ -750,6 +835,39 @@ namespace IronPython.Compiler.PublicAst {
                 }
             }
             return new PatternResult(condition, assignments);
+        }
+
+        private static CompilerAst.Expression IsPatternSequence(
+            CompilerAst.Expression subject) {
+            CompilerAst.Expression textTypes = new CompilerAst.TupleExpression(
+                false,
+                new CompilerAst.Expression[] {
+                    new CompilerAst.NameExpression("str"),
+                    new CompilerAst.NameExpression("bytes"),
+                    new CompilerAst.NameExpression("bytearray")
+                });
+            return And(
+                IsAbcInstance(subject, "Sequence"),
+                new CompilerAst.UnaryExpression(
+                    PythonOperator.Not,
+                    Call("isinstance", subject, textTypes)));
+        }
+
+        private static CompilerAst.Expression IsPatternMapping(
+            CompilerAst.Expression subject) {
+            return IsAbcInstance(subject, "Mapping");
+        }
+
+        private static CompilerAst.Expression IsAbcInstance(
+            CompilerAst.Expression subject,
+            string abcType) {
+            CompilerAst.Expression collections = Call(
+                "__import__",
+                Constant("collections.abc"));
+            CompilerAst.Expression type = new CompilerAst.MemberExpression(
+                new CompilerAst.MemberExpression(collections, "abc"),
+                abcType);
+            return Call("isinstance", subject, type);
         }
 
         private static CompilerAst.Expression NewMatchTemp(

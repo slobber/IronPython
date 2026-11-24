@@ -7,6 +7,7 @@
 using System.Runtime.CompilerServices;
 
 using IronPython.Runtime.Operations;
+using IronPython.Runtime.Types;
 
 using Microsoft.Scripting.Runtime;
 
@@ -30,6 +31,13 @@ namespace IronPython.Runtime {
         public string __name__ => _name;
 
         public PythonTuple __type_params__ => _typeParameters;
+
+        public object __getitem__([NotNone] object parameters) {
+            object?[] arguments = parameters is PythonTuple tuple
+                ? tuple.ToArray()
+                : new[] { parameters };
+            return new GenericAlias(this, arguments);
+        }
 
         [SpecialName]
         public object? GetCustomMember(CodeContext context, [NotNone] string name) {

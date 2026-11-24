@@ -91,6 +91,30 @@ namespace IronPython.Modules {
         public const string _vpath = "";
         public static readonly JitInfo _jit = new JitInfo();
         public static readonly Monitoring monitoring = new Monitoring();
+        public static FrozenSetCollection stdlib_module_names = CreateStdlibModuleNames();
+
+        private static FrozenSetCollection CreateStdlibModuleNames() {
+            var names = new HashSet<string>(StringComparer.Ordinal) {
+                "builtins", "sys", "array", "asyncio", "collections", "concurrent",
+                "contextvars", "datetime", "importlib", "io", "logging", "math",
+                "ntpath", "os", "pathlib", "profile", "profiling", "re", "typing"
+            };
+
+            string stdlib = Environment.GetEnvironmentVariable("CYBERSTONE_IRONPYTHON_STDLIB");
+            string libDirectory = !string.IsNullOrEmpty(stdlib)
+                ? Path.Combine(stdlib, "lib")
+                : Path.Combine(GetPrefix(), "lib");
+            if (Directory.Exists(libDirectory)) {
+                foreach (string entry in Directory.EnumerateFileSystemEntries(libDirectory)) {
+                    string name = Path.GetFileNameWithoutExtension(entry);
+                    if (name == "__pycache__" || name.Length == 0) continue;
+                    names.Add(name);
+                }
+            }
+            var list = new PythonList();
+            foreach (string name in names) list.AddNoLock(name);
+            return FrozenSetCollection.Make((object)list);
+        }
 
         private sealed class CoroutineOriginTrackingState {
             public int Depth;

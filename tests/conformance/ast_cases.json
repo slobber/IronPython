@@ -1,0 +1,12 @@
+[
+  {
+    "name": "ast_arithmetic",
+    "category": "language",
+    "source": "print(1 + 2)\n"
+  },
+  {
+    "name": "ast_assignment",
+    "category": "language",
+    "source": "answer = 40 + 2\n"
+  }
+]

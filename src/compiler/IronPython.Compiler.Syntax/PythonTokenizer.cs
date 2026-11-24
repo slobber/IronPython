@@ -530,7 +530,8 @@ namespace IronPython.Compiler.Syntax {
             while (_index < _source.Length && !IsNewLine(_source[_index])) AdvanceChar();
             string text = _source.Substring(start, _index - start);
             if (_brackets.Count == 0
-                && text.StartsWith("# type:", StringComparison.OrdinalIgnoreCase)) {
+                && text.StartsWith("# type:", StringComparison.OrdinalIgnoreCase)
+                && !text.StartsWith("# type: ignore", StringComparison.OrdinalIgnoreCase)) {
                 AddToken(PythonTokenKind.TypeComment, start, line, column, text);
             }
         }

@@ -23,16 +23,20 @@ namespace IronPython.Runtime.Types {
             __args__ = PythonTuple.MakeTuple(Array.Empty<object?>());
         }
 
-        public GenericAlias([NotNone] PythonType origin, [NotNone] params object?[] arguments) {
+        public GenericAlias([NotNone] PythonType origin, [NotNone] params object?[] arguments)
+            : this((object)origin, arguments) { }
+
+        public GenericAlias([NotNone] object origin, [NotNone] params object?[] arguments) {
             __origin__ = origin;
             __args__ = PythonTuple.MakeTuple(arguments);
         }
 
-        public PythonType __origin__ { get; }
+        public object __origin__ { get; }
 
         public PythonTuple __args__ { get; }
 
-        public string __module__ => __origin__.Name;
+        public string __module__ =>
+            __origin__ is PythonType type ? type.Name : string.Empty;
 
         public object __getitem__([NotNone] object item) {
             object?[] arguments = item is PythonTuple tuple
@@ -55,8 +59,13 @@ namespace IronPython.Runtime.Types {
         public string __repr__(CodeContext context) {
             string arguments = string.Join(
                 ", ",
-                __args__.Select(item => PythonOps.Repr(context, item)));
-            return $"{__origin__.Name}[{arguments}]";
+                __args__.Select(item => item is PythonType type
+                    ? type.Name
+                    : PythonOps.Repr(context, item)));
+            string origin = __origin__ is PythonType type
+                ? type.Name
+                : PythonOps.Repr(context, __origin__);
+            return $"{origin}[{arguments}]";
         }
 
         public int __hash__() {

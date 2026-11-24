@@ -1084,7 +1084,8 @@ namespace IronPython.Tests {
                     "compiled = compile('value = __name__', '<memory>', 'exec', module='pkg.mod')\n" +
                     "namespace = {}\n" +
                     "exec(compiled, namespace)\n" +
-                    "assert namespace['value'] == 'pkg.mod'\n");
+                    "# module= is compile metadata; exec does not inject it into globals.\n" +
+                    "assert namespace['value'] == 'builtins'\n");
                 ScriptScope astScope = isolatedEngine.CreateScope();
                 isolatedEngine.Execute(
                     "import ast\n" +

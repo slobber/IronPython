@@ -96,7 +96,7 @@
 - [x] 5.4 Add CPython 3.15.2 differential-runner infrastructure.
 - [x] 5.5 Compare exit status, stdout/stderr, exception fields, `str`/`repr`,
   public AST nodes, and source positions.
-- [ ] 5.6 Add legacy 3.4-compatible corpus differential tests.
+- [x] 5.6 Add legacy 3.4-compatible corpus differential tests.
 - [x] 5.7 Require every difference to classify as intentional evolution or bug.
 - [x] 5.8 Reject unclassified failures and skips in CI.
 - [x] 5.9 Add waiver schema with owner, issue, reason, and review date.
@@ -172,9 +172,9 @@
 - [x] 10.3 Preserve all CPython 3.15 AST fields and source positions.
 - [x] 10.4 Implement `_ast` conversion and round-tripping.
 - [x] 10.5 Implement AST constructor strict-field/unknown-keyword behavior.
-- [ ] 10.6 Implement lowering for every public AST statement and expression.
-- [ ] 10.7 Keep lowering free of parsing responsibilities.
-- [ ] 10.8 Add AST differential tests against CPython 3.15.2.
+- [x] 10.6 Implement lowering for every public AST statement and expression.
+- [x] 10.7 Keep lowering free of parsing responsibilities.
+- [x] 10.8 Add AST differential tests against CPython 3.15.2.
 - [x] 10.9 Add `compile(..., mode="exec"|"eval"|"single")` coverage.
 
 ## 11. Parser facade cutover

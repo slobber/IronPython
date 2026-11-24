@@ -1,0 +1,27 @@
+[
+  {
+    "name": "legacy_arithmetic_loop",
+    "category": "language",
+    "source": "total = 0\nfor value in range(6):\n    if value % 2:\n        total += value\nprint(total)\n"
+  },
+  {
+    "name": "legacy_function_closure",
+    "category": "language",
+    "source": "def make_adder(amount):\n    def add(value):\n        return amount + value\n    return add\nprint(make_adder(5)(7))\n"
+  },
+  {
+    "name": "legacy_class_attributes",
+    "category": "language",
+    "source": "class Point(object):\n    def __init__(self, x, y):\n        self.x = x\n        self.y = y\n    def total(self):\n        return self.x + self.y\nprint(Point(3, 4).total())\n"
+  },
+  {
+    "name": "legacy_generator",
+    "category": "language",
+    "source": "def values():\n    yield 1\n    yield 2\nprint(tuple(values()))\n"
+  },
+  {
+    "name": "legacy_exception_handling",
+    "category": "language",
+    "source": "try:\n    raise ValueError('boom')\nexcept ValueError as error:\n    print(type(error).__name__, str(error))\n"
+  }
+]

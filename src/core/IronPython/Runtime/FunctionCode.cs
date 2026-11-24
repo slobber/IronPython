@@ -546,6 +546,8 @@ namespace IronPython.Runtime {
             }
         }
 
+        public string co_qualname => _lambda.Name;
+
         /// <summary>
         /// Returns a list of global variable names accessed by the code.
         /// </summary>

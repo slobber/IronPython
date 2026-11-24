@@ -1,0 +1,44 @@
+{
+  "exception_fields": {
+    "classification": "bug",
+    "acceptedDifferences": [
+      "ast"
+    ]
+  },
+  "legacy_arithmetic_loop": {
+    "classification": "intentional-evolution",
+    "acceptedDifferences": [
+      "ast"
+    ]
+  },
+  "legacy_class_attributes": {
+    "classification": "intentional-evolution",
+    "acceptedDifferences": [
+      "ast"
+    ]
+  },
+  "legacy_exception_handling": {
+    "classification": "intentional-evolution",
+    "acceptedDifferences": [
+      "ast"
+    ]
+  },
+  "legacy_function_closure": {
+    "classification": "intentional-evolution",
+    "acceptedDifferences": [
+      "ast"
+    ]
+  },
+  "legacy_generator": {
+    "classification": "intentional-evolution",
+    "acceptedDifferences": [
+      "ast"
+    ]
+  },
+  "typing_alias": {
+    "classification": "bug",
+    "acceptedDifferences": [
+      "ast"
+    ]
+  }
+}

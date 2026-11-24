@@ -12,8 +12,9 @@ import ast
 import json
 import sys
 
-source = sys.stdin.read()
-tree = ast.parse(source)
+with open(sys.argv[1], encoding="utf-8") as source_file:
+    source = source_file.read()
+tree = ast.parse(source, filename=sys.argv[1])
 print(json.dumps(ast.dump(tree, include_attributes=True), sort_keys=True))
 """
 
@@ -64,27 +65,27 @@ def run_case(cpython, ironpython, case, timeout, include_ast):
     try:
         cpython_result = run_command(cpython + [path], None, timeout)
         ironpython_result = run_command(ironpython + [path], None, timeout)
+
+        result = {
+            "name": case["name"],
+            "category": case.get("category", "language"),
+            "cpython": cpython_result,
+            "ironpython": ironpython_result,
+            "differences": [],
+        }
+        for field in ("exit", "stdout", "stderr"):
+            if cpython_result[field] != ironpython_result[field]:
+                result["differences"].append(field)
+
+        if include_ast:
+            cpython_ast = run_command(cpython + ["-c", AST_HELPER, path], None, timeout)
+            ironpython_ast = run_command(ironpython + ["-c", AST_HELPER, path], None, timeout)
+            result["cpython_ast"] = cpython_ast
+            result["ironpython_ast"] = ironpython_ast
+            if cpython_ast != ironpython_ast:
+                result["differences"].append("ast")
     finally:
         os.unlink(path)
-
-    result = {
-        "name": case["name"],
-        "category": case.get("category", "language"),
-        "cpython": cpython_result,
-        "ironpython": ironpython_result,
-        "differences": [],
-    }
-    for field in ("exit", "stdout", "stderr"):
-        if cpython_result[field] != ironpython_result[field]:
-            result["differences"].append(field)
-
-    if include_ast:
-        cpython_ast = run_command(cpython + ["-c", AST_HELPER], source, timeout)
-        ironpython_ast = run_command(ironpython + ["-c", AST_HELPER], source, timeout)
-        result["cpython_ast"] = cpython_ast
-        result["ironpython_ast"] = ironpython_ast
-        if cpython_ast != ironpython_ast:
-            result["differences"].append("ast")
 
     return result
 

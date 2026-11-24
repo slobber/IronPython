@@ -44,7 +44,7 @@ all four source-position fields.
 python tests/conformance/differential_runner.py \
   --cpython /path/to/python3.15 \
   --ironpython "dotnet bin/Release/net10.0/ipy.dll" \
-  --cases tests/conformance/smoke_cases.json \
+  --cases tests/conformance/ast_cases.json \
   --classifications tests/conformance/classifications.json \
   --report artifacts/differential-report.json
 ```
@@ -52,3 +52,8 @@ python tests/conformance/differential_runner.py \
 Any non-empty difference must have a case classification of
 `intentional-evolution` or `bug` and list the accepted comparison fields.
 Unclassified failures return a non-zero exit code.
+
+`ast_cases.json` is the exact-match AST gate. `legacy_cases.json` keeps a
+3.4-compatible runtime corpus for migration diagnostics. Run the latter with
+`classifications.json`; AST schema evolution is allowed there but runtime
+output still has to match.

@@ -115,6 +115,15 @@ namespace IronPython.Modules {
 
         [PythonType]
         public abstract class AST {
+            private static readonly HashSet<string> SequenceFieldNames =
+                new HashSet<string>(StringComparer.Ordinal) {
+                    "args", "bases", "body", "cases", "comparators", "decorator_list",
+                    "defaults", "elts", "finalbody", "generators", "handlers", "ifs",
+                    "items", "keys", "keywords", "kw_defaults", "kwonlyargs", "names",
+                    "ops", "orelse", "patterns", "posonlyargs", "targets", "type_ignores",
+                    "type_params", "values"
+                };
+
             protected int? _lineno; // both lineno and col_offset are expected to be int, in cpython anything is accepted
             protected int? _col_offset;
             protected int? _end_lineno;
@@ -123,6 +132,23 @@ namespace IronPython.Modules {
             public PythonTuple _fields { get; protected set; } = PythonTuple.EMPTY;
 
             public PythonTuple _attributes { get; protected set; } = PythonTuple.EMPTY;
+
+            public PythonDictionary _field_types {
+                get {
+                    var result = new PythonDictionary();
+                    foreach (object fieldValue in _fields) {
+                        if (fieldValue is not string name) continue;
+                        result[name] = string.Equals(name, "ctx", StringComparison.Ordinal)
+                            ? DynamicHelpers.GetPythonTypeFromType(typeof(expr_context))
+                            : SequenceFieldNames.Contains(name)
+                                ? new IronPython.Runtime.Types.GenericAlias(
+                                    TypeCache.PythonList,
+                                    TypeCache.Object)
+                                : TypeCache.Object;
+                    }
+                    return result;
+                }
+            }
 
             public void __init__([ParamDictionary] IDictionary<object, object> kwargs) {
                 foreach (object field in _fields) {
@@ -377,27 +403,26 @@ namespace IronPython.Modules {
             internal static expr Convert(ConstantExpression expr) {
                 expr ast;
 
-                if (expr.Value == null || expr.Value is bool)
-                    return new NameConstant(expr.Value);
-
-                if (expr.Value is int || expr.Value is double || expr.Value is long || expr.Value is BigInteger || expr.Value is Complex)
-                    ast = new Num(expr.Value);
-                else if (expr.Value is string)
-                    ast = new Str((string)expr.Value);
-                else if (expr.Value is IronPython.Runtime.Bytes)
-                    ast = new Bytes((IronPython.Runtime.Bytes)expr.Value);
-                else if (expr.Value is IronPython.Runtime.Types.Ellipsis)
-                    ast = Ellipsis.Instance;
-                else if (expr.Value is PythonTuple tuple) {
+                if (expr.Value is PythonTuple tuple) {
                     var items = new PythonList(tuple.Count);
                     foreach (object item in tuple) {
                         items.Add(Convert(new ConstantExpression(item)));
                     }
                     ast = new Tuple(items, Load.Instance);
-                }
-                else
+                } else if (expr.Value == null
+                    || expr.Value is bool
+                    || expr.Value is int
+                    || expr.Value is double
+                    || expr.Value is long
+                    || expr.Value is BigInteger
+                    || expr.Value is Complex
+                    || expr.Value is string
+                    || expr.Value is IronPython.Runtime.Bytes
+                    || expr.Value is IronPython.Runtime.Types.Ellipsis) {
+                    ast = new Constant(expr.Value);
+                } else {
                     throw new ArgumentTypeException("Unexpected constant type: " + expr.Value.GetType());
-
+                }
                 return ast;
             }
 
@@ -671,14 +696,24 @@ namespace IronPython.Modules {
         [PythonType]
         public class excepthandler : AST {
             public excepthandler() {
-                _attributes = PythonTuple.MakeTuple(new[] { nameof(lineno), nameof(col_offset) });
+                _attributes = PythonTuple.MakeTuple(new[] {
+                    nameof(lineno),
+                    nameof(col_offset),
+                    nameof(end_lineno),
+                    nameof(end_col_offset)
+                });
             }
         }
 
         [PythonType]
         public abstract class expr : AST {
             protected expr() {
-                _attributes = PythonTuple.MakeTuple(new[] { nameof(lineno), nameof(col_offset) });
+                _attributes = PythonTuple.MakeTuple(new[] {
+                    nameof(lineno),
+                    nameof(col_offset),
+                    nameof(end_lineno),
+                    nameof(end_col_offset)
+                });
             }
 
             internal virtual AstExpression Revert() {
@@ -752,7 +787,12 @@ namespace IronPython.Modules {
         [PythonType]
         public abstract class stmt : AST {
             protected stmt() {
-                _attributes = PythonTuple.MakeTuple(new[] { nameof(lineno), nameof(col_offset) });
+                _attributes = PythonTuple.MakeTuple(new[] {
+                    nameof(lineno),
+                    nameof(col_offset),
+                    nameof(end_lineno),
+                    nameof(end_col_offset)
+                });
             }
 
             internal virtual Statement Revert() {
@@ -1483,7 +1523,7 @@ namespace IronPython.Modules {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(type), nameof(name), nameof(body) });
             }
 
-            public ExceptHandler([Optional] expr type, [Optional] expr name, PythonList body,
+            public ExceptHandler([Optional] expr type, [Optional] object name, PythonList body,
                 [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.type = type;
@@ -1498,18 +1538,25 @@ namespace IronPython.Modules {
                 if (stmt.Test != null)
                     type = Convert(stmt.Test);
                 if (stmt.Target != null)
-                    name = Convert(stmt.Target, Store.Instance);
+                    name = ((Name)Convert(stmt.Target, Store.Instance)).id;
 
                 body = ConvertStatements(stmt.Body);
             }
 
             internal TryStatementHandler RevertHandler() {
-                return new TryStatementHandler(expr.Revert(type), expr.Revert(name), stmt.RevertStmts(body));
+                expr target = name switch {
+                    null => null,
+                    string identifier => new Name(identifier, Store.Instance),
+                    expr expression => expression,
+                    _ => throw new ArgumentTypeException(
+                        "ExceptHandler.name must be a string or None.")
+                };
+                return new TryStatementHandler(expr.Revert(type), expr.Revert(target), stmt.RevertStmts(body));
             }
 
             public expr type { get; set; }
 
-            public expr name { get; set; }
+            public object name { get; set; }
 
             public PythonList body { get; set; }
         }

@@ -307,6 +307,68 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void AstDumpUsesCpython315ConstantAndSourcePositionShape() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "import ast\n" +
+                    "dumped = ast.dump(ast.parse('print(1 + 2)\\n'), include_attributes=True)\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            Assert.That(
+                scope.GetVariable<string>("dumped"),
+                Is.EqualTo(
+                    "Module(body=[Expr(value=Call(func=Name(id='print', lineno=1, " +
+                    "col_offset=0, end_lineno=1, end_col_offset=5), args=[BinOp(" +
+                    "left=Constant(value=1, lineno=1, col_offset=6, end_lineno=1, " +
+                    "end_col_offset=7), op=Add(), right=Constant(value=2, lineno=1, " +
+                    "col_offset=10, end_lineno=1, end_col_offset=11), lineno=1, " +
+                    "col_offset=6, end_lineno=1, end_col_offset=11)], lineno=1, " +
+                    "col_offset=0, end_lineno=1, end_col_offset=12), lineno=1, " +
+                    "col_offset=0, end_lineno=1, end_col_offset=12)])"));
+        }
+
+        [Test]
+        public void TypeAliasSupportsSubscriptionAndRuntimeArguments() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "type Pair[T] = tuple[T, T]\n" +
+                    "pair_alias = Pair[int]\n" +
+                    "pair_args = pair_alias.__args__\n" +
+                    "pair_args_text = repr(pair_args)\n" +
+                    "pair_origin = pair_alias.__origin__\n" +
+                    "pair_text = str(pair_alias)\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            Assert.Multiple(() => {
+                Assert.That(
+                    scope.GetVariable<string>("pair_args_text"),
+                    Is.EqualTo("(<class 'int'>,)"));
+                Assert.That(
+                    scope.GetVariable<TypeAliasObject>("pair_origin").__name__,
+                    Is.EqualTo("Pair"));
+                Assert.That(scope.GetVariable<string>("pair_text"), Is.EqualTo("Pair[int]"));
+            });
+        }
+
+        [Test]
         public void LazyImportsResolveOnAccessAndCall() {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
