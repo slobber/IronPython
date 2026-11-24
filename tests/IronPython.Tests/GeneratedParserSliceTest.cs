@@ -5,16 +5,19 @@ using IronPython.Compiler.Syntax;
 using IronPython.Hosting;
 using IronPython.ParserGenerator;
 using IronPython.Runtime;
+using Microsoft.Scripting.Hosting;
 using Microsoft.Scripting.Hosting.Providers;
 using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
 using NUnit.Framework;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using PublicAst = IronPython.Compiler.Syntax.Ast;
 
 namespace IronPython.Tests {
     [TestFixture]
+    [NonParallelizable]
     public sealed class GeneratedParserSliceTest {
         [Test]
         public void ParsesAssignmentFromGeneratedGrammar() {
@@ -232,6 +235,7 @@ namespace IronPython.Tests {
                 ErrorSink.Default,
                 sink);
 
+            bool previousParserMode = Parser.UseGeneratedParser;
             Parser.UseGeneratedParser = true;
             try {
                 using Parser parser = Parser.CreateParser(compilerContext, new PythonOptions());
@@ -245,7 +249,7 @@ namespace IronPython.Tests {
                     Is.InstanceOf<IronPython.Compiler.Ast.AssignmentStatement>());
                 Assert.That(sink.Names, Does.Contain("x"));
             } finally {
-                Parser.UseGeneratedParser = false;
+                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -398,6 +402,643 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void BuildsPython315StdlibTraceback() {
+            string stdlib = GetStdLibPath();
+            string source = File.ReadAllText(Path.Combine(stdlib, "traceback.py"));
+            string[] lines = File.ReadAllLines(Path.Combine(stdlib, "traceback.py"));
+            string isolated = "class TracebackException:\n"
+                + string.Join("\n", lines.Skip(1132).Take(107)) + "\n";
+            var isolatedParser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(isolated),
+                new PythonGrammarActionHandler());
+            PegParseResult isolatedResult = isolatedParser.Parse(PythonGeneratedParser.ModuleStartRule);
+            Assert.That(
+                isolatedResult.Success,
+                Is.True,
+                isolatedParser.LastFailure != null
+                    ? $"{isolatedParser.LastFailure.Message} Position={isolatedParser.LastFailure.Position}; " +
+                      $"Rules={string.Join(" -> ", isolatedParser.LastFailure.RuleStack)}"
+                    : isolatedResult.ToString());
+
+            var syntaxParser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonGrammarActionHandler());
+            PegParseResult syntax = syntaxParser.Parse(PythonGeneratedParser.ModuleStartRule);
+            Assert.That(
+                syntax.Success,
+                Is.True,
+                syntaxParser.LastFailure != null
+                    ? $"{syntaxParser.LastFailure.Message} Position={syntaxParser.LastFailure.Position}; " +
+                      $"Expected={string.Join(", ", syntaxParser.LastFailure.Expected)}; " +
+                      $"Rules={string.Join(" -> ", syntaxParser.LastFailure.RuleStack)}"
+                    : syntax.ToString());
+
+            var tokenizer = new PythonTokenizer(source);
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null
+                    ? $"{parser.LastFailure.Message} Position={parser.LastFailure.Position}; " +
+                      $"Expected={string.Join(", ", parser.LastFailure.Expected)}; " +
+                      $"Rules={string.Join(" -> ", parser.LastFailure.RuleStack)}"
+                    : result.ToString());
+            Assert.That(result.Value, Is.InstanceOf<PublicAst.Module>());
+            var module = (PublicAst.Module)result.Value;
+            Assert.That(module.Body, Is.Not.Empty);
+            Assert.That(module.Body.OfType<PublicAst.FunctionDef>(), Is.Not.Empty);
+            PublicAst.FunctionDef printException = module.Body
+                .OfType<PublicAst.FunctionDef>()
+                .Single(item => item.Name == "print_exception");
+            Assert.Multiple(() => {
+                Assert.That(printException.Args.Posonlyargs, Has.Count.EqualTo(1));
+                Assert.That(printException.Args.Args, Has.Count.EqualTo(5));
+                Assert.That(printException.Args.Defaults, Has.Count.EqualTo(5));
+                Assert.That(printException.Args.Kwarg, Is.Not.Null);
+            });
+            PublicAst.ClassDef tracebackException = module.Body
+                .OfType<PublicAst.ClassDef>()
+                .Single(item => item.Name == "TracebackException");
+            Assert.That(tracebackException.Body.OfType<PublicAst.FunctionDef>(), Is.Not.Empty);
+
+            var engine = Python.CreateEngine();
+            engine.SetSearchPaths(new[] { stdlib });
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            SourceUnit sourceUnit = pythonContext.CreateSnippet(
+                string.Empty,
+                "<traceback-lowering>",
+                SourceCodeKind.File);
+            var compilerContext = new CompilerContext(
+                sourceUnit,
+                new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
+                ErrorSink.Default);
+            Assert.That(PublicAstLowerer.LowerModule(module, compilerContext), Is.Not.Null);
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                PublicAstLowerer.ExecuteModule(module, pythonContext, out var tracebackGlobals);
+                Assert.That(tracebackGlobals.ContainsKey("TracebackException"), Is.True);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            SourceUnit tracebackSource = pythonContext.CreateFileUnit(
+                Path.Combine(stdlib, "traceback.py"));
+            var tracebackContext = new CompilerContext(
+                tracebackSource,
+                new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
+                ErrorSink.Default);
+            bool previousFacadeParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                using Parser facade = Parser.CreateParser(
+                    tracebackContext,
+                    new PythonOptions());
+                Assert.That(facade.ParseFile(true), Is.Not.Null);
+            } finally {
+                Parser.UseGeneratedParser = previousFacadeParserMode;
+            }
+        }
+
+        [Test]
+        public void ExecutesFunctionsAndClassesFromGeneratedAst() {
+            const string source =
+                "class Adder:\n" +
+                "    def add(self, value=1):\n" +
+                "        return value + 1\n" +
+                "adder = Adder()\n" +
+                "result = adder.add(2)\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var module = (PublicAst.Module)parsed.Value;
+            var engine = Python.CreateEngine();
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            PublicAstLowerer.ExecuteModule(module, pythonContext, out var globals);
+            Assert.That(globals["result"], Is.EqualTo(3));
+        }
+
+        [Test]
+        public void GeneratedAstPreservesGlobalAndClosureLookupsInAsyncFunctions() {
+            const string source =
+                "module_value = 40\n" +
+                "log = []\n" +
+                "def make():\n" +
+                "    local_value = 2\n" +
+                "    async def inner():\n" +
+                "        log.append('called')\n" +
+                "        return module_value + local_value\n" +
+                "    return inner\n" +
+                "coroutine = make()()\n" +
+                "try:\n" +
+                "    coroutine.send(None)\n" +
+                "except StopIteration as exc:\n" +
+                "    result = exc.value\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var engine = Python.CreateEngine();
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            SourceUnit sourceUnit = pythonContext.CreateSnippet(
+                string.Empty,
+                "<async-scope>",
+                SourceCodeKind.AutoDetect);
+            var compilerContext = new CompilerContext(
+                sourceUnit,
+                new PythonCompilerOptions(
+                    ModuleOptions.ExecOrEvalCode | ModuleOptions.Initialize),
+                ErrorSink.Default);
+            var ast = PublicAstLowerer.LowerModule((PublicAst.Module)parsed.Value, compilerContext);
+            ast.Bind();
+            var globals = new PythonDictionary();
+            globals["__builtins__"] = pythonContext.BuiltinModuleDict;
+            globals["__name__"] = "<async-scope>";
+            globals["__package__"] = null;
+            var moduleContext = new ModuleContext(globals, pythonContext);
+            ast.MakeLookupCode().ToScriptCode().Run(moduleContext.GlobalScope);
+            Assert.That(globals["result"], Is.EqualTo(42));
+            Assert.That(
+                ((PythonList)globals["log"]).Cast<object>().ToArray(),
+                Is.EqualTo(new object[] { "called" }));
+        }
+
+        [Test]
+        public void GeneratedParserFacadePreservesAsyncFunctionScopes() {
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "module_value = 40\n" +
+                    "log = []\n" +
+                    "async def inner():\n" +
+                    "    log.append('called')\n" +
+                    "    return module_value + 2\n" +
+                    "coroutine = inner()\n" +
+                    "try:\n" +
+                    "    coroutine.send(None)\n" +
+                    "except StopIteration as exc:\n" +
+                    "    result = exc.value\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            Assert.That(scope.GetVariable<int>("result"), Is.EqualTo(42));
+        }
+
+        [Test]
+        public void GeneratedParserFacadePreservesFunctionScopes() {
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "module_value = 40\n" +
+                    "def inner():\n" +
+                    "    return module_value + 2\n" +
+                    "result = inner()\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            Assert.That(scope.GetVariable<int>("result"), Is.EqualTo(42));
+        }
+
+        [Test]
+        public void GeneratedParserFacadeAstRunsAgainstAnExternalModuleContext() {
+            const string source =
+                "module_value = 40\n" +
+                "log = []\n" +
+                "async def inner():\n" +
+                "    log.append('called')\n" +
+                "    return module_value + 2\n" +
+                "coroutine = inner()\n" +
+                "try:\n" +
+                "    coroutine.send(None)\n" +
+                "except StopIteration as exc:\n" +
+                "    result = exc.value\n";
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            SourceUnit sourceUnit = pythonContext.CreateSnippet(
+                source,
+                "<async-facade>",
+                SourceCodeKind.AutoDetect);
+            var compilerOptions = new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode) {
+                CompilationMode = IronPython.Compiler.CompilationMode.Collectable
+            };
+            var compilerContext = new CompilerContext(
+                sourceUnit,
+                compilerOptions,
+                ErrorSink.Default);
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            IronPython.Compiler.Ast.PythonAst ast;
+            try {
+                using Parser parser = Parser.CreateParser(compilerContext, new PythonOptions());
+                ast = parser.ParseFile(true, true);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+            ast.Bind();
+
+            var globals = new PythonDictionary();
+            globals["__builtins__"] = pythonContext.BuiltinModuleDict;
+            globals["__name__"] = "<async-facade>";
+            globals["__package__"] = null;
+            var moduleContext = new ModuleContext(globals, pythonContext);
+            ast.ToScriptCode().Run(moduleContext.GlobalScope);
+
+            Assert.That(globals["result"], Is.EqualTo(42));
+        }
+
+        [Test]
+        public void ExecutesControlFlowFromGeneratedAst() {
+            const string source =
+                "values = []\n" +
+                "for i in range(4):\n" +
+                "    if i == 1:\n" +
+                "        continue\n" +
+                "    values.append(i)\n" +
+                "try:\n" +
+                "    raise ValueError('boom')\n" +
+                "except ValueError as exc:\n" +
+                "    caught = str(exc)\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var engine = Python.CreateEngine();
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            PublicAstLowerer.ExecuteModule(
+                (PublicAst.Module)parsed.Value,
+                pythonContext,
+                out var globals);
+            Assert.That(
+                ((PythonList)globals["values"]).Cast<object>().ToArray(),
+                Is.EqualTo(new object[] { 0, 2, 3 }));
+            Assert.That(globals["caught"], Is.EqualTo("boom"));
+        }
+
+        [Test]
+        public void ExecutesGeneratorLambdaAndInterpolatedFormatSpecs() {
+            const string source =
+                "generator_type = type((lambda: (yield))())\n" +
+                "value = 255\n" +
+                "width = 6\n" +
+                "formatted = f'{value:x}:' f'{value:>{width}}'\n" +
+                "debug_formatted = f'{value=}'\n" +
+                "spaced_debug_formatted = f'{value = }'\n" +
+                "joined = ','.join(str(item) for item in range(3))\n" +
+                "pair = (lambda left, right=2, *, scale=3: (left + right) * scale)(1)\n" +
+                "def collect(first, *items, required, **extras):\n" +
+                "    return first, items, required, extras\n" +
+                "collected = collect(1, 2, 3, required=4, extra=5)\n" +
+                "expanded = [0, *[1, 2], 3]\n" +
+                "expanded_dict = {**{'a': 1}, 'b': 2}\n" +
+                "bytes_value = b'abc'\n" +
+                "bytes_concat = b'a' b'\\x62' b'c'\n" +
+                "escaped_string = 'a\\x62\\u0063'\n" +
+                "def leaky():\n" +
+                "    yield 1\n" +
+                "    raise StopIteration('bad')\n" +
+                "leaky_generator = leaky()\n" +
+                "leaky_first = next(leaky_generator)\n" +
+                "pep479_cause = None\n" +
+                "try:\n" +
+                "    next(leaky_generator)\n" +
+                "except RuntimeError as exc:\n" +
+                "    pep479_cause = type(exc.__cause__).__name__\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var engine = Python.CreateEngine();
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            PublicAstLowerer.ExecuteModule(
+                (PublicAst.Module)parsed.Value,
+                pythonContext,
+                out var globals);
+            Assert.That(globals["generator_type"].GetType().Name, Is.EqualTo("PythonType"));
+            Assert.That(globals["formatted"], Is.EqualTo("ff:   255"));
+            Assert.That(globals["debug_formatted"], Is.EqualTo("value=255"));
+            Assert.That(globals["spaced_debug_formatted"], Is.EqualTo("value = 255"));
+            Assert.That(globals["joined"], Is.EqualTo("0,1,2"));
+            Assert.That(globals["pair"], Is.EqualTo(9));
+            Assert.That(globals["collected"].ToString(), Is.EqualTo("(1, (2, 3), 4, {'extra': 5})"));
+            Assert.That(
+                ((PythonList)globals["expanded"]).Cast<object>().ToArray(),
+                Is.EqualTo(new object[] { 0, 1, 2, 3 }));
+            Assert.That(
+                ((PythonDictionary)globals["expanded_dict"])["a"],
+                Is.EqualTo(1));
+            Assert.That(
+                ((Bytes)globals["bytes_value"]).ToArray(),
+                Is.EqualTo(new byte[] { (byte)'a', (byte)'b', (byte)'c' }));
+            Assert.That(
+                ((Bytes)globals["bytes_concat"]).ToArray(),
+                Is.EqualTo(new byte[] { (byte)'a', (byte)'b', (byte)'c' }));
+            Assert.That(globals["escaped_string"], Is.EqualTo("abc"));
+            Assert.That(globals["leaky_first"], Is.EqualTo(1));
+            Assert.That(globals["pep479_cause"], Is.EqualTo("StopIteration"));
+        }
+
+        [Test]
+        public void BuildsParenthesizedAndStarImportTargets() {
+            const string source =
+                "from _py_warnings import (\n" +
+                "    warn,\n" +
+                "    _set_module,\n" +
+                ")\n" +
+                "from _locale import *\n" +
+                "from os.path import curdir, pardir\n" +
+                "from . import sibling\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var module = (PublicAst.Module)parsed.Value;
+            var parenthesized = (PublicAst.ImportFrom)module.Body[0];
+            var star = (PublicAst.ImportFrom)module.Body[1];
+            var dotted = (PublicAst.ImportFrom)module.Body[2];
+            var relative = (PublicAst.ImportFrom)module.Body[3];
+            Assert.That(
+                parenthesized.Names.Select(alias => alias.Name),
+                Is.EqualTo(new[] { "warn", "_set_module" }));
+            Assert.That(star.Names.Select(alias => alias.Name), Is.EqualTo(new[] { "*" }));
+            Assert.That(dotted.Module, Is.EqualTo("os.path"));
+            Assert.That(
+                dotted.Names.Select(alias => alias.Name),
+                Is.EqualTo(new[] { "curdir", "pardir" }));
+            Assert.That(relative.Module, Is.Null);
+            Assert.That(relative.Level, Is.EqualTo(1));
+            Assert.That(relative.Names.Select(alias => alias.Name), Is.EqualTo(new[] { "sibling" }));
+        }
+
+        [Test]
+        public void ExecutesAnnotationsWalrusConditionalAndStoreTargets() {
+            const string source =
+                "class Box:\n" +
+                "    pass\n" +
+                "box = Box()\n" +
+                "box.value = 2\n" +
+                "count: int = 4\n" +
+                "label: str\n" +
+                "target = []\n" +
+                "target[0:0] = [count]\n" +
+                "result = (found := box.value) if target and box else 0\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var engine = Python.CreateEngine();
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            PublicAstLowerer.ExecuteModule(
+                (PublicAst.Module)parsed.Value,
+                pythonContext,
+                out var globals);
+            Assert.That(globals["count"], Is.EqualTo(4));
+            Assert.That(globals["found"], Is.EqualTo(2));
+            Assert.That(globals["result"], Is.EqualTo(2));
+            Assert.That(((PythonList)globals["target"]).Single(), Is.EqualTo(4));
+        }
+
+        [Test]
+        public void CompilesEvalAndSingleModesWithGeneratedParser() {
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute("assert eval('1 + 2 * 3') == 7");
+                engine.Execute(
+                    "evaluated_code = compile('40 + 2', '<eval>', 'eval')\n" +
+                    "single_code = compile('single_value = 7', '<single>', 'single')\n" +
+                    "single_namespace = {}\n" +
+                    "exec(single_code, single_namespace)\n" +
+                    "assert eval(evaluated_code) == 42\n" +
+                    "assert single_namespace['single_value'] == 7\n");
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void RoundTripsPublicAstThroughUnderscoreAst() {
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "_ast = __import__('_ast')\n" +
+                    "tree = compile(\n" +
+                    "    'value: int = 2\\n' +\n" +
+                    "    'def render(item: int) -> str:\\n' +\n" +
+                    "    '    return str(item)\\n',\n" +
+                    "    '<roundtrip>', 'exec', flags=_ast.PyCF_ONLY_AST)\n" +
+                    "assert type(tree).__name__ == 'Module'\n" +
+                    "assert type(tree.body[0]).__name__ == 'AnnAssign'\n" +
+                    "assert tree.body[0].target.id == 'value'\n" +
+                    "assert tree.body[1].args.args[0].arg == 'item'\n" +
+                    "code = compile(tree, '<roundtrip>', 'exec')\n" +
+                    "namespace = {}\n" +
+                    "exec(code, namespace)\n" +
+                    "assert namespace['value'] == 2\n" +
+                    "assert namespace['render'](3) == '3'\n");
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void BuildsCpython315TemplateStrings() {
+            const string source =
+                "name = 'world'\n" +
+                "template = t'hello {name}'\n" +
+                "formatted = t'a{3!r:>{5}}b'\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var engine = Python.CreateEngine();
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            PublicAstLowerer.ExecuteModule(
+                (PublicAst.Module)parsed.Value,
+                pythonContext,
+                out var globals);
+            var template = (TemplateObject)globals["template"];
+            var formatted = (TemplateObject)globals["formatted"];
+            Assert.Multiple(() => {
+                Assert.That(
+                    template.strings.Cast<object>().ToArray(),
+                    Is.EqualTo(new object[] { "hello ", "" }));
+                Assert.That(template.interpolations.Count, Is.EqualTo(1));
+                Assert.That(
+                    template.interpolations[0].GetType().Name,
+                    Is.EqualTo("InterpolationObject"));
+                Assert.That(
+                    ((InterpolationObject)template.interpolations[0]!).expression,
+                    Is.EqualTo("name"));
+                Assert.That(
+                    ((InterpolationObject)formatted.interpolations[0]!).format_spec,
+                    Is.EqualTo(">5"));
+                Assert.That(
+                    ((InterpolationObject)formatted.interpolations[0]!).conversion,
+                    Is.EqualTo("r"));
+            });
+        }
+
+        [Test]
+        public void ImportsContextlibWithGeneratedParser() {
+            string source = File.ReadAllText(
+                Path.Combine(GetStdLibPath(), "contextlib.py"));
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var engine = Python.CreateEngine();
+            engine.SetSearchPaths(new[] { GetStdLibPath() });
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            SourceUnit sourceUnit = pythonContext.CreateSnippet(
+                string.Empty,
+                "<contextlib-lowering>",
+                SourceCodeKind.File);
+            Assert.That(
+                PublicAstLowerer.LowerModule(
+                    (PublicAst.Module)parsed.Value,
+                    new CompilerContext(
+                        sourceUnit,
+                        new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
+                        ErrorSink.Default)),
+                Is.Not.Null);
+            PublicAstLowerer.ExecuteModule(
+                (PublicAst.Module)parsed.Value,
+                pythonContext,
+                out var globals);
+            Assert.That(globals.ContainsKey("contextmanager"), Is.True);
+
+            string abcSource = File.ReadAllText(
+                Path.Combine(GetStdLibPath(), "abc.py"));
+            var abcParser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(abcSource),
+                new PythonAstBuilder());
+            PegParseResult abcParsed = abcParser.Parse(PythonGeneratedParser.ModuleStartRule);
+            Assert.That(abcParsed.Success, Is.True,
+                abcParser.LastFailure != null ? abcParser.LastFailure.Message : abcParsed.ToString());
+            PublicAstLowerer.ExecuteModule(
+                (PublicAst.Module)abcParsed.Value,
+                pythonContext,
+                out _);
+
+            var isolatedEngine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            isolatedEngine.SetSearchPaths(new[] { GetStdLibPath() });
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                foreach (string module in new[] {
+                    "abc", "os", "_collections_abc", "collections", "functools", "types", "warnings"
+                }) {
+                    try {
+                        isolatedEngine.Execute($"import {module}");
+                    } catch (System.Exception exception) {
+                        string data = string.Join(
+                            "; ",
+                            exception.Data.Keys.Cast<object>()
+                                .Select(key => key.ToString() == "PreviousStackTraces"
+                                    ? $"PreviousStackTraces={string.Join(
+                                        " | ",
+                                        (exception.Data[key] as System.Collections.IEnumerable)
+                                            ?.Cast<object>()
+                                            .Select(item => item.ToString()) ?? System.Array.Empty<string>())}"
+                                    : $"{key}={exception.Data[key]}"));
+                        Assert.Fail(
+                            $"Generated parser import failed for '{module}': {exception}; " +
+                            $"inner={exception.InnerException}; data={data}");
+                    }
+                }
+                isolatedEngine.Execute(
+                    "import contextlib\n" +
+                    "assert contextlib.__name__ == 'contextlib'\n");
+                isolatedEngine.Execute(
+                    "compiled = compile('value = __name__', '<memory>', 'exec', module='pkg.mod')\n" +
+                    "namespace = {}\n" +
+                    "exec(compiled, namespace)\n" +
+                    "assert namespace['value'] == 'pkg.mod'\n");
+
+                var warningsEngine = Python.CreateEngine(new Dictionary<string, object> {
+                    ["NoSite"] = true
+                });
+                warningsEngine.SetSearchPaths(new[] { GetStdLibPath() });
+                warningsEngine.Execute("import warnings");
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
         public void BuildsMatrixMultiplicationWithMultiplicativePrecedence() {
             var tokenizer = new PythonTokenizer("x = 2 @ 3 * 4\n");
             var parser = new PegParser(
@@ -431,6 +1072,23 @@ namespace IronPython.Tests {
         [TestCase("async def f(ctx):\n    async with ctx:\n        pass\n")]
         [TestCase("async def f(xs):\n    return [x async for x in xs]\n")]
         [TestCase("async def f(xs):\n    return (x async for x in xs)\n")]
+        [TestCase("if x:\n    if y:\n        z += f\". Did you mean: '{s}'?\"\n    else:\n        pass\n")]
+        [TestCase("if a:\n    if b:\n        if c:\n            pass\n        else:\n            pass\nelif d:\n    pass\n")]
+        [TestCase("if a:\n    pass\nelif a and b and \\\n        c:\n    pass\n")]
+        [TestCase(
+            "if a:\n" +
+            "    pass\n" +
+            "elif a and b and \\\n" +
+            "        c is not None:\n" +
+            "    wrong_name = getattr(value, \"name\", None)\n" +
+            "    suggestion = compute(value, traceback, wrong_name)\n" +
+            "    if suggestion:\n" +
+            "        if suggestion.isascii():\n" +
+            "            self._str += f\". Did you mean: '{suggestion}'?\"\n" +
+            "        else:\n" +
+            "            self._str += f\". Did you mean: '{suggestion}' ({suggestion!a})?\"\n" +
+            "elif a and b:\n" +
+            "    pass\n")]
         public void GeneratedGrammarAcceptsRepresentativePython315Syntax(string source) {
             var tokenizer = new PythonTokenizer(source);
             var actions = new PythonGrammarActionHandler();
@@ -731,6 +1389,31 @@ namespace IronPython.Tests {
             public PegToken Peek() => _tokens[Position];
 
             public PegToken Next() => _tokens[Position++];
+        }
+
+        private static string GetStdLibPath() {
+            string configured = System.Environment.GetEnvironmentVariable(
+                "CYBERSTONE_IRONPYTHON_STDLIB");
+            if (!string.IsNullOrEmpty(configured)) {
+                return Path.Combine(configured, "lib");
+            }
+
+            string assemblyDirectory = Path.GetDirectoryName(
+                typeof(PythonContext).Assembly.Location);
+            string candidate = Path.GetFullPath(
+                Path.Combine(
+                    assemblyDirectory,
+                    "..",
+                    "..",
+                    "..",
+                    "..",
+                    "IronPython.StdLib",
+                    "lib"));
+            Assert.That(
+                Directory.Exists(candidate),
+                Is.True,
+                $"Standard library not found at {candidate}.");
+            return candidate;
         }
 
         private sealed class RecordingActionHandler : IPegActionHandler {

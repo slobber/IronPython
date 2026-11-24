@@ -48,9 +48,14 @@ namespace IronPython.Modules {
             }
         }
 
-        internal static PythonAst ConvertToPythonAst(CodeContext codeContext, AST source, string filename) {
+        internal static PythonAst ConvertToPythonAst(
+            CodeContext codeContext,
+            AST source,
+            string filename,
+            string moduleName = null) {
             Statement stmt;
             PythonCompilerOptions options = new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode);
+            options.ModuleName = moduleName;
             SourceUnit unit = new SourceUnit(codeContext.LanguageContext, NullTextContentProvider.Null, filename, SourceCodeKind.AutoDetect);
             CompilerContext compilerContext = new CompilerContext(unit, options, ErrorSink.Default);
             bool printExpression = false;
@@ -177,6 +182,11 @@ namespace IronPython.Modules {
 
             [PythonHidden]
             protected void GetSourceLocation(Node node) {
+                if (!node.IsParentDefined) {
+                    _lineno = 1;
+                    _col_offset = 0;
+                    return;
+                }
                 _lineno = node.Start.Line;
 
                 // IronPython counts from 1; CPython counts from 0
@@ -668,7 +678,9 @@ namespace IronPython.Modules {
 
         [PythonType]
         public abstract class mod : AST {
-            internal abstract PythonList GetStatements();
+            internal virtual PythonList GetStatements() {
+                return new PythonList();
+            }
         }
 
         [PythonType]
@@ -1511,7 +1523,7 @@ namespace IronPython.Modules {
                 return ret.ToArray();
             }
 
-            public PythonList dims { get; set; }
+            public PythonList dims;
         }
 
         [PythonType]

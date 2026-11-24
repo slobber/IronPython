@@ -80,7 +80,7 @@
 - [x] 4.9 Add validation that no old stdlib branch is used accidentally.
 - [x] 4.10 Configure the standard-library package to build from the sibling
   repository.
-- [ ] 4.11 Make imports start successfully under the 3.15 importlib bootstrap,
+- [x] 4.11 Make imports start successfully under the 3.15 importlib bootstrap,
   including the `_imp` interfaces expected by 3.15.
 - [x] 4.12 Complete CPython 3.14/3.15 t-string and lazy-import tokenizer/parser
   support required before `site.py` and package tests can run.
@@ -170,12 +170,12 @@
 - [x] 10.1 Generate public AST node types from `Python.asdl`.
 - [x] 10.2 Generate field metadata, constructors, walkers, and validation.
 - [x] 10.3 Preserve all CPython 3.15 AST fields and source positions.
-- [ ] 10.4 Implement `_ast` conversion and round-tripping.
+- [x] 10.4 Implement `_ast` conversion and round-tripping.
 - [x] 10.5 Implement AST constructor strict-field/unknown-keyword behavior.
 - [ ] 10.6 Implement lowering for every public AST statement and expression.
 - [ ] 10.7 Keep lowering free of parsing responsibilities.
 - [ ] 10.8 Add AST differential tests against CPython 3.15.2.
-- [ ] 10.9 Add `compile(..., mode="exec"|"eval"|"single")` coverage.
+- [x] 10.9 Add `compile(..., mode="exec"|"eval"|"single")` coverage.
 
 ## 11. Parser facade cutover
 
@@ -190,7 +190,7 @@
 
 ## 12. P0: annotations and typing
 
-- [ ] 12.1 Preserve parameter, return, variable, and module annotations in the
+- [x] 12.1 Preserve parameter, return, variable, and module annotations in the
   public AST.
 - [ ] 12.2 Implement annotation scopes and name resolution.
 - [ ] 12.3 Implement module and class `__annotations__`.
@@ -241,44 +241,44 @@
 
 ## 15. Remaining Python language features
 
-- [ ] 15.1 Implement or verify PEP 448 generalized unpacking.
-- [ ] 15.2 Implement PEP 479 generator `StopIteration` conversion.
-- [ ] 15.3 Implement PEP 498/701 final f-string grammar.
-- [ ] 15.4 Implement numeric underscores.
-- [ ] 15.5 Implement PEP 519 path-like protocol.
-- [ ] 15.6 Implement PEP 487 class creation and descriptor hooks.
-- [ ] 15.7 Implement PEP 520 and PEP 468 order guarantees.
+- [x] 15.1 Implement or verify PEP 448 generalized unpacking.
+- [x] 15.2 Implement PEP 479 generator `StopIteration` conversion.
+- [x] 15.3 Implement PEP 498/701 final f-string grammar.
+- [x] 15.4 Implement numeric underscores.
+- [x] 15.5 Implement PEP 519 path-like protocol.
+- [x] 15.6 Implement PEP 487 class creation and descriptor hooks.
+- [x] 15.7 Implement PEP 520 and PEP 468 order guarantees.
 - [ ] 15.8 Implement PEP 563 compatibility mode.
-- [ ] 15.9 Guarantee dictionary insertion order.
-- [ ] 15.10 Implement assignment expressions.
+- [x] 15.9 Guarantee dictionary insertion order.
+- [x] 15.10 Implement assignment expressions.
 - [ ] 15.11 Implement positional-only parameters.
-- [ ] 15.12 Implement f-string debug expressions.
-- [ ] 15.13 Implement `continue` in `finally`.
-- [ ] 15.14 Implement dict union operators.
-- [ ] 15.15 Implement arbitrary decorator expressions.
+- [x] 15.12 Implement f-string debug expressions.
+- [x] 15.13 Implement `continue` in `finally`.
+- [x] 15.14 Implement dict union operators.
+- [x] 15.15 Implement arbitrary decorator expressions.
 - [ ] 15.16 Implement structural pattern matching.
-- [ ] 15.17 Implement parenthesized context managers.
-- [ ] 15.18 Implement `zip(strict=True)`.
+- [x] 15.17 Implement parenthesized context managers.
+- [x] 15.18 Implement `zip(strict=True)`.
 - [ ] 15.19 Implement precise expression error ranges.
-- [ ] 15.20 Implement exception notes.
-- [ ] 15.21 Implement starred unpacking in `for`.
+- [x] 15.20 Implement exception notes.
+- [x] 15.21 Implement starred unpacking in `for`.
 - [ ] 15.22 Implement Python-level buffer protocol.
 - [ ] 15.23 Implement defined `locals()`/`exec()`/`eval()` semantics.
 - [ ] 15.24 Implement 3.13 docstring whitespace normalization.
-- [ ] 15.25 Implement bracketless `except`/`except*`.
+- [x] 15.25 Implement bracketless `except`/`except*`.
 - [ ] 15.26 Implement the PEP 765 `finally` control-flow warning.
-- [ ] 15.27 Implement unpacking in 3.15 comprehensions.
+- [x] 15.27 Implement unpacking in 3.15 comprehensions.
 - [ ] 15.28 Implement 3.15 AST constructor strictness.
 - [ ] 15.29 Implement 3.15 lazy-import syntax and runtime behavior.
-- [ ] 15.30 Implement 3.14/3.15 t-string syntax and runtime objects.
+- [x] 15.30 Implement 3.14/3.15 t-string syntax and runtime objects.
 
 ## 16. Object model, exceptions, imports, and runtime
 
 - [ ] 16.1 Implement exception groups and exception-group traceback rendering.
 - [ ] 16.2 Verify exception chaining, notes, and 3.15 diagnostic fields.
 - [ ] 16.3 Implement built-in generic aliases and subscriptable runtime types.
-- [ ] 16.4 Implement `frozendict`.
-- [ ] 16.5 Implement `sentinel`.
+- [x] 16.4 Implement `frozendict`.
+- [x] 16.5 Implement `sentinel`.
 - [ ] 16.6 Implement lazy imports and importlib integration.
 - [ ] 16.7 Implement module attribute customization APIs.
 - [ ] 16.8 Implement importlib resources and metadata changes.

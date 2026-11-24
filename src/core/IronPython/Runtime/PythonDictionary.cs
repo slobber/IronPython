@@ -369,6 +369,43 @@ namespace IronPython.Runtime {
             DictionaryOps.update(context, this, otherArgs);
         }
 
+        [return: MaybeNotImplemented]
+        public object __or__(CodeContext context, object other) {
+            if (other is not IDictionary<object, object>) {
+                return NotImplementedType.Value;
+            }
+            var result = new PythonDictionary(this);
+            foreach (KeyValuePair<object, object> pair in (IDictionary<object, object>)other) {
+                result[pair.Key] = pair.Value;
+            }
+            return result;
+        }
+
+        [return: MaybeNotImplemented]
+        public object __ror__(CodeContext context, object other) {
+            if (other is not IDictionary<object, object>) {
+                return NotImplementedType.Value;
+            }
+            var result = other is PythonDictionary dictionary
+                ? new PythonDictionary(dictionary)
+                : new PythonDictionary(context, other);
+            foreach (KeyValuePair<object, object> pair in this) {
+                result[pair.Key] = pair.Value;
+            }
+            return result;
+        }
+
+        public PythonDictionary __ior__(CodeContext context, object other) {
+            if (other is IDictionary<object, object> dictionary) {
+                foreach (KeyValuePair<object, object> pair in dictionary) {
+                    this[pair.Key] = pair.Value;
+                }
+            } else {
+                DictionaryOps.update(context, this, other);
+            }
+            return this;
+        }
+
         private static object fromkeysAny(CodeContext/*!*/ context, PythonType cls, object o, object value) {
             PythonDictionary pyDict;
             object dict;

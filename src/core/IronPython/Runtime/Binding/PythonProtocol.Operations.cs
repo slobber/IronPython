@@ -443,6 +443,7 @@ namespace IronPython.Runtime.Binding {
         }
 
         private static DynamicMetaObject MakeEnumeratorOperation(PythonOperationBinder operation, DynamicMetaObject self) {
+            PythonContext state = PythonContext.GetPythonContext(operation);
             if (self.GetLimitType() == typeof(string)) {
                 self = self.Restrict(self.GetLimitType());
 
@@ -463,6 +464,14 @@ namespace IronPython.Runtime.Binding {
                     ),
                     self.Restrictions
                 );
+            } else if (self.Value is PythonType) {
+                self = self.Restrict(self.GetLimitType());
+                return new DynamicMetaObject(
+                    Expression.Call(
+                        typeof(PythonOps).GetMethod(nameof(PythonOps.GetEnumeratorFromObject)),
+                        AstUtils.Constant(state.SharedContext),
+                        AstUtils.Convert(self.Expression, typeof(object))),
+                    self.Restrictions);
             } else if ((self.Value is IEnumerable ||
                     typeof(IEnumerable).IsAssignableFrom(self.GetLimitType())) && !(self.Value is PythonGenerator)) {
                 self = self.Restrict(self.GetLimitType());

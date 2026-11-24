@@ -246,13 +246,37 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
 #nullable enable
 
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "Usage",
+            "IPY01",
+            Justification = "The descriptor setter accepts a Python dictionary value.")]
+        public PythonDictionary __annotations__ { get; set; } = new PythonDictionary();
+
         public static object? __new__(CodeContext/*!*/ context, [NotNone] PythonType cls, [NotNone] string name, [NotNone] PythonTuple bases, [NotNone] PythonDictionary dict) {
-            return __new__(context, cls, name, bases, dict, string.Empty);
+            return __new__(context, cls, name, bases, dict, string.Empty, null);
         }
 
-        internal static object? __new__(CodeContext/*!*/ context, PythonType cls, string name, PythonTuple bases, PythonDictionary dict, string selfNames) {
+        public static object? __new__(
+            CodeContext context,
+            [NotNone] PythonType cls,
+            [NotNone] string name,
+            [NotNone] PythonTuple bases,
+            [NotNone] PythonDictionary dict,
+            [ParamDictionary] IDictionary<object, object> keywordArguments) {
+            return __new__(context, cls, name, bases, dict, string.Empty, keywordArguments);
+        }
+
+        internal static object? __new__(
+            CodeContext context,
+            PythonType cls,
+            string name,
+            PythonTuple bases,
+            PythonDictionary dict,
+            string selfNames,
+            IDictionary<object, object>? keywordArguments = null) {
 
             EnsureModule(context, dict);
+            bases = ResolveMroEntries(context, bases);
 
             PythonType meta = FindMetaClass(cls, bases);
             object? type;
@@ -262,7 +286,14 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                     && meta.TryResolveSlot(context, "__new__", out PythonTypeSlot pts)
                     && pts.TryGetValue(context, null, meta, out object value)
                 ) {
-                    type = PythonCalls.Call(context, value, meta, name, bases, dict);
+                    var args = new object?[] { meta, name, bases, dict };
+                    type = keywordArguments is null || keywordArguments.Count == 0
+                        ? PythonCalls.Call(context, value, args)
+                        : PythonCalls.CallWithKeywordArgs(
+                            context,
+                            value,
+                            args,
+                            keywordArguments);
                 } else {
                     // we have the right user __new__, call our ctor method which will do the actual
                     // creation.                   
@@ -281,7 +312,41 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 classCell.Value = type;
             }
 
+            if (type is PythonType createdType) {
+                NotifySetNames(context, createdType, dict);
+                CallInitSubclass(context, createdType, bases, keywordArguments);
+            }
+
             return type;
+        }
+
+        private static PythonTuple ResolveMroEntries(
+            CodeContext context,
+            PythonTuple bases) {
+            var resolved = new List<object>(bases.Count);
+            foreach (object baseType in bases) {
+                if (baseType is GenericAlias alias) {
+                    resolved.Add(alias.__origin__);
+                } else if (baseType is not PythonType
+                    && PythonOps.TryGetBoundAttr(context, baseType, "__origin__", out object? origin)
+                    && origin is not null) {
+                    resolved.Add(origin);
+                } else if (baseType is not PythonType
+                    && PythonOps.TryGetBoundAttr(context, baseType, "__mro_entries__", out object? callback)
+                    && callback is not null) {
+                    object replacement = PythonCalls.Call(context, callback, baseType, bases)!;
+                    if (replacement is PythonTuple tuple) {
+                        foreach (object item in tuple) resolved.Add(item);
+                    } else if (replacement is IEnumerable enumerable && replacement is not string) {
+                        foreach (object item in enumerable) resolved.Add(item);
+                    } else {
+                        throw PythonOps.TypeError("__mro_entries__ must return a tuple");
+                    }
+                } else {
+                    resolved.Add(baseType);
+                }
+            }
+            return PythonTuple.MakeTuple(resolved.ToArray());
         }
 
 #nullable restore
@@ -292,7 +357,10 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
         internal static PythonType FindMetaClass(PythonType cls, PythonTuple bases) {
             PythonType meta = cls;
-            foreach (object dt in bases) {
+            foreach (object baseObject in bases) {
+                object dt = baseObject is GenericAlias alias
+                    ? alias.__origin__
+                    : baseObject;
                 PythonType metaCls = DynamicHelpers.GetPythonType(dt);
 
                 if (meta.IsSubclassOf(metaCls)) continue;
@@ -304,6 +372,47 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 throw PythonOps.TypeError("metaclass conflict: the metaclass of a derived class must be a (non-strict) subclass of the metaclasses of all its bases");
             }
             return meta;
+        }
+
+        private static void NotifySetNames(
+            CodeContext context,
+            PythonType type,
+            PythonDictionary namespaceValues) {
+            foreach (KeyValuePair<object, object> item in namespaceValues) {
+                if (item.Key is not string name || item.Value is null) continue;
+                if (PythonOps.TryGetBoundAttr(context, item.Value, "__set_name__", out object callback)) {
+                    PythonCalls.Call(context, callback, type, name);
+                }
+            }
+        }
+
+        private static void CallInitSubclass(
+            CodeContext context,
+            PythonType type,
+            PythonTuple bases,
+            IDictionary<object, object> keywordArguments) {
+            if (bases.Count == 0) return;
+            if (bases[0] is not PythonType firstBase
+                || !firstBase.TryResolveSlot(context, "__init_subclass__", out PythonTypeSlot slot)) {
+                return;
+            }
+            if (TypeCache.Object.TryResolveSlot(context, "__init_subclass__", out PythonTypeSlot objectSlot)
+                && ReferenceEquals(slot, objectSlot)) {
+                return;
+            }
+            object callback = slot.TryGetValue(context, null, firstBase, out object bound)
+                ? bound
+                : null;
+            if (callback is null) return;
+            if (keywordArguments is null || keywordArguments.Count == 0) {
+                PythonCalls.Call(context, callback, type);
+            } else {
+                PythonCalls.CallWithKeywordArgs(
+                    context,
+                    callback,
+                    new object[] { type },
+                    keywordArguments);
+            }
         }
 
         public static object __new__(CodeContext/*!*/ context, object cls, object o) {
@@ -537,20 +646,39 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             throw PythonOps.AttributeError("type object '{0}' has no attribute '{1}'", Name, name);
         }
 
-        public PythonType this[[NotNone] params Type[] args] {
+        public object __or__(object other) {
+            return new UnionType(this, other);
+        }
+
+        public object this[[NotNone] params object[] args] {
             get {
                 if (UnderlyingSystemType == typeof(Array)) {
                     if (args.Length == 1) {
-                        return DynamicHelpers.GetPythonTypeFromType(args[0].MakeArrayType());
+                        Type elementType = args[0] is PythonType pythonType
+                            ? pythonType.UnderlyingSystemType
+                            : args[0] as Type
+                                ?? throw PythonOps.TypeError(
+                                    "array item type must be a type, got {0}",
+                                    PythonOps.GetPythonTypeName(args[0]));
+                        return DynamicHelpers.GetPythonTypeFromType(
+                            elementType.MakeArrayType());
                     }
-                    throw PythonOps.TypeError("expected one argument to make array type, got {0}", args.Length);
+                    throw PythonOps.TypeError(
+                        "expected one argument to make array type, got {0}",
+                        args.Length);
                 }
-
-                if (!UnderlyingSystemType.IsGenericTypeDefinition) {
-                    throw new InvalidOperationException("MakeGenericType on non-generic type");
+                if (UnderlyingSystemType.IsGenericTypeDefinition) {
+                    PythonType[] typeArguments = args
+                        .Select(argument => argument as PythonType
+                            ?? throw PythonOps.TypeError(
+                                "generic arguments must be types, got {0}",
+                                PythonOps.GetPythonTypeName(argument)))
+                        .ToArray();
+                    return DynamicHelpers.GetPythonTypeFromType(
+                        UnderlyingSystemType.MakeGenericType(
+                            PythonTypeOps.ConvertToTypes(typeArguments)));
                 }
-
-                return DynamicHelpers.GetPythonTypeFromType(UnderlyingSystemType.MakeGenericType(args));
+                return new GenericAlias(this, args);
             }
         }
 

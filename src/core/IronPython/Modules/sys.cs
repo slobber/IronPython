@@ -150,6 +150,10 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
             return PythonOps.GetExceptionInfo(context);
         }
 
+        public static object exception(CodeContext/*!*/ context) {
+            return PythonOps.GetExceptionInfo(context)[1];
+        }
+
         // exec_prefix and executable are set by PythonContext and updated on each reload
 
         public static string intern(object o) {
@@ -372,7 +376,11 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
 
         [PythonHidden, PythonType("flags"), DontMapIEnumerableToIter]
         public sealed class SysFlags : PythonTuple {
-            internal SysFlags() : base(new object[n_fields] { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 }) { }
+            internal SysFlags() : base(new object[n_fields] {
+                0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                false, 1, 0, true, 4300,
+                1, -1, 0, 0
+            }) { }
 
             private const int INDEX_DEBUG = 0;
             private const int INDEX_INSPECT = 1;
@@ -387,14 +395,22 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
             private const int INDEX_QUIET = 10;
             private const int INDEX_HASH_RANDOMIZATION = 11;
             private const int INDEX_ISOLATED = 12;
-            private const int INDEX_UTF8_MODE = 13;
+            private const int INDEX_DEV_MODE = 13;
+            private const int INDEX_UTF8_MODE = 14;
+            private const int INDEX_WARN_DEFAULT_ENCODING = 15;
+            private const int INDEX_SAFE_PATH = 16;
+            private const int INDEX_INT_MAX_STR_DIGITS = 17;
+            private const int INDEX_GIL = 18;
+            private const int INDEX_LAZY_IMPORTS = 19;
+            private const int INDEX_CONTEXT_AWARE_WARNINGS = 20;
+            private const int INDEX_THREAD_INHERIT_CONTEXT = 21;
 
-            public const int n_fields = 14;
-            public const int n_sequence_fields = 14;
+            public const int n_fields = 22;
+            public const int n_sequence_fields = 18;
             public const int n_unnamed_fields = 0;
 
             public override string __repr__(CodeContext context) {
-                var fields = new string[n_fields] {
+                var fields = new string[n_sequence_fields] {
                     $"{nameof(debug)}={debug}",
                     $"{nameof(inspect)}={inspect}",
                     $"{nameof(interactive)}={interactive}",
@@ -408,7 +424,11 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
                     $"{nameof(quiet)}={quiet}",
                     $"{nameof(hash_randomization)}={hash_randomization}",
                     $"{nameof(isolated)}={isolated}",
+                    $"{nameof(dev_mode)}={dev_mode}",
                     $"{nameof(utf8_mode)}={utf8_mode}",
+                    $"{nameof(warn_default_encoding)}={warn_default_encoding}",
+                    $"{nameof(safe_path)}={safe_path}",
+                    $"{nameof(int_max_str_digits)}={int_max_str_digits}",
                 };
                 return $"sys.flags({string.Join(", ", fields)})";
             }
@@ -480,9 +500,49 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
                 internal set => _data[INDEX_ISOLATED] = value;
             }
 
+            public bool dev_mode {
+                get => (bool)_data[INDEX_DEV_MODE];
+                internal set => _data[INDEX_DEV_MODE] = value;
+            }
+
             public int utf8_mode {
                 get => (int)_data[INDEX_UTF8_MODE];
                 internal set => _data[INDEX_UTF8_MODE] = value;
+            }
+
+            public int warn_default_encoding {
+                get => (int)_data[INDEX_WARN_DEFAULT_ENCODING];
+                internal set => _data[INDEX_WARN_DEFAULT_ENCODING] = value;
+            }
+
+            public bool safe_path {
+                get => (bool)_data[INDEX_SAFE_PATH];
+                internal set => _data[INDEX_SAFE_PATH] = value;
+            }
+
+            public int int_max_str_digits {
+                get => (int)_data[INDEX_INT_MAX_STR_DIGITS];
+                internal set => _data[INDEX_INT_MAX_STR_DIGITS] = value;
+            }
+
+            public int gil {
+                get => (int)_data[INDEX_GIL];
+                internal set => _data[INDEX_GIL] = value;
+            }
+
+            public int lazy_imports {
+                get => (int)_data[INDEX_LAZY_IMPORTS];
+                internal set => _data[INDEX_LAZY_IMPORTS] = value;
+            }
+
+            public int context_aware_warnings {
+                get => (int)_data[INDEX_CONTEXT_AWARE_WARNINGS];
+                internal set => _data[INDEX_CONTEXT_AWARE_WARNINGS] = value;
+            }
+
+            public int thread_inherit_context {
+                get => (int)_data[INDEX_THREAD_INHERIT_CONTEXT];
+                internal set => _data[INDEX_THREAD_INHERIT_CONTEXT] = value;
             }
 
             #endregion

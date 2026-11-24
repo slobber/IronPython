@@ -29,13 +29,21 @@ namespace IronPython.Compiler.Ast {
 
         public IList<string> AsNames => _asNames;
 
+        public bool IsLazy { get; }
+
         internal PythonVariable[] Variables { get; set; }
 
-        public FromImportStatement(ModuleName root, string[] names, string[] asNames, bool fromFuture) {
+        public FromImportStatement(
+            ModuleName root,
+            string[] names,
+            string[] asNames,
+            bool fromFuture,
+            bool isLazy = false) {
             _root = root;
             _names = names;
             _asNames = asNames;
             IsFromFuture = fromFuture;
+            IsLazy = isLazy;
         }
 
         public override MSAst.Expression Reduce() {
@@ -55,6 +63,25 @@ namespace IronPython.Compiler.Ast {
 
                 ReadOnlyCollectionBuilder<MSAst.Expression> statements = new ReadOnlyCollectionBuilder<MSAst.Expression>();
                 MSAst.ParameterExpression module = Ast.Variable(typeof(object), "module");
+
+                if (IsLazy) {
+                    for (int i = 0; i < _names.Length; i++) {
+                        MSAst.Expression lazyValue = Ast.Call(
+                            AstMethods.LazyImportFrom,
+                            Parent.LocalContext,
+                            AstUtils.Constant(_root.MakeString()),
+                            AstUtils.Constant(_names[i]),
+                            AstUtils.Constant(GetLevel()));
+                        statements.Add(
+                            GlobalParent.AddDebugInfoAndVoid(
+                                AssignValue(
+                                    Parent.GetVariableExpression(Variables[i]),
+                                    lazyValue),
+                                Span));
+                    }
+                    statements.Add(AstUtils.Empty());
+                    return GlobalParent.AddDebugInfo(Ast.Block(statements.ToArray()), Span);
+                }
 
                 // Create initializer of the array of names being passed to ImportWithNames
                 MSAst.Expression[] names = new MSAst.Expression[_names.Length];

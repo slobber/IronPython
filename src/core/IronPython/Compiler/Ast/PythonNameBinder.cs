@@ -478,6 +478,11 @@ namespace IronPython.Compiler.Ast {
             node.Parent = _currentScope;
             return base.Walk(node);
         }
+        // TemplateStringExpression
+        public override bool Walk(TemplateStringExpression node) {
+            node.Parent = _currentScope;
+            return base.Walk(node);
+        }
         // GeneratorExpression
         public override bool Walk(GeneratorExpression node) {
             node.Parent = _currentScope;

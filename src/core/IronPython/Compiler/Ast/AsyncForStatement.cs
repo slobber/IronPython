@@ -117,10 +117,17 @@ namespace IronPython.Compiler.Ast {
         public override void Walk(PythonWalker walker) {
             if (walker.Walk(this)) {
                 // Build the desugared tree on first walk (when Parent and IndexSpan are set)
-                if (_desugared == null) {
+                if (_desugared == null && IsParentDefined) {
                     _desugared = BuildDesugared();
                 }
-                _desugared.Walk(walker);
+                if (_desugared is not null) {
+                    _desugared.Walk(walker);
+                } else {
+                    Left.Walk(walker);
+                    List.Walk(walker);
+                    Body.Walk(walker);
+                    Else?.Walk(walker);
+                }
             }
             walker.PostWalk(this);
         }

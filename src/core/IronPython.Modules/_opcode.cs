@@ -139,6 +139,49 @@ namespace IronPython.Modules {
 
         private static readonly int PY_INVALID_STACK_EFFECT = int.MaxValue;
 
+        public static bool has_arg(int opcode) => opcode >= HAVE_ARGUMENT;
+
+        public static bool has_const(int opcode)
+            => opcode == LOAD_CONST;
+
+        public static bool has_name(int opcode) {
+            return opcode is STORE_NAME or DELETE_NAME or LOAD_NAME
+                or STORE_GLOBAL or DELETE_GLOBAL or LOAD_GLOBAL
+                or IMPORT_NAME or IMPORT_FROM;
+        }
+
+        public static bool has_jump(int opcode) {
+            return opcode is FOR_ITER or JUMP_FORWARD or JUMP_IF_FALSE_OR_POP
+                or JUMP_IF_TRUE_OR_POP or JUMP_ABSOLUTE
+                or POP_JUMP_IF_FALSE or POP_JUMP_IF_TRUE
+                or SETUP_FINALLY or SETUP_WITH or SETUP_ASYNC_WITH
+                or CALL_FINALLY;
+        }
+
+        public static bool has_free(int opcode) {
+            return opcode is LOAD_CLOSURE or LOAD_DEREF or LOAD_CLASSDEREF
+                or STORE_DEREF or DELETE_DEREF;
+        }
+
+        public static bool has_local(int opcode) {
+            return opcode is LOAD_FAST or STORE_FAST or DELETE_FAST;
+        }
+
+        public static bool has_exc(int opcode) {
+            return opcode is SETUP_FINALLY or POP_EXCEPT or END_FINALLY
+                or POP_FINALLY or RAISE_VARARGS;
+        }
+
+        public static PythonList get_intrinsic1_descs() => new PythonList();
+
+        public static PythonList get_intrinsic2_descs() => new PythonList();
+
+        public static PythonTuple get_special_method_names() => PythonTuple.EMPTY;
+
+        public static PythonList get_nb_ops() => new PythonList();
+
+        public static object? get_executor([NotNone] object code, int offset) => null;
+
 
         /* Masks and values used by FORMAT_VALUE opcode. */
         private const int FVC_MASK = 0x3;

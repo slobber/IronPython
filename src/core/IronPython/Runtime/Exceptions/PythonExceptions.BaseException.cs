@@ -104,6 +104,16 @@ namespace IronPython.Runtime.Exceptions {
                 _args = PythonTuple.MakeTuple(args ?? new object?[] { null });
             }
 
+            public void add_note([NotNone] string note) {
+                EnsureDict();
+                if (!_dict!.TryGetValue("__notes__", out object notesValue)
+                    || notesValue is not PythonList notes) {
+                    notes = new PythonList();
+                    _dict["__notes__"] = notes;
+                }
+                notes.append(note);
+            }
+
             /// <summary>
             /// Gets or sets the arguments used for creating the exception
             /// </summary>

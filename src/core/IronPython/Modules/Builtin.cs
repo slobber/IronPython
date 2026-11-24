@@ -46,6 +46,14 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
 
         public static NotImplementedType NotImplemented => NotImplementedType.Value;
 
+        public static object __build_type_alias__(
+            CodeContext context,
+            [NotNone] string name,
+            [NotNone] object thunk,
+            [NotNone] PythonTuple typeParameters) {
+            return new TypeAliasObject(name, thunk, typeParameters);
+        }
+
         [Documentation("__import__(name, globals, locals, fromlist, level) -> module\n\nImport a module.")]
         [LightThrowing]
         public static object __import__(CodeContext/*!*/ context, [NotNone] string name, object? globals = null, object? locals = null, object? fromlist = null, int level = 0) {
@@ -192,13 +200,18 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
             ValidateCompileMode(mode);
+            string? moduleName = GetCompileModuleName(module);
 
             bool astOnly = flags != null && (Converter.ConvertToInt32(flags) & _ast.PyCF_ONLY_AST) != 0;
 
             if (astOnly) {
                 return source;
             } else {
-                PythonAst ast = _ast.ConvertToPythonAst(context, (_ast.AST)source, sfilename);
+                PythonAst ast = _ast.ConvertToPythonAst(
+                    context,
+                    (_ast.AST)source,
+                    sfilename,
+                    moduleName);
                 ast.Bind();
                 ScriptCode code = ast.ToScriptCode();
                 return ((RunnableScriptCode)code).GetFunctionCode(true);
@@ -217,7 +230,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             var contentProvider = new MemoryStreamContentProvider(context.LanguageContext, bytes, sfilename);
             var sourceUnit = context.LanguageContext.CreateSourceUnit(contentProvider, sfilename, sourceCodeKind);
 
-            return CompileHelper(context, sourceUnit, mode, flags, dont_inherit);
+            return CompileHelper(context, sourceUnit, mode, flags, dont_inherit, module);
         }
 
         [Documentation("")] // provided by first overload
@@ -238,7 +251,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
 
             var sourceUnit = context.LanguageContext.CreateSnippet(source, sfilename, sourceCodeKind);
 
-            return CompileHelper(context, sourceUnit, mode, flags, dont_inherit);
+            return CompileHelper(context, sourceUnit, mode, flags, dont_inherit, module);
         }
 
         private static SourceCodeKind ValidateCompileMode(string mode) {
@@ -251,7 +264,13 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             }
         }
 
-        private static object CompileHelper(CodeContext/*!*/ context, SourceUnit sourceUnit, string mode, object? flags, bool dont_inherit) {
+        private static object CompileHelper(
+            CodeContext/*!*/ context,
+            SourceUnit sourceUnit,
+            string mode,
+            object? flags,
+            bool dont_inherit,
+            object? module) {
             bool astOnly = false;
             int iflags = flags != null ? Converter.ConvertToInt32(flags) : 0;
             if ((iflags & _ast.PyCF_ONLY_AST) != 0) {
@@ -262,6 +281,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             bool inheritContext = GetCompilerInheritance(dont_inherit);
             CompileFlags cflags = GetCompilerFlags(iflags);
             PythonCompilerOptions opts = GetRuntimeGeneratedCodeCompilerOptions(context, inheritContext, cflags);
+            opts.ModuleName = GetCompileModuleName(module);
             if ((cflags & CompileFlags.CO_DONT_IMPLY_DEDENT) != 0) {
                 opts.DontImplyDedent = true;
             }
@@ -276,6 +296,14 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 (object)_ast.BuildAst(context, sourceUnit, opts, mode);
         }
 
+        private static string? GetCompileModuleName(object? module) {
+            return module switch {
+                null => null,
+                string name => name,
+                _ => throw PythonOps.TypeError("compile() module must be a string")
+            };
+        }
+
         public static PythonType complex => TypeCache.Complex;
 
         public static void delattr(CodeContext/*!*/ context, object? o, [NotNone] string name) {
@@ -283,6 +311,10 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         }
 
         public static PythonType dict => TypeCache.Dict;
+
+        public static PythonType frozendict => TypeCache.FrozenDict;
+
+        public static PythonType sentinel => TypeCache.Sentinel;
 
         public static PythonList dir(CodeContext/*!*/ context) {
             PythonList res = new PythonList(context, context.Dict.Keys);

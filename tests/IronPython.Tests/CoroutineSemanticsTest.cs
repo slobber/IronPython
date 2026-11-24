@@ -1,3 +1,4 @@
+using IronPython.Compiler;
 using IronPython.Hosting;
 using Microsoft.Scripting.Hosting;
 using NUnit.Framework;
@@ -6,6 +7,7 @@ using Assert = NUnit.Framework.Assert;
 
 namespace IronPython.Tests {
     [TestFixture]
+    [NonParallelizable]
     public sealed class CoroutineSemanticsTest {
         [Test]
         public void SendThrowAndCloseFollowCpythonSemantics() {
@@ -14,7 +16,15 @@ namespace IronPython.Tests {
             };
             ScriptEngine engine = Python.CreateEngine(options);
             ScriptScope scope = engine.CreateScope();
-            engine.Execute(@"
+            bool useGeneratedParser = Parser.UseGeneratedParser;
+            if (string.Equals(
+                System.Environment.GetEnvironmentVariable("CYBERSTONE_IRONPYTHON_GENERATED_PARSER"),
+                "1",
+                System.StringComparison.Ordinal)) {
+                Parser.UseGeneratedParser = true;
+            }
+            try {
+                engine.Execute(@"
 import clr
 
 log = []
@@ -43,6 +53,9 @@ close_coro = lazy()
 close_coro.close()
 close_result = 'closed'
 ", scope);
+            } finally {
+                Parser.UseGeneratedParser = useGeneratedParser;
+            }
 
             Assert.That(scope.GetVariable<IronPython.Runtime.PythonList>("lazy_initial"), Is.Empty);
             Assert.That(scope.GetVariable<int>("sent_result"), Is.EqualTo(42));
@@ -57,7 +70,15 @@ close_result = 'closed'
             };
             ScriptEngine engine = Python.CreateEngine(options);
             ScriptScope scope = engine.CreateScope();
-            engine.Execute(@"
+            bool useGeneratedParser = Parser.UseGeneratedParser;
+            if (string.Equals(
+                System.Environment.GetEnvironmentVariable("CYBERSTONE_IRONPYTHON_GENERATED_PARSER"),
+                "1",
+                System.StringComparison.Ordinal)) {
+                Parser.UseGeneratedParser = true;
+            }
+            try {
+                engine.Execute(@"
 def run_coro(coro):
     value = None
     while True:
@@ -124,6 +145,9 @@ athrow_result = repr(run_coro(drive_athrow()))
 aclose_result = run_coro(drive_aclose())
 aclose_log = list(close_log)
 ", scope);
+            } finally {
+                Parser.UseGeneratedParser = useGeneratedParser;
+            }
 
             Assert.That(
                 scope.GetVariable<string>("asend_result"),

@@ -1535,6 +1535,11 @@ namespace IronPython.Runtime.Operations {
             if (string.IsNullOrWhiteSpace(name)) return false;
 
             string normName = NormalizeEncodingName(name);
+            if (normName == "locale") {
+                normName = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                    ? $"cp{Encoding.GetEncoding(0).CodePage}"
+                    : "utf_8";
+            }
 
             if (TryGetNonaliasedEncoding(normName, out encoding)) {
                 return encoding != null;

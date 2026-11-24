@@ -22,7 +22,9 @@ namespace IronPython.Runtime.Types {
         private static PythonType? array;
         private static PythonType? builtinfunction;
         private static PythonType? pythondictionary;
+        private static PythonType? frozenpythondictionary;
         private static PythonType? frozensetcollection;
+        private static PythonType? sentinelobject;
         private static PythonType? pythonfunction;
         private static PythonType? builtin;
         private static PythonType? obj;
@@ -65,8 +67,14 @@ namespace IronPython.Runtime.Types {
         public static PythonType Dict
             => pythondictionary ??= DynamicHelpers.GetPythonTypeFromType(typeof(PythonDictionary));
 
+        public static PythonType FrozenDict
+            => frozenpythondictionary ??= DynamicHelpers.GetPythonTypeFromType(typeof(FrozenPythonDictionary));
+
         public static PythonType FrozenSet
             => frozensetcollection ??= DynamicHelpers.GetPythonTypeFromType(typeof(FrozenSetCollection));
+
+        public static PythonType Sentinel
+            => sentinelobject ??= DynamicHelpers.GetPythonTypeFromType(typeof(SentinelObject));
 
         public static PythonType Function
             => pythonfunction ??= DynamicHelpers.GetPythonTypeFromType(typeof(PythonFunction));

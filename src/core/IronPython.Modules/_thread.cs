@@ -40,6 +40,9 @@ namespace IronPython.Modules {
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2104:DoNotDeclareReadOnlyMutableReferenceTypes")]
         public static readonly PythonType LockType = DynamicHelpers.GetPythonTypeFromType(typeof(@lock));
 
+        public static PythonType _ThreadHandle =>
+            DynamicHelpers.GetPythonTypeFromType(typeof(ThreadHandle));
+
         [Documentation("start_new_thread(function, args, [kwDict]) -> thread id\nCreates a new thread running the given function")]
         public static object start_new_thread(CodeContext/*!*/ context, object? function, object? args, object? kwDict) {
             if (args is not PythonTuple tupArgs) throw PythonOps.TypeError("2nd arg must be a tuple");
@@ -61,6 +64,43 @@ namespace IronPython.Modules {
 
             return t.ManagedThreadId;
         }
+
+        public static void start_joinable_thread(
+            CodeContext context,
+            object? function,
+            ThreadHandle? handle = null,
+            bool daemon = true) {
+            Thread thread = CreateThread(
+                context,
+                new ThreadObj(
+                    context,
+                    function,
+                    PythonTuple.EMPTY,
+                    null,
+                    handle).Start);
+            thread.IsBackground = daemon;
+            handle?.SetThread(thread);
+            thread.Start();
+        }
+
+        public static bool daemon_threads_allowed() => true;
+
+        public static void _shutdown() { }
+
+        public static ThreadHandle _make_thread_handle(int ident) {
+            return new ThreadHandle(ident);
+        }
+
+        public static int get_native_id() => Environment.CurrentManagedThreadId;
+
+        public static int _get_main_thread_ident(CodeContext context) {
+            return context.LanguageContext.MainThread?.ManagedThreadId
+                ?? Environment.CurrentManagedThreadId;
+        }
+
+        public static bool _is_main_interpreter() => true;
+
+        public static void set_name(int ident, [NotNone] string name) { }
 
         /// <summary>
         /// Stops execution of Python or other .NET code on the main thread.  If the thread is
@@ -335,6 +375,43 @@ namespace IronPython.Modules {
             }
         }
 
+        [PythonType("_ThreadHandle")]
+        public sealed class ThreadHandle {
+            private Thread? _thread;
+            private int _done;
+
+            public ThreadHandle() { }
+
+            internal ThreadHandle(int ident) {
+                this.ident = ident;
+            }
+
+            public int ident { get; private set; }
+
+            internal void SetThread(Thread thread) {
+                _thread = thread;
+                ident = thread.ManagedThreadId;
+            }
+
+            public bool is_done() => Volatile.Read(ref _done) != 0;
+
+            public void join(object? timeout = null) {
+                if (_thread is null) return;
+                if (timeout is null) {
+                    _thread.Join();
+                } else {
+                    int milliseconds = timeout is double seconds
+                        ? (int)Math.Ceiling(seconds * 1000)
+                        : Converter.ConvertToInt32(timeout);
+                    _thread.Join(milliseconds);
+                }
+            }
+
+            public void _set_done() {
+                Volatile.Write(ref _done, 1);
+            }
+        }
+
         #region Internal Implementation details
 
         private static Thread CreateThread(CodeContext/*!*/ context, ThreadStart start) {
@@ -347,12 +424,19 @@ namespace IronPython.Modules {
             private readonly PythonDictionary? _kwargs;
             private readonly PythonTuple _args;
             private readonly CodeContext _context;
+            private readonly ThreadHandle? _handle;
 
-            public ThreadObj(CodeContext context, object? function, PythonTuple args, PythonDictionary? kwargs) {
+            public ThreadObj(
+                CodeContext context,
+                object? function,
+                PythonTuple args,
+                PythonDictionary? kwargs,
+                ThreadHandle? handle = null) {
                 _func = function;
                 _kwargs = kwargs;
                 _args = args;
                 _context = context;
+                _handle = handle;
             }
 
             public void Start() {
@@ -373,6 +457,7 @@ namespace IronPython.Modules {
                     string result = _context.LanguageContext.FormatException(e);
                     PythonOps.PrintWithDest(_context, _context.LanguageContext.SystemStandardError, result);
                 } finally {
+                    _handle?._set_done();
                     lock (_threadCountKey) {
                         int curCount = (int)_context.LanguageContext.GetModuleState(_threadCountKey);
                         _context.LanguageContext.SetModuleState(_threadCountKey, curCount - 1);

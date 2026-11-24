@@ -22,11 +22,14 @@ namespace IronPython.Compiler.Ast {
         public static readonly MethodInfo MakeClass = GetMethod((Func<FunctionCode, Func<CodeContext, CodeContext>, CodeContext, string, PythonTuple, PythonDictionary, string, object>)PythonOps.MakeClass);
         public static readonly MethodInfo PrintExpressionValue = GetMethod((Action<CodeContext, object>)PythonOps.PrintExpressionValue);
         public static readonly MethodInfo ImportWithNames = GetMethod((Func<CodeContext, string, string[], int, object>)PythonOps.ImportWithNames);
+        public static readonly MethodInfo LazyImportFrom = GetMethod((Func<CodeContext, string, string, int, object>)PythonOps.LazyImportFrom);
         public static readonly MethodInfo ImportFrom = GetMethod((Func<CodeContext, object, string, object>)PythonOps.ImportFrom);
         public static readonly MethodInfo ImportStar = GetMethod((Action<CodeContext, string, int>)PythonOps.ImportStar);
         public static readonly MethodInfo SaveCurrentExceptionState = GetMethod((Func<object>)PythonOps.SaveCurrentExceptionState);
         public static readonly MethodInfo RestoreCurrentExceptionState = GetMethod((Action<object>)PythonOps.RestoreCurrentExceptionState);
         public static readonly MethodInfo MakeGeneratorExpression = GetMethod((Func<object, object, object>)PythonOps.MakeGeneratorExpression);
+        public static readonly MethodInfo MakeInterpolation = GetMethod((Func<object, string, string, object, object>)PythonOps.MakeInterpolation);
+        public static readonly MethodInfo MakeTemplate = GetMethod((Func<string[], object[], object>)PythonOps.MakeTemplate);
         public static readonly MethodInfo ListAddForComprehension = GetMethod((Action<PythonList, object>)PythonOps.ListAddForComprehension);
         public static readonly MethodInfo SetAddForComprehension = GetMethod((Action<SetCollection, object>)PythonOps.SetAddForComprehension);
         public static readonly MethodInfo DictAddForComprehension = GetMethod((Action<PythonDictionary, object, object>)PythonOps.DictAddForComprehension);
@@ -49,6 +52,8 @@ namespace IronPython.Compiler.Ast {
         public static readonly MethodInfo Is = GetMethod((Func<object, object, object>)PythonOps.Is);
         public static readonly MethodInfo ImportTop = GetMethod((Func<CodeContext, string, int, object>)PythonOps.ImportTop);
         public static readonly MethodInfo ImportBottom = GetMethod((Func<CodeContext, string, int, object>)PythonOps.ImportBottom);
+        public static readonly MethodInfo LazyImportTop = GetMethod((Func<CodeContext, string, int, object>)PythonOps.LazyImportTop);
+        public static readonly MethodInfo LazyImportBottom = GetMethod((Func<CodeContext, string, int, object>)PythonOps.LazyImportBottom);
         public static readonly MethodInfo MakeEmptyList = GetMethod((Func<PythonList>)PythonOps.MakeEmptyList);
         public static readonly MethodInfo MakeListNoCopy = GetMethod((Func<object[], PythonList>)PythonOps.MakeListNoCopy);
         public static readonly MethodInfo GetEnumeratorValues = GetMethod((Func<CodeContext, object, int, int, object>)PythonOps.GetEnumeratorValues);

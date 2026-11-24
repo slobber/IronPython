@@ -6,7 +6,9 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 
+using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
 
 using IronPython.Runtime.Operations;
@@ -23,10 +25,22 @@ method continues until the shortest iterable in the argument sequence
 is exhausted and then it raises StopIteration.")]
     public class Zip : IEnumerator {
         private readonly IEnumerator[] enumerators;
+        private readonly bool strict;
         private object? current;
 
-        public Zip(CodeContext context, [NotNone] params object[] iters) {
+        public Zip(
+            CodeContext context,
+            [ParamDictionary] IDictionary<object, object> keywordArguments,
+            [NotNone] params object[] iters) {
             if (iters == null) throw PythonOps.TypeError("zip argument #{0} must support iteration", 1);
+            if (keywordArguments.TryGetValue("strict", out object? rawStrict)) {
+                strict = PythonOps.IsTrue(rawStrict);
+            }
+            foreach (object key in keywordArguments.Keys) {
+                if (!Equals(key, "strict")) {
+                    throw PythonOps.TypeError("zip() got an unexpected keyword argument '{0}'", key);
+                }
+            }
 
             enumerators = new IEnumerator[iters.Length];
             for (var i = 0; i < iters.Length; i++) {
@@ -49,6 +63,7 @@ is exhausted and then it raises StopIteration.")]
                 for (var i = 1; i < enumerators.Length; i++) {
                     var enumerator = enumerators[i];
                     if (!enumerator.MoveNext()) {
+                        if (strict) ThrowLonger(i);
                         current = null;
                         return false;
                     }
@@ -59,8 +74,20 @@ is exhausted and then it raises StopIteration.")]
                 current = PythonTuple.MakeTuple(res);
                 return true;
             }
+            if (strict && enumerators.Length > 0) ThrowLonger(0);
             current = null;
             return false;
+        }
+
+        private void ThrowLonger(int shortest) {
+            for (int i = 0; i < enumerators.Length; i++) {
+                if (i != shortest && enumerators[i].MoveNext()) {
+                    throw PythonOps.ValueError(
+                        "zip() argument {0} is longer than argument {1}",
+                        i + 1,
+                        shortest + 1);
+                }
+            }
         }
 
         [PythonHidden]

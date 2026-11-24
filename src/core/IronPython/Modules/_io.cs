@@ -27,6 +27,13 @@ using IronPython.Runtime.Types;
 [assembly: PythonModule("_io", typeof(IronPython.Modules.PythonIOModule))]
 namespace IronPython.Modules {
     public static partial class PythonIOModule {
+        public static string text_encoding(string encoding, int stacklevel = 2) {
+            if (encoding is null
+                || string.Equals(encoding, "locale", StringComparison.OrdinalIgnoreCase)) {
+                return "utf-8";
+            }
+            return encoding;
+        }
         public const int DEFAULT_BUFFER_SIZE = 8192;
 
         private static readonly object _blockingIOErrorKey = new object();

@@ -97,9 +97,13 @@ namespace IronPython.Compiler.Syntax {
             int endLine = 1,
             int endColumn = 0,
             int startByteColumn = 0,
-            int endByteColumn = 0) {
+            int endByteColumn = 0,
+            string? text = null,
+            string? sourceText = null) {
             Kind = kind ?? throw new ArgumentNullException(nameof(kind));
             Value = value ?? throw new ArgumentNullException(nameof(value));
+            Text = text ?? value;
+            SourceText = sourceText ?? Text;
             Start = start;
             End = end;
             StartLine = startLine;
@@ -112,6 +116,8 @@ namespace IronPython.Compiler.Syntax {
 
         public string Kind { get; }
         public string Value { get; }
+        public string Text { get; }
+        public string SourceText { get; }
         public int Start { get; }
         public int End { get; }
         public int StartLine { get; }

@@ -116,6 +116,10 @@ namespace IronPython.Compiler.Ast {
         public virtual bool Walk(StarredExpression node) { return true; }
         public virtual void PostWalk(StarredExpression node) { }
 
+        // TemplateStringExpression
+        public virtual bool Walk(TemplateStringExpression node) { return true; }
+        public virtual void PostWalk(TemplateStringExpression node) { }
+
         // TupleExpression
         public virtual bool Walk(TupleExpression node) { return true; }
         public virtual void PostWalk(TupleExpression node) { }
@@ -386,6 +390,10 @@ namespace IronPython.Compiler.Ast {
         // StarredExpression
         public override bool Walk(StarredExpression node) { return false; }
         public override void PostWalk(StarredExpression node) { }
+
+        // TemplateStringExpression
+        public override bool Walk(TemplateStringExpression node) { return false; }
+        public override void PostWalk(TemplateStringExpression node) { }
 
         // TupleExpression
         public override bool Walk(TupleExpression node) { return false; }

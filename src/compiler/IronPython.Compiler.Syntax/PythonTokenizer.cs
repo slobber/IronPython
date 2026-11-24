@@ -39,7 +39,8 @@ namespace IronPython.Compiler.Syntax {
             bool isSoftKeyword = false,
             int? startByteColumn = null,
             int? endByteColumn = null,
-            bool isKeyword = false) {
+            bool isKeyword = false,
+            string? sourceText = null) {
             Kind = kind;
             Text = text ?? throw new ArgumentNullException(nameof(text));
             LiteralValue = literalValue ?? throw new ArgumentNullException(nameof(literalValue));
@@ -53,10 +54,12 @@ namespace IronPython.Compiler.Syntax {
             EndByteColumn = endByteColumn ?? endColumn;
             IsSoftKeyword = isSoftKeyword;
             IsKeyword = isKeyword;
+            SourceText = sourceText ?? Text;
         }
 
         public PythonTokenKind Kind { get; }
         public string Text { get; }
+        public string SourceText { get; }
         public string LiteralValue { get; }
         public int StartOffset { get; }
         public int EndOffset { get; }
@@ -102,7 +105,9 @@ namespace IronPython.Compiler.Syntax {
                 EndLine,
                 EndColumn,
                 StartByteColumn,
-                EndByteColumn);
+                EndByteColumn,
+                Text,
+                SourceText);
         }
     }
 
@@ -211,7 +216,7 @@ namespace IronPython.Compiler.Syntax {
 
         private static readonly string[] Operators = {
             "**=", "//=", "<<=", ">>=", "...", ":=", "->", "**", "//", "<<", ">>",
-            "<=", ">=", "==", "!=", "<>", "+=", "-=", "*=", "/=", "%=", "@=", "&=",
+            "<=", ">=", "==", "!=", "!", "<>", "+=", "-=", "*=", "/=", "%=", "@=", "&=",
             "|=", "^=", "(", ")", "[", "]", "{", "}", ":", ",", ";", ".", "+", "-",
             "*", "/", "%", "@", "&", "|", "^", "~", "<", ">", "="
         };
@@ -226,6 +231,7 @@ namespace IronPython.Compiler.Syntax {
         private int _column;
         private int _tokenIndex;
         private bool _atLineStart = true;
+        private bool _lineHasContent;
         private bool _reportedFinalNewLine;
         private bool _ended;
 
@@ -252,14 +258,23 @@ namespace IronPython.Compiler.Syntax {
 
         public PegToken Peek() {
             EnsureToken(_tokenIndex);
+            SkipNonLogicalNewLines();
             return _tokens[Math.Min(_tokenIndex, _tokens.Count - 1)].ToPegToken();
         }
 
         public PegToken Next() {
             EnsureToken(_tokenIndex);
+            SkipNonLogicalNewLines();
             PythonToken token = _tokens[Math.Min(_tokenIndex, _tokens.Count - 1)];
             if (token.Kind != PythonTokenKind.EndMarker) _tokenIndex++;
             return token.ToPegToken();
+        }
+
+        private void SkipNonLogicalNewLines() {
+            while (_tokens[_tokenIndex].Kind == PythonTokenKind.NonLogicalNewLine) {
+                _tokenIndex++;
+                EnsureToken(_tokenIndex);
+            }
         }
 
         public PythonToken NextToken() {
@@ -301,6 +316,11 @@ namespace IronPython.Compiler.Syntax {
             }
             if (IsNewLine(current)) {
                 LexNewLine();
+                return;
+            }
+            if (current == '\\' && IsNewLine(Peek(1))) {
+                AdvanceChar();
+                ConsumeNewLine();
                 return;
             }
             if (TryLexInterpolatedString()) return;
@@ -353,8 +373,9 @@ namespace IronPython.Compiler.Syntax {
                         _index,
                         line,
                         column,
-                        _line,
-                        _column));
+                        line,
+                        column + CountCodePoints(
+                            _source.Substring(tokenStart, _index - tokenStart))));
                 }
                 _atLineStart = true;
                 return true;
@@ -412,7 +433,7 @@ namespace IronPython.Compiler.Syntax {
 
         private void FinishInput() {
             if (!_reportedFinalNewLine
-                && (_tokens.Count == 0 || _tokens[_tokens.Count - 1].Kind != PythonTokenKind.NewLine)) {
+                && _lineHasContent) {
                 _reportedFinalNewLine = true;
                 _tokens.Add(new PythonToken(
                     PythonTokenKind.NewLine,
@@ -522,7 +543,9 @@ namespace IronPython.Compiler.Syntax {
             int textColumns = CountCodePoints(newlineText);
             int startByteColumn = GetByteColumn(start);
             _tokens.Add(new PythonToken(
-                _brackets.Count == 0 ? PythonTokenKind.NewLine : PythonTokenKind.NonLogicalNewLine,
+                _brackets.Count == 0 && _lineHasContent
+                    ? PythonTokenKind.NewLine
+                    : PythonTokenKind.NonLogicalNewLine,
                 newlineText,
                 "\n",
                 start,
@@ -533,6 +556,7 @@ namespace IronPython.Compiler.Syntax {
                 column + textColumns,
                 startByteColumn: startByteColumn,
                 endByteColumn: startByteColumn + Encoding.UTF8.GetByteCount(newlineText)));
+            _lineHasContent = false;
             _atLineStart = _brackets.Count == 0;
         }
 
@@ -622,7 +646,7 @@ namespace IronPython.Compiler.Syntax {
                     int braceColumn = _column;
                     AdvanceChar();
                     AddToken(PythonTokenKind.Operator, braceStart, braceLine, braceColumn, "{");
-                    ScanInterpolationExpression();
+                    ScanInterpolationExpression(template);
                     middleStart = _index;
                     middleLine = _line;
                     middleColumn = _column;
@@ -641,7 +665,8 @@ namespace IronPython.Compiler.Syntax {
                 "unterminated interpolated string");
         }
 
-        private void ScanInterpolationExpression() {
+        private void ScanInterpolationExpression(bool template) {
+            int expressionStart = _index;
             int depth = 1;
             while (_index < _source.Length) {
                 char current = _source[_index];
@@ -651,6 +676,15 @@ namespace IronPython.Compiler.Syntax {
                     int column = _column;
                     AdvanceChar();
                     AddToken(PythonTokenKind.Operator, closingStart, line, column, "}");
+                    return;
+                }
+                if (current == ':' && depth == 1) {
+                    int colonStart = _index;
+                    int line = _line;
+                    int column = _column;
+                    AdvanceChar();
+                    AddToken(PythonTokenKind.Operator, colonStart, line, column, ":");
+                    ScanInterpolatedFormatSpec(template);
                     return;
                 }
                 if (current == '(' || current == '[' || current == '{') {
@@ -699,6 +733,25 @@ namespace IronPython.Compiler.Syntax {
                     LexNumber();
                     continue;
                 }
+                if (current == '=' && Peek(1) != '=' && depth == 1) {
+                    int debugEnd = _index + 1;
+                    while (debugEnd < _source.Length
+                        && (_source[debugEnd] == ' ' || _source[debugEnd] == '\t'
+                            || _source[debugEnd] == '\f')) {
+                        debugEnd++;
+                    }
+                    AddToken(
+                        PythonTokenKind.Operator,
+                        _index,
+                        _line,
+                        _column,
+                        "=",
+                        textOverride: _source.Substring(
+                            expressionStart,
+                            debugEnd - expressionStart));
+                    AdvanceChar();
+                    continue;
+                }
                 if (LexOperator()) continue;
 
                 int start = _index;
@@ -710,12 +763,53 @@ namespace IronPython.Compiler.Syntax {
             NeedsMoreInput = true;
         }
 
+        private void ScanInterpolatedFormatSpec(bool template) {
+            int middleStart = _index;
+            int middleLine = _line;
+            int middleColumn = _column;
+            while (_index < _source.Length) {
+                char current = _source[_index];
+                if (current == '}') {
+                    FlushInterpolatedMiddle(
+                        template,
+                        middleStart,
+                        middleLine,
+                        middleColumn,
+                        includeEmpty: true);
+                    int closingStart = _index;
+                    int line = _line;
+                    int column = _column;
+                    AdvanceChar();
+                    AddToken(PythonTokenKind.Operator, closingStart, line, column, "}");
+                    return;
+                }
+                if (current == '{') {
+                    FlushInterpolatedMiddle(template, middleStart, middleLine, middleColumn);
+                    int braceStart = _index;
+                    int braceLine = _line;
+                    int braceColumn = _column;
+                    AdvanceChar();
+                    AddToken(PythonTokenKind.Operator, braceStart, braceLine, braceColumn, "{");
+                    ScanInterpolationExpression(template);
+                    middleStart = _index;
+                    middleLine = _line;
+                    middleColumn = _column;
+                    continue;
+                }
+                AdvanceChar();
+            }
+
+            NeedsMoreInput = true;
+            FlushInterpolatedMiddle(template, middleStart, middleLine, middleColumn);
+        }
+
         private void FlushInterpolatedMiddle(
             bool template,
             int start,
             int line,
-            int column) {
-            if (_index <= start) return;
+            int column,
+            bool includeEmpty = false) {
+            if (_index < start || (_index == start && !includeEmpty)) return;
             AddToken(
                 template ? PythonTokenKind.TStringMiddle : PythonTokenKind.FStringMiddle,
                 start,
@@ -764,7 +858,8 @@ namespace IronPython.Compiler.Syntax {
             int column,
             string literalValue,
             bool soft = false,
-            bool keyword = false) {
+            bool keyword = false,
+            string? textOverride = null) {
             (int actualStartLine, int actualStartColumn) = GetLineColumn(start);
             (int actualEndLine, int actualEndColumn) = GetLineColumn(_index);
             int actualStartByteColumn = GetByteColumn(start);
@@ -782,7 +877,9 @@ namespace IronPython.Compiler.Syntax {
                 soft,
                 actualStartByteColumn,
                 actualEndByteColumn,
-                keyword));
+                keyword,
+                textOverride));
+            _lineHasContent = true;
         }
 
         private PythonToken EndMarker(int offset, int line, int column) {

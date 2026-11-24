@@ -18,10 +18,13 @@ namespace IronPython.Compiler.Ast {
         private readonly ModuleName[] _names;
         private readonly string[] _asNames;
 
-        public ImportStatement(ModuleName[] names, string[] asNames) {
+        public ImportStatement(ModuleName[] names, string[] asNames, bool isLazy = false) {
             _names = names;
             _asNames = asNames;
+            IsLazy = isLazy;
         }
+
+        public bool IsLazy { get; }
 
         internal PythonVariable[] Variables { get; set; }
 
@@ -40,7 +43,9 @@ namespace IronPython.Compiler.Ast {
                             Parent.GetVariableExpression(Variables[i]),
                             LightExceptions.CheckAndThrow(
                                 Expression.Call(
-                                    _asNames[i] == null ? AstMethods.ImportTop : AstMethods.ImportBottom,
+                                    IsLazy
+                                        ? (_asNames[i] == null ? AstMethods.LazyImportTop : AstMethods.LazyImportBottom)
+                                        : (_asNames[i] == null ? AstMethods.ImportTop : AstMethods.ImportBottom),
                                     Parent.LocalContext,                                    // 1st arg - code context
                                     AstUtils.Constant(_names[i].MakeString()),              // 2nd arg - module name
                                     AstUtils.Constant(0)                                    // 3rd arg - absolute imports

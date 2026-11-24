@@ -1241,7 +1241,21 @@ namespace IronPython.Runtime {
             object warnings = null;
             try {
                 if (!_importWarningThrows) {
-                    warnings = Importer.ImportModule(SharedContext, new PythonDictionary(), "warnings", false, 0);
+                    if (!SystemStateModules.TryGetValue("warnings", out warnings)
+                        || warnings is null) {
+                        warnings = Importer.ImportModule(
+                            SharedContext,
+                            new PythonDictionary(),
+                            "warnings",
+                            false,
+                            0);
+                    }
+                    if (warnings is not null
+                        && !PythonOps.TryGetBoundAttr(SharedContext, warnings, "filters", out _)) {
+                        // warnings.py imports modules that can emit warnings. During that
+                        // recursive import the module exists but is not initialized yet.
+                        warnings = null;
+                    }
                 }
             } catch {
                 // don't repeatedly import after it fails

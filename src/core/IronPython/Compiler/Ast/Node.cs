@@ -55,6 +55,8 @@ namespace IronPython.Compiler.Ast {
             set => _parent = value ?? throw new ArgumentNullException(nameof(Parent));
         }
 
+        internal bool IsParentDefined => _parent is not null;
+
         public void SetLoc(PythonAst globalParent, int start, int end) {
             SetLoc(globalParent, new IndexSpan(start, end > start ? end - start : start));
         }

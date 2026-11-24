@@ -396,6 +396,8 @@ namespace IronPython.Modules {
         public const int PIPE_WAIT = 0x0;
         public const int PROCESS_ALL_ACCESS = 0x1f0fff;
         public const int PROCESS_DUP_HANDLE = 0x40;
+        public const int STARTF_FORCEONFEEDBACK = 0x2;
+        public const int STARTF_FORCEOFFFEEDBACK = 0x80;
         public const int STARTF_USESHOWWINDOW = 0x1;
         public const int STARTF_USESTDHANDLES = 0x100;
         public const int STD_ERROR_HANDLE = -12;

@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Text;
 
@@ -37,7 +38,16 @@ namespace IronPython.Compiler {
     // that's probably about all you need to know to get stuck in.
 
     public class Parser : IDisposable { // TODO: remove IDisposable
-        internal static bool UseGeneratedParser { get; set; }
+        private static bool _useGeneratedParser =
+            string.Equals(
+                Environment.GetEnvironmentVariable("CYBERSTONE_IRONPYTHON_GENERATED_PARSER"),
+                "1",
+                StringComparison.Ordinal);
+
+        internal static bool UseGeneratedParser {
+            get => _useGeneratedParser;
+            set => _useGeneratedParser = value;
+        }
 
         // immutable properties:
         private readonly Tokenizer _tokenizer;
@@ -146,25 +156,55 @@ namespace IronPython.Compiler {
 
         private PythonAst ParseGeneratedFile() {
             string source = _sourceReader.ReadToEnd();
-            var tokenizer = new PythonTokenizer(source);
-            var parser = new PegParser(
-                PythonGrammarDescriptors.Rules,
-                tokenizer,
-                new PythonAstBuilder());
+            PegParser parser = CreateGeneratedParser(source, out PythonTokenizer tokenizer);
             PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
             if (!result.Success || result.Value is not IronPython.Compiler.Syntax.Ast.Module module) {
-                PegParseFailure failure = parser.LastFailure;
-                throw PythonOps.SyntaxError(
-                    failure?.Message ?? "invalid syntax",
-                    _sourceUnit,
-                    SourceSpan.Invalid,
-                    ErrorCodes.SyntaxError);
+                throw CreateGeneratedParseError(parser, tokenizer, result);
             }
             NotifyGeneratedParserSink(module);
             return PublicAstLowerer.LowerModule(module, _context);
         }
 
-        private void NotifyGeneratedParserSink(IronPython.Compiler.Syntax.Ast.Module module) {
+        private static PegParser CreateGeneratedParser(
+            string source,
+            out PythonTokenizer tokenizer) {
+            tokenizer = new PythonTokenizer(source);
+            var options = new PegParserOptions {
+                MaxRuleInvocations = Math.Clamp(source.Length * 200, 1_000_000, 50_000_000),
+                MaxMemoEntries = Math.Clamp(source.Length * 100, 250_000, 10_000_000)
+            };
+            return new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder(),
+                options: options);
+        }
+
+        private Exception CreateGeneratedParseError(
+            PegParser parser,
+            PythonTokenizer tokenizer,
+            PegParseResult result) {
+            PegParseFailure failure = parser.LastFailure;
+            return PythonOps.SyntaxError(
+                failure?.Message ?? "invalid syntax",
+                _sourceUnit,
+                GetGeneratedParserFailureSpan(tokenizer, failure?.Position ?? result.Position),
+                ErrorCodes.SyntaxError);
+        }
+
+        private static SourceSpan GetGeneratedParserFailureSpan(
+            PythonTokenizer tokenizer,
+            int position) {
+            IReadOnlyList<PythonToken> tokens = tokenizer.Tokens;
+            if (tokens.Count == 0) return SourceSpan.None;
+
+            PythonToken token = tokens[Math.Clamp(position, 0, tokens.Count - 1)];
+            return new SourceSpan(
+                new SourceLocation(token.StartOffset, token.StartLine, token.StartColumn + 1),
+                new SourceLocation(token.EndOffset, token.EndLine, token.EndColumn + 1));
+        }
+
+        private void NotifyGeneratedParserSink(IronPython.Compiler.Syntax.Ast.PythonAstNode module) {
             ParserSink sink = ParserSink;
             if (sink != null) {
                 new GeneratedParserSinkWalker(sink).Visit(module);
@@ -227,6 +267,10 @@ namespace IronPython.Compiler {
         /// </summary>
         /// <returns>null if input is not yet valid but could be with more lines</returns>
         public PythonAst ParseInteractiveCode(out ScriptCodeParseResult properties) {
+            if (UseGeneratedParser) {
+                return ParseGeneratedInteractiveCode(out properties);
+            }
+
             bool parsingMultiLineCmpdStmt;
             bool isEmptyStmt = false;
 
@@ -298,6 +342,9 @@ namespace IronPython.Compiler {
 
         public PythonAst ParseSingleStatement() {
             try {
+                if (UseGeneratedParser) {
+                    return ParseGeneratedSingleStatement();
+                }
                 _globalParent = new PythonAst(false, _languageFeatures, true, _context);
                 StartParsing();
 
@@ -312,6 +359,9 @@ namespace IronPython.Compiler {
 
         public PythonAst ParseTopExpression() {
             try {
+                if (UseGeneratedParser) {
+                    return ParseGeneratedTopExpression();
+                }
                 // TODO: move from source unit  .TrimStart(' ', '\t')
                 _globalParent = new PythonAst(false, _languageFeatures, false, _context);
                 ReturnStatement ret = new ReturnStatement(ParseTestListAsExpression());
@@ -320,6 +370,81 @@ namespace IronPython.Compiler {
             } catch (DecoderFallbackException dfe) {
                 throw BadSourceError(dfe);
             }
+        }
+
+        private PythonAst ParseGeneratedInteractiveCode(
+            out ScriptCodeParseResult properties) {
+            properties = ScriptCodeParseResult.Complete;
+            string source = _sourceReader.ReadToEnd();
+            PegParser parser = CreateGeneratedParser(source, out PythonTokenizer tokenizer);
+            PegParseResult result = parser.Parse(PythonGeneratedParser.InteractiveStartRule);
+            if (!result.Success
+                || result.Value is not IronPython.Compiler.Syntax.Ast.Interactive interactive) {
+                if (tokenizer.NeedsMoreInput) {
+                    properties = ScriptCodeParseResult.IncompleteStatement;
+                    return null;
+                }
+                properties = ScriptCodeParseResult.Invalid;
+                return null;
+            }
+
+            if (interactive.Body.Count == 0) {
+                properties = ScriptCodeParseResult.Empty;
+                return null;
+            }
+            NotifyGeneratedParserSink(interactive);
+            return CreateGeneratedStatementAst(
+                interactive.Body,
+                printExpressions: true);
+        }
+
+        private PythonAst ParseGeneratedSingleStatement() {
+            string source = _sourceReader.ReadToEnd();
+            PegParser parser = CreateGeneratedParser(source, out PythonTokenizer tokenizer);
+            PegParseResult result = parser.Parse(PythonGeneratedParser.InteractiveStartRule);
+            if (!result.Success
+                || result.Value is not IronPython.Compiler.Syntax.Ast.Interactive interactive) {
+                throw CreateGeneratedParseError(parser, tokenizer, result);
+            }
+            NotifyGeneratedParserSink(interactive);
+            return CreateGeneratedStatementAst(
+                interactive.Body,
+                printExpressions: true);
+        }
+
+        private PythonAst ParseGeneratedTopExpression() {
+            string source = _sourceReader.ReadToEnd();
+            PegParser parser = CreateGeneratedParser(source, out PythonTokenizer tokenizer);
+            PegParseResult result = parser.Parse(PythonGeneratedParser.EvalStartRule);
+            if (!result.Success
+                || result.Value is not IronPython.Compiler.Syntax.Ast.Expression expression) {
+                throw CreateGeneratedParseError(parser, tokenizer, result);
+            }
+            NotifyGeneratedParserSink(expression);
+            return new PythonAst(
+                new ReturnStatement(
+                    PublicAstLowerer.LowerExpression(expression.Body)),
+                false,
+                _languageFeatures,
+                false,
+                _context,
+                Array.Empty<int>());
+        }
+
+        private PythonAst CreateGeneratedStatementAst(
+            IReadOnlyList<IronPython.Compiler.Syntax.Ast.Stmt> statements,
+            bool printExpressions) {
+            Statement body = statements.Count == 1
+                ? PublicAstLowerer.LowerStatement(statements[0])
+                : new SuiteStatement(
+                    statements.Select(PublicAstLowerer.LowerStatement).ToArray());
+            return new PythonAst(
+                body,
+                false,
+                _languageFeatures,
+                printExpressions,
+                _context,
+                Array.Empty<int>());
         }
 
         /// <summary>
@@ -481,7 +606,20 @@ namespace IronPython.Compiler {
             if (PeekToken() is NameToken { Name: "lazy" } &&
                 PeekSecondToken() is { Kind: TokenKind.KeywordImport or TokenKind.KeywordFrom }) {
                 NextToken();
-                return ParseSimpleStmt();
+                Statement statement = ParseSimpleStmt();
+                return statement switch {
+                    ImportStatement import => new ImportStatement(
+                        import.Names.Cast<ModuleName>().ToArray(),
+                        import.AsNames.ToArray(),
+                        true),
+                    FromImportStatement import => new FromImportStatement(
+                        (ModuleName)import.Root,
+                        import.Names.ToArray(),
+                        import.AsNames.ToArray(),
+                        import.IsFromFuture,
+                        true),
+                    _ => statement
+                };
             }
 
             switch (PeekToken().Kind) {

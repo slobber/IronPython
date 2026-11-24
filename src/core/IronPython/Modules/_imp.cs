@@ -129,6 +129,12 @@ namespace IronPython.Modules {
             return false;
         }
 
+        public static void _set_lazy_attributes(object module, string name) {
+            // Lazy values are installed directly by the compiler today. The import
+            // system still calls this hook for every loaded module, so it must be
+            // safe even when warning handling passes a partially initialized module.
+        }
+
         public static void _fix_co_filename() {
             throw new NotImplementedException();
         }

@@ -1157,6 +1157,7 @@ namespace IronPython.Modules {
                     case 'D':
                     case 'A':
                     case 'B':
+                    case 'z':
                     case '\\':
                         // known escape sequences, leave escaped.
                         break;

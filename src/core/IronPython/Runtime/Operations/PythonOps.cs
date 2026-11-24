@@ -209,6 +209,11 @@ namespace IronPython.Runtime.Operations {
                 else sb.Append(c);
             }
             string normalized = sb.ToString();
+            if (normalized == "locale") {
+                normalized = RuntimeInformation.IsOSPlatform(OSPlatform.Windows)
+                    ? $"cp{Encoding.GetEncoding(0).CodePage}"
+                    : "utf-8";
+            }
 
             context.LanguageContext.EnsureEncodings();
             List<object> searchFunctions = context.LanguageContext.SearchFunctions;
@@ -2171,6 +2176,22 @@ namespace IronPython.Runtime.Operations {
             return Importer.ImportLightThrow(context, fullName, null, level);
         }
 
+        public static object LazyImportTop(CodeContext context, string fullName, int level) {
+            return new LazyImportModule(fullName, level);
+        }
+
+        public static object LazyImportBottom(CodeContext context, string fullName, int level) {
+            return new LazyImportModule(fullName, level);
+        }
+
+        public static object LazyImportFrom(
+            CodeContext context,
+            string moduleName,
+            string memberName,
+            int level) {
+            return new LazyImportMember(moduleName, memberName, level);
+        }
+
         /// <summary>
         /// Python helper method called from generated code for:
         ///
@@ -2307,15 +2328,25 @@ namespace IronPython.Runtime.Operations {
         }
 
         private static bool TryGetEnumeratorObject(CodeContext/*!*/ context, object? o, [NotNullWhen(true)] out object? enumerator) {
-            // IronPython defines __getitem__ on PythonType (to support generics and .NET enums)
-            // which would make it "iterable" even though it is not.
-            if (o is PythonType pt && !pt.IsIterable(context)) {
+            if (o is PythonType classObject) {
+                if (TryGetMetaClassIterator(context, classObject, out enumerator)) {
+                    return true;
+                }
                 enumerator = default;
                 return false;
             }
 
-            if (PythonTypeOps.TryGetOperator(context, o, "__iter__", out object? iterFunc) && iterFunc != null) {
-                var iter = PythonCalls.Call(context, iterFunc);
+            // IronPython defines __getitem__ on PythonType (to support generics and .NET enums)
+            // which would make it "iterable" even though it is not.
+            object? iterFunc = null;
+            bool hasIterator = PythonTypeOps.TryGetOperator(
+                context,
+                o,
+                "__iter__",
+                out iterFunc);
+            if (hasIterator && iterFunc != null) {
+                object iter = PythonCalls.Call(context, iterFunc)
+                    ?? throw TypeError("iter() returned None");
                 if (!PythonTypeOps.TryGetOperator(context, iter, "__next__", out _)) {
                     throw TypeError("iter() returned non-iterator of type '{0}'", PythonOps.GetPythonTypeName(iter));
                 }
@@ -2343,18 +2374,43 @@ namespace IronPython.Runtime.Operations {
         internal static bool TryGetEnumerator(CodeContext/*!*/ context, [NotNullWhen(true)] object? enumerable, [NotNullWhen(true)] out IEnumerator? enumerator) {
             enumerator = null;
 
-            // IronPython defines __getitem__ on PythonType (to support generics and .NET enums)
-            // which would make it "iterable" even though it is not.
-            if (enumerable is PythonType ptEnumerable && !ptEnumerable.IsIterable(context)) {
-                return false;
+            if (enumerable is PythonType classObject) {
+                if (!TryGetMetaClassIterator(context, classObject, out object? iterator)) {
+                    return false;
+                }
+                enumerator = Converter.ConvertToIEnumerator(iterator);
+                return true;
             }
 
+            // IronPython defines __getitem__ on PythonType (to support generics and .NET enums)
+            // which would make it "iterable" even though it is not.
             if (context.LanguageContext.TryConvertToIEnumerable(enumerable, out IEnumerable enumer)) {
                 enumerator = enumer.GetEnumerator();
                 return true;
             }
 
             return false;
+        }
+
+        private static bool TryGetMetaClassIterator(
+            CodeContext context,
+            PythonType pythonType,
+            [NotNullWhen(true)] out object? iterator) {
+            PythonType metaType = DynamicHelpers.GetPythonType(pythonType);
+            if (!metaType.TryLookupSlot(context, "__iter__", out PythonTypeSlot slot)
+                || !slot.TryGetValue(context, pythonType, pythonType, out object? iterFunc)
+                || iterFunc is null) {
+                iterator = null;
+                return false;
+            }
+
+            iterator = iterFunc is Method
+                ? PythonCalls.Call(context, iterFunc)
+                : PythonCalls.Call(context, iterFunc, pythonType);
+            if (iterator is null) {
+                return false;
+            }
+            return true;
         }
 
         public static void ForLoopDispose(KeyValuePair<IEnumerator, IDisposable> iteratorInfo) => iteratorInfo.Value?.Dispose();
@@ -2370,6 +2426,16 @@ namespace IronPython.Runtime.Operations {
         public static KeyValuePair<IEnumerator, IDisposable?> GetEnumeratorFromEnumerable(IEnumerable enumerable) {
             IEnumerator enumerator = enumerable.GetEnumerator();
             return new KeyValuePair<IEnumerator, IDisposable?>(enumerator, enumerator as IDisposable);
+        }
+
+        public static KeyValuePair<IEnumerator, IDisposable?> GetEnumeratorFromObject(
+            CodeContext context,
+            object value) {
+            object iterator = GetEnumeratorObject(context, value);
+            IEnumerator enumerator = Converter.ConvertToIEnumerator(iterator);
+            return new KeyValuePair<IEnumerator, IDisposable?>(
+                enumerator,
+                enumerator as IDisposable);
         }
 
         public static IEnumerable StringEnumerable(string str) {
@@ -3456,6 +3522,34 @@ namespace IronPython.Runtime.Operations {
         public static object MakeGeneratorExpression(object function, object input) {
             PythonFunction func = (PythonFunction)function;
             return ((Func<PythonFunction, object, object>)func.__code__.Target)(func, input);
+        }
+
+        public static object MakeInterpolation(
+            object? value,
+            string expression,
+            string? conversion,
+            object? formatSpec) {
+            return new InterpolationObject(
+                value,
+                expression,
+                conversion,
+                formatSpec is null ? string.Empty : ToString(formatSpec));
+        }
+
+        public static object MakeTemplate(
+            string[] strings,
+            object[] interpolations) {
+            if (strings.Length != interpolations.Length + 1) {
+                throw new InvalidOperationException(
+                    "Template requires one more string than interpolation.");
+            }
+            var parts = new List<object>(strings.Length + interpolations.Length);
+            for (int i = 0; i < interpolations.Length; i++) {
+                parts.Add(strings[i]);
+                parts.Add(interpolations[i]);
+            }
+            parts.Add(strings[strings.Length - 1]);
+            return new TemplateObject(parts.ToArray());
         }
 
         public static FunctionCode MakeFunctionCode(CodeContext/*!*/ context, string name, string documentation, string[] parameterNames, int argCount, FunctionAttributes flags, int startIndex, int endIndex, string path, Delegate code, string[] freeVars, string[] names, string[] cellVars, string[] varNames, int localCount) {

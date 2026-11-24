@@ -234,10 +234,11 @@ namespace IronPython.Compiler.Ast {
             // Unbound variable
             from.AddReferencedGlobal(reference.Name);
 
-            if (from.HasLateBoundVariableSets) {
-                // If the context contains unqualified exec, new locals can be introduced
-                // Therefore we need to turn this into a fully late-bound lookup which
-                // happens when we don't have a PythonVariable.
+            if (from.HasLateBoundVariableSets ||
+                (_languageFeatures & ModuleOptions.ExecOrEvalCode) != 0) {
+                // Exec/eval code can run against caller-provided scopes, and unqualified
+                // exec/import-star can introduce names after name binding. Keep both cases
+                // fully late-bound instead of capturing the compiler's private module map.
                 variable = null;
                 return false;
             } else {
@@ -511,8 +512,12 @@ namespace IronPython.Compiler.Ast {
                 PythonCompilerOptions pco = _compilerContext.Options as PythonCompilerOptions;
                 string moduleName = pco.ModuleName;
                 if (moduleName == null) {
-                    if (_compilerContext.SourceUnit.HasPath && _compilerContext.SourceUnit.Path.IndexOfAny(Path.GetInvalidFileNameChars()) == -1) {
-                        moduleName = Path.GetFileNameWithoutExtension(_compilerContext.SourceUnit.Path);
+                    string fileName = _compilerContext.SourceUnit.HasPath
+                        ? Path.GetFileNameWithoutExtension(_compilerContext.SourceUnit.Path)
+                        : null;
+                    if (!string.IsNullOrEmpty(fileName)
+                        && fileName.IndexOfAny(Path.GetInvalidFileNameChars()) == -1) {
+                        moduleName = fileName;
                     } else {
                         moduleName = "<module>";
                     }
@@ -821,7 +826,7 @@ namespace IronPython.Compiler.Ast {
                 // update the global get/set/raw gets variables
                 if (node is PythonGlobalVariableExpression global) {
                     return new LookupGlobalVariable(
-                        _curScope == null ? PythonAst._globalContext : _curScope.LocalContext,
+                        GetCurrentGlobalContext(),
                         global.Variable.Name,
                         global.Variable.Kind == VariableKind.Local
                     );
@@ -831,13 +836,13 @@ namespace IronPython.Compiler.Ast {
                 if (node is PythonSetGlobalVariableExpression setGlobal) {
                     if (setGlobal.Value == PythonGlobalVariableExpression.Uninitialized) {
                         return new LookupGlobalVariable(
-                            _curScope == null ? PythonAst._globalContext : _curScope.LocalContext,
+                            GetCurrentGlobalContext(),
                             setGlobal.Global.Variable.Name,
                             setGlobal.Global.Variable.Kind == VariableKind.Local
                         ).Delete();
                     } else {
                         return new LookupGlobalVariable(
-                            _curScope == null ? PythonAst._globalContext : _curScope.LocalContext,
+                            GetCurrentGlobalContext(),
                             setGlobal.Global.Variable.Name,
                             setGlobal.Global.Variable.Kind == VariableKind.Local
                         ).Assign(Visit(setGlobal.Value));
@@ -846,13 +851,19 @@ namespace IronPython.Compiler.Ast {
 
                 if (node is PythonRawGlobalValueExpression rawValue) {
                     return new LookupGlobalVariable(
-                        _curScope == null ? PythonAst._globalContext : _curScope.LocalContext,
+                        GetCurrentGlobalContext(),
                         rawValue.Global.Variable.Name,
                         rawValue.Global.Variable.Kind == VariableKind.Local
                     );
                 }
 
                 return base.VisitExtension(node);
+            }
+
+            private MSAst.Expression GetCurrentGlobalContext() {
+                return _curScope is null || !_curScope.NeedsLocalContext
+                    ? PythonAst._globalContext
+                    : _curScope.LocalContext;
             }
 
             private ScopeStatement VisitScope(ScopeStatement scope) {

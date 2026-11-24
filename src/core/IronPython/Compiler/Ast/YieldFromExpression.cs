@@ -27,7 +27,18 @@ namespace IronPython.Compiler.Ast {
 
         public Expression Expression { get; }
 
-        private static readonly Modules._ast.AST yieldFromAst = (Modules._ast.AST)Modules.Builtin.compile(Runtime.DefaultContext.Default, @"
+        private static Modules._ast.AST? _yieldFromAst;
+        private static readonly object YieldFromAstLock = new object();
+
+        private static Modules._ast.AST YieldFromAst {
+            get {
+                if (_yieldFromAst is not null) return _yieldFromAst;
+                lock (YieldFromAstLock) {
+                    if (_yieldFromAst is null) {
+                        bool useGeneratedParser = Parser.UseGeneratedParser;
+                        Parser.UseGeneratedParser = false;
+                        try {
+                            _yieldFromAst = (Modules._ast.AST)Modules.Builtin.compile(Runtime.DefaultContext.Default, @"
 from builtins import iter as __yieldfromprefix_iter, next as __yieldfromprefix_next
 __yieldfromprefix_i = __yieldfromprefix_iter(__yieldfromprefix_EXPR)
 try:
@@ -69,9 +80,17 @@ else:
                 __yieldfromprefix_r = __yieldfromprefix_e.value
                 break
 ", "", "exec", flags: Modules._ast.PyCF_ONLY_AST);
+                        } finally {
+                            Parser.UseGeneratedParser = useGeneratedParser;
+                        }
+                    }
+                }
+                return _yieldFromAst!;
+            }
+        }
 
         private static Statement GenYieldFromStatement(Expression expression) {
-            var expr = Modules._ast.ConvertToPythonAst(Runtime.DefaultContext.Default, yieldFromAst, "").Body;
+            var expr = Modules._ast.ConvertToPythonAst(Runtime.DefaultContext.Default, YieldFromAst, "").Body;
             Modules._ast._containsYield = false; // reset state of _ast module
 
             return new SuiteStatement(new[] {

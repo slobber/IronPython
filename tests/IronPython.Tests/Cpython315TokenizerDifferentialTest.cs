@@ -26,6 +26,37 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void MatchesCpython315ForBlankLines() {
+            AssertTokens(
+                "x = 1\n\n  \n# comment\ny = 2\n",
+                ("NAME", "x", 1, 0, 1, 1),
+                ("OP", "=", 1, 2, 1, 3),
+                ("NUMBER", "1", 1, 4, 1, 5),
+                ("NEWLINE", "\n", 1, 5, 1, 6),
+                ("NL", "\n", 2, 0, 2, 1),
+                ("NL", "\n", 3, 2, 3, 3),
+                ("NL", "\n", 4, 9, 4, 10),
+                ("NAME", "y", 5, 0, 5, 1),
+                ("OP", "=", 5, 2, 5, 3),
+                ("NUMBER", "2", 5, 4, 5, 5),
+                ("NEWLINE", "\n", 5, 5, 5, 6),
+                ("ENDMARKER", "", 6, 0, 6, 0));
+        }
+
+        [Test]
+        public void MatchesCpython315ForExplicitLineContinuation() {
+            AssertTokens(
+                "x = 1 + \\\n    2\n",
+                ("NAME", "x", 1, 0, 1, 1),
+                ("OP", "=", 1, 2, 1, 3),
+                ("NUMBER", "1", 1, 4, 1, 5),
+                ("OP", "+", 1, 6, 1, 7),
+                ("NUMBER", "2", 2, 4, 2, 5),
+                ("NEWLINE", "\n", 2, 5, 2, 6),
+                ("ENDMARKER", "", 3, 0, 3, 0));
+        }
+
+        [Test]
         public void MatchesCpython315ForFStrings() {
             AssertTokens(
                 "f\"x={value}\"\n",
@@ -55,6 +86,51 @@ namespace IronPython.Tests {
                 ("OP", "}", 1, 22, 1, 23),
                 ("FSTRING_END", "\"", 1, 23, 1, 24),
                 ("NEWLINE", "\n", 1, 24, 1, 25),
+                ("ENDMARKER", "", 2, 0, 2, 0));
+        }
+
+        [Test]
+        public void MatchesCpython315ForFStringConversions() {
+            AssertTokens(
+                "f\"{value!r}\"\n",
+                ("FSTRING_START", "f\"", 1, 0, 1, 2),
+                ("OP", "{", 1, 2, 1, 3),
+                ("NAME", "value", 1, 3, 1, 8),
+                ("OP", "!", 1, 8, 1, 9),
+                ("NAME", "r", 1, 9, 1, 10),
+                ("OP", "}", 1, 10, 1, 11),
+                ("FSTRING_END", "\"", 1, 11, 1, 12),
+                ("NEWLINE", "\n", 1, 12, 1, 13),
+                ("ENDMARKER", "", 2, 0, 2, 0));
+        }
+
+        [Test]
+        public void MatchesCpython315ForFStringFormatSpecs() {
+            AssertTokens(
+                "f\"{x:x}\"\n",
+                ("FSTRING_START", "f\"", 1, 0, 1, 2),
+                ("OP", "{", 1, 2, 1, 3),
+                ("NAME", "x", 1, 3, 1, 4),
+                ("OP", ":", 1, 4, 1, 5),
+                ("FSTRING_MIDDLE", "x", 1, 5, 1, 6),
+                ("OP", "}", 1, 6, 1, 7),
+                ("FSTRING_END", "\"", 1, 7, 1, 8),
+                ("NEWLINE", "\n", 1, 8, 1, 9),
+                ("ENDMARKER", "", 2, 0, 2, 0));
+
+            AssertTokens(
+                "f\"{x:{width}}\"\n",
+                ("FSTRING_START", "f\"", 1, 0, 1, 2),
+                ("OP", "{", 1, 2, 1, 3),
+                ("NAME", "x", 1, 3, 1, 4),
+                ("OP", ":", 1, 4, 1, 5),
+                ("OP", "{", 1, 5, 1, 6),
+                ("NAME", "width", 1, 6, 1, 11),
+                ("OP", "}", 1, 11, 1, 12),
+                ("FSTRING_MIDDLE", "", 1, 12, 1, 12),
+                ("OP", "}", 1, 12, 1, 13),
+                ("FSTRING_END", "\"", 1, 13, 1, 14),
+                ("NEWLINE", "\n", 1, 14, 1, 15),
                 ("ENDMARKER", "", 2, 0, 2, 0));
         }
 
