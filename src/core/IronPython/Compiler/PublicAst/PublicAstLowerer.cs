@@ -32,6 +32,28 @@ namespace IronPython.Compiler.PublicAst {
                 AstNodes.Assign assign => new CompilerAst.AssignmentStatement(
                     assign.Targets.Select(LowerExpression).ToArray(),
                     LowerExpression(assign.Value)),
+                AstNodes.Import import => new CompilerAst.ImportStatement(
+                    import.Names.Select(alias => new CompilerAst.ModuleName(alias.Name.Split('.'))).ToArray(),
+                    import.Names.Select(alias => alias.Asname).ToArray()),
+                AstNodes.ImportFrom importFrom => new CompilerAst.FromImportStatement(
+                    importFrom.Level > 0
+                        ? new CompilerAst.RelativeModuleName(
+                            (importFrom.Module ?? string.Empty).Split(
+                                new[] { '.' },
+                                StringSplitOptions.RemoveEmptyEntries),
+                            importFrom.Level ?? 0)
+                        : new CompilerAst.ModuleName(
+                            (importFrom.Module ?? string.Empty).Split(
+                                new[] { '.' },
+                                StringSplitOptions.RemoveEmptyEntries)),
+                    importFrom.Names.Select(alias => alias.Name).ToArray(),
+                    importFrom.Names.Select(alias => alias.Asname).ToArray(),
+                    string.Equals(importFrom.Module, "__future__", StringComparison.Ordinal)),
+                AstNodes.Expr expression => new CompilerAst.ExpressionStatement(
+                    LowerExpression(expression.Value)),
+                AstNodes.Pass => new CompilerAst.EmptyStatement(),
+                AstNodes.Return @return => new CompilerAst.ReturnStatement(
+                    @return.Value is null ? null : LowerExpression(@return.Value)),
                 _ => throw Unsupported(statement)
             };
         }
@@ -44,6 +66,9 @@ namespace IronPython.Compiler.PublicAst {
                     LowerOperator(binOp.Op),
                     LowerExpression(binOp.Left),
                     LowerExpression(binOp.Right)),
+                AstNodes.UnaryOp unary => new CompilerAst.UnaryExpression(
+                    LowerUnaryOperator(unary.Op),
+                    LowerExpression(unary.Operand)),
                 _ => throw Unsupported(expression)
             };
         }
@@ -84,6 +109,16 @@ namespace IronPython.Compiler.PublicAst {
                 AstNodes.BitOr => PythonOperator.BitwiseOr,
                 AstNodes.BitXor => PythonOperator.Xor,
                 AstNodes.BitAnd => PythonOperator.BitwiseAnd,
+                _ => throw Unsupported(@operator)
+            };
+        }
+
+        private static PythonOperator LowerUnaryOperator(AstNodes.UnaryOpKind @operator) {
+            return @operator switch {
+                AstNodes.UAdd => PythonOperator.Pos,
+                AstNodes.USub => PythonOperator.Negate,
+                AstNodes.Invert => PythonOperator.Invert,
+                AstNodes.Not => PythonOperator.Not,
                 _ => throw Unsupported(@operator)
             };
         }

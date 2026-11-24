@@ -1,5 +1,5 @@
-IronPython
-==========
+CyberStone.IronPython
+=====================
 
 IronPython is an open-source implementation of the Python programming language that is tightly integrated with .NET. IronPython can use .NET and Python libraries, and other .NET languages can use Python code just as easily.
 
@@ -14,7 +14,9 @@ After unpacking the archive, move or copy one of the `net` directories matching 
 
 If access to the Python Standard Library is desired from IronPython, move or copy the whole `lib` directory **into** the moved/copied directory from the previous step. The `lib` directory has to be in the same directory as `IronPython.dll`.
 
-The `scripts` subdirectory contains an installation script that facilitates the installation. Example:
+The `net10.0` and `net11.0` directories contain the supported runtime layouts.
+The `scripts` subdirectory contains an installation script that facilitates
+the installation. Example:
 
 ```powershell
 PS> ./scripts/Install-IronPython.ps1 ~/.local/share/ironpython
@@ -24,7 +26,8 @@ Run `help ./scripts/Install-IronPython` in PowerShell for more information about
 
 ## Command-line Usage
 
-To start a command-line interpreter on Windows run `ipy.exe` (for .NET Framework) or `ipy.bat` (for .NET). On Posix systems, run `ipy.sh`. `ipy.sh` may be renamed to simply `ipy` for convenience.
+To start a command-line interpreter on Windows run `ipy.exe`. On POSIX systems,
+run `ipy.sh`. `ipy.sh` may be renamed to simply `ipy` for convenience.
 
 Run `ipy -h` for a summary of command-line options. Most are identical to CPython, but there are a few IronPython-specific options.
 

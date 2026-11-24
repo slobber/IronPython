@@ -1,11 +1,15 @@
 IronPython Console
 ==================
 
-IronPython is an open-source implementation of the Python programming language that is tightly integrated with the .NET Framework. IronPython can use the .NET Framework and Python libraries, and other .NET languages can use Python code just as easily.
+IronPython is an open-source implementation of the Python programming language
+that is tightly integrated with .NET 10 and later. IronPython can use .NET and
+Python libraries, and other .NET languages can use Python code just as easily.
 
-This package contains a standalone Python interpreter running on .NET Framework, invokable from the command line as `ipy`. It also includes the Python Standard Library released by the Python project, but slightly modified to work better with IronPython and .NET.
+This package contains a standalone Python interpreter running on .NET,
+invokable from the command line as `ipy`. It also includes the Python Standard
+Library released by the Python project, with the documented IronPython patches.
 
-The current target is Python 3.4, although features and behaviors from later versions may be included. Refer to the [source code repository](https://github.com/IronLanguages/ironpython3) for list of features from each version of CPython that have been implemented.
+The current target is CPython 3.15.2.
 
 
 ## Differences with CPython

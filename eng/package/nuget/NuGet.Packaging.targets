@@ -1,18 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
   <ItemGroup>
-    <Package Include="IronPython">
+    <Package Include="CyberStone.IronPython">
       <NuSpecDir>$(MSBuildThisFileDirectory)</NuSpecDir>
+      <NuspecFile>IronPython.nuspec</NuspecFile>
       <NuspecProperties></NuspecProperties>
     </Package>
-    <Package Include="IronPython.StdLib">
+    <Package Include="CyberStone.IronPython.StdLib">
       <NuSpecDir>$(MSBuildThisFileDirectory)</NuSpecDir>
+      <NuspecFile>IronPython.StdLib.nuspec</NuspecFile>
       <NuspecProperties>IncludeSymbols=false</NuspecProperties>
     </Package>
   </ItemGroup>
 
   <PropertyGroup>
-    <NuSpecInputs>@(Package->'%(NuSpecDir)/%(Identity).nuspec')</NuSpecInputs>
+    <NuSpecInputs>@(Package->'%(NuSpecDir)/%(NuspecFile)')</NuSpecInputs>
     <NuPkgOutputs>@(Package->'$(PackageDir)/%(Identity).$(PackageVersion).nupkg')</NuPkgOutputs>
   </PropertyGroup>
 
@@ -28,7 +30,7 @@
       <Output TaskParameter="CopiedFiles" ItemName="TempCopied" />
     </Copy>
     <MSBuild Projects="$(MSBuildThisFileDirectory)\NuGet.Packaging.csproj" Targets="Restore" Properties="$(BuildProperties);RestoreUseStaticGraphEvaluation=false" />
-    <MSBuild Projects="$(MSBuildThisFileDirectory)\NuGet.Packaging.csproj" Targets="Pack" Properties="$(BuildProperties);%(NuspecProperties);NuspecFile=%(Package.Identity).nuspec" />
+    <MSBuild Projects="$(MSBuildThisFileDirectory)\NuGet.Packaging.csproj" Targets="Pack" Properties="$(BuildProperties);%(NuspecProperties);NuspecFile=%(Package.NuspecFile)" />
     <!-- Delete the copied files -->
     <Delete Files="@(TempCopied)" />
   </Target>

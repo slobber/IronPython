@@ -3,7 +3,7 @@
   <metadata xmlns="http://schemas.microsoft.com/packaging/2010/07/nuspec.xsd">
     <id>CyberStone.IronPython</id>
     <title>IronPython</title>
-    <version>3.4.0</version>
+    <version>$version$</version>
     <authors>IronPython Contributors, Microsoft</authors>
     <copyright>© IronPython Contributors</copyright>
     <projectUrl>https://ironpython.net</projectUrl>
@@ -29,9 +29,9 @@ This package contains the IronPython interpreter engine.</description>
     </dependencies>
   </metadata>
   <files>
-    <file src="**\IronPython*.dll" target="lib" exclude="**\IronPythonTest.dll;**\DLLs\*.dll;net462\**\*;net8.0*\**\*;net9.0*\**\*;netstandard2.0\**\*" />
-    <file src="**\IronPython*.pdb" target="lib" exclude="**\IronPythonTest.pdb;**\DLLs\*.pdb;net462\**\*;net8.0*\**\*;net9.0*\**\*;netstandard2.0\**\*" />
-    <file src="**\IronPython*.xml" target="lib" exclude="**\IronPythonTest.xml;**\DLLs\*.xml;net462\**\*;net8.0*\**\*;net9.0*\**\*;netstandard2.0\**\*" />
+    <file src="**\IronPython*.dll" target="lib" exclude="**\IronPythonTest.dll;**\DLLs\*.dll" />
+    <file src="**\IronPython*.pdb" target="lib" exclude="**\IronPythonTest.pdb;**\DLLs\*.pdb" />
+    <file src="**\IronPython*.xml" target="lib" exclude="**\IronPythonTest.xml;**\DLLs\*.xml" />
     <file src="LICENSE" />
     <file src="..\..\..\..\eng\package\nuget\README.md" target="" />
     <file src="..\..\..\..\docs\logo.png" target="" />

@@ -12,8 +12,8 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ApplicationFiles Include="$(StageDir)/net462/*.exe" />
-      <ApplicationFiles Include="$(StageDir)/net462/**/*.dll" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/*.exe" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/**/*.dll" />
     </ItemGroup>
 
     <ItemGroup>
@@ -21,7 +21,7 @@
     </ItemGroup>
 
     <!-- Build the application deb -->
-    <Exec Command="chmod 777 $(StageDir)/net462/*.exe" />
+    <Exec Command="chmod 777 $(StageDir)/net10.0/*.exe" />
     <Exec Command="rm -rf $(PackageTempFolder)" />
     <Exec Command="mkdir -p $(PackageTempFolder)/DEBIAN" />
     <Exec Command="cp $(PackageDebFolder)/DEBIAN/* $(PackageTempFolder)/DEBIAN"/>
@@ -37,13 +37,13 @@
     <Exec Command="dos2unix $(PackageTempFolder)/DEBIAN/control"/>
 
     <Copy SourceFiles="@(ScriptFiles)" DestinationFolder="$(PackageTempFolder)/usr/bin/"/>
-    <Copy SourceFiles="@(ApplicationFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/ironpython3.4/%(ApplicationFiles.RecursiveDir)"/>
-    <Copy SourceFiles="@(StdLibFiles)" DestinationFolder="$(PackageTempFolder)/usr/lib/ironpython3.4/%(StdLibFiles.RecursiveDir)"/>
+    <Copy SourceFiles="@(ApplicationFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/%(ApplicationFiles.RecursiveDir)"/>
+    <Copy SourceFiles="@(StdLibFiles)" DestinationFolder="$(PackageTempFolder)/usr/lib/cyberstone-ironpython3.15/%(StdLibFiles.RecursiveDir)"/>
 
     <Exec Command="fakeroot dpkg-deb -v --build $(PackageTempFolder)"/>
     <Copy
       SourceFiles="$(PackageDebFolder)/$(TempFolder).deb"
-      DestinationFiles="$(PackageDir)/ironpython_$(PackageVersion).deb"/>
+      DestinationFiles="$(PackageDir)/cyberstone-ironpython_$(PackageVersion).deb"/>
     <Delete Files="$(PackageDebFolder)/$(TempFolder).deb"/>
 
     <RemoveDir Directories="$(PackageTempFolder)" />

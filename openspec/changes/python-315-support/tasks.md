@@ -32,12 +32,12 @@
 - [x] 2.11 Update the default test framework list to `net10.0` and `net11.0`.
 - [x] 2.12 Delete obsolete TFM property files and dead build branches for
   `net462`, `net8.0`, `net9.0`, and product `netstandard2.0`.
-- [ ] 2.13 Update package targets from `net462`/`net8.0` to the final framework
+- [x] 2.13 Update package targets from `net462`/`net8.0` to the final framework
   layout.
-- [ ] 2.14 Remove x86 executable, registry, installer, and packaging tasks.
-- [ ] 2.15 Update installer launch conditions from .NET Framework to the
+- [x] 2.14 Remove x86 executable, registry, installer, and packaging tasks.
+- [x] 2.15 Update installer launch conditions from .NET Framework to the
   .NET 10+ runtime model.
-- [ ] 2.16 Ensure Windows-targeted tools cross-build on Linux CI with
+- [x] 2.16 Ensure Windows-targeted tools cross-build on Linux CI with
   `EnableWindowsTargeting`.
 - [x] 2.17 Verify clean `net10.0` and `net11.0` builds after the standard library
   baseline is updated.
@@ -56,9 +56,9 @@
 - [x] 3.3 Rename the console tool package to
   `CyberStone.IronPython.Console`.
 - [x] 3.4 Keep CLR namespaces and assembly names under `IronPython`.
-- [ ] 3.5 Update archive, Chocolatey, MSI, DEB, and PKG identifiers where
+- [x] 3.5 Update archive, Chocolatey, MSI, DEB, and PKG identifiers where
   applicable.
-- [ ] 3.6 Update README, installation scripts, package READMEs, and links for
+- [x] 3.6 Update README, installation scripts, package READMEs, and links for
   Python 3.15.2.
 - [x] 3.7 Document `sys.version_info` versus `sys.implementation.version`.
 - [x] 3.8 Add documented differences and unsupported C-extension policy.
@@ -82,7 +82,7 @@
   repository.
 - [ ] 4.11 Make imports start successfully under the 3.15 importlib bootstrap,
   including the `_imp` interfaces expected by 3.15.
-- [ ] 4.12 Complete CPython 3.14/3.15 t-string and lazy-import tokenizer/parser
+- [x] 4.12 Complete CPython 3.14/3.15 t-string and lazy-import tokenizer/parser
   support required before `site.py` and package tests can run.
 - [x] 4.13 Record every temporary 3.15 bootstrap patch in
   `docs/python-3.15-bootstrap-patches.md`.
@@ -215,7 +215,7 @@
 
 ## 13. P0: asynchronous programming
 
-- [ ] 13.1 Preserve `async def`, `await`, `async for`, and `async with`
+- [x] 13.1 Preserve `async def`, `await`, `async for`, and `async with`
   parsing under the new grammar.
 - [ ] 13.2 Verify lazy-start coroutine semantics.
 - [ ] 13.3 Implement coroutine `send`, `throw`, and `close` parity.
@@ -232,7 +232,7 @@
 
 ## 14. P0: matrix multiplication
 
-- [ ] 14.1 Verify `@` precedence and AST shape under the new grammar.
+- [x] 14.1 Verify `@` precedence and AST shape under the new grammar.
 - [ ] 14.2 Verify `__matmul__` and `__rmatmul__` dispatch.
 - [ ] 14.3 Verify `@=` and `__imatmul__` dispatch.
 - [ ] 14.4 Verify `operator.matmul` and `operator.imatmul`.

@@ -1,4 +1,4 @@
 ﻿<Include Id="VersionNumberInclude" xmlns="http://wixtoolset.org/schemas/v4/wxs">
-  <?define ProductShortName = "IronPython" ?>
-  <?define Manufacturer = ".NET Foundation" ?>
+  <?define ProductShortName = "CyberStone IronPython" ?>
+  <?define Manufacturer = "CyberStone" ?>
 </Include>

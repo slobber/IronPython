@@ -249,6 +249,176 @@ namespace IronPython.Tests {
             }
         }
 
+        [Test]
+        public void BuildsAndLowersImportFromTheGeneratedParser() {
+            var tokenizer = new PythonTokenizer("import os\n");
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : result.ToString());
+            var module = (PublicAst.Module)result.Value;
+            var import = module.Body.Single() as PublicAst.Import;
+            Assert.That(import, Is.Not.Null);
+            Assert.That(import.Names.Single().Name, Is.EqualTo("os"));
+
+            var engine = Python.CreateEngine();
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            SourceUnit sourceUnit = pythonContext.CreateSnippet(
+                string.Empty,
+                "<import-lowering>",
+                SourceCodeKind.File);
+            var compilerContext = new CompilerContext(
+                sourceUnit,
+                new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
+                ErrorSink.Default);
+            var lowered = PublicAstLowerer.LowerModule(module, compilerContext);
+            Assert.That(
+                ((IronPython.Compiler.Ast.SuiteStatement)lowered.Body).Statements.Single(),
+                Is.InstanceOf<IronPython.Compiler.Ast.ImportStatement>());
+        }
+
+        [Test]
+        public void BuildsAndLowersFromImport() {
+            var tokenizer = new PythonTokenizer("from os import path as p\n");
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : result.ToString());
+            var module = (PublicAst.Module)result.Value;
+            var import = module.Body.Single() as PublicAst.ImportFrom;
+            Assert.That(import, Is.Not.Null);
+            Assert.That(import.Module, Is.EqualTo("os"));
+            Assert.That(import.Names.Single().Name, Is.EqualTo("path"));
+            Assert.That(import.Names.Single().Asname, Is.EqualTo("p"));
+        }
+
+        [Test]
+        public void BuildsExpressionAndPassStatements() {
+            var tokenizer = new PythonTokenizer("1 + 2\npass\n");
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : result.ToString());
+            var module = (PublicAst.Module)result.Value;
+            Assert.That(module.Body[0], Is.InstanceOf<PublicAst.Expr>());
+            Assert.That(module.Body[1], Is.InstanceOf<PublicAst.Pass>());
+        }
+
+        [Test]
+        public void BuildsTypeAliasAndTypeParameters() {
+            var tokenizer = new PythonTokenizer("type Pair[T] = int\n");
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : result.ToString());
+            var module = (PublicAst.Module)result.Value;
+            var alias = module.Body.Single() as PublicAst.TypeAlias;
+            Assert.That(alias, Is.Not.Null);
+            Assert.That(((PublicAst.Name)alias.Name).Id, Is.EqualTo("Pair"));
+            Assert.That(alias.TypeParams.Single(), Is.InstanceOf<PublicAst.TypeVar>());
+            Assert.That(((PublicAst.Name)alias.Value).Id, Is.EqualTo("int"));
+        }
+
+        [Test]
+        public void BuildsTemplateStringNodes() {
+            var tokenizer = new PythonTokenizer("t\"hello {name}\"\n");
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : result.ToString());
+            var module = (PublicAst.Module)result.Value;
+            var statement = (PublicAst.Expr)module.Body.Single();
+            var template = statement.Value as PublicAst.TemplateStr;
+            Assert.That(template, Is.Not.Null);
+            Assert.That(template.Values[0], Is.InstanceOf<PublicAst.Constant>());
+            Assert.That(template.Values[1], Is.InstanceOf<PublicAst.Interpolation>());
+            Assert.That(
+                ((PublicAst.Name)((PublicAst.Interpolation)template.Values[1]).Value).Id,
+                Is.EqualTo("name"));
+        }
+
+        [Test]
+        public void BuildsMatchStatementNodes() {
+            var tokenizer = new PythonTokenizer(
+                "match x:\n    case 1:\n        pass\n");
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : result.ToString());
+            var module = (PublicAst.Module)result.Value;
+            var match = module.Body.Single() as PublicAst.Match;
+            Assert.That(match, Is.Not.Null);
+            Assert.That(((PublicAst.Name)match.Subject).Id, Is.EqualTo("x"));
+            var matchValue = match.Cases.Single().Pattern as PublicAst.MatchValue;
+            Assert.That(matchValue, Is.Not.Null);
+            Assert.That(((PublicAst.Constant)matchValue.Value).Value, Is.EqualTo(1));
+            Assert.That(match.Cases.Single().Body.Single(), Is.InstanceOf<PublicAst.Pass>());
+        }
+
+        [Test]
+        public void BuildsMatrixMultiplicationWithMultiplicativePrecedence() {
+            var tokenizer = new PythonTokenizer("x = 2 @ 3 * 4\n");
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                tokenizer,
+                new PythonAstBuilder());
+
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(
+                result.Success,
+                Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : result.ToString());
+            var module = (PublicAst.Module)result.Value;
+            var assignment = (PublicAst.Assign)module.Body.Single();
+            var multiply = (PublicAst.BinOp)assignment.Value;
+            Assert.That(multiply.Op, Is.InstanceOf<PublicAst.Mult>());
+            Assert.That(multiply.Left, Is.InstanceOf<PublicAst.BinOp>());
+            Assert.That(((PublicAst.BinOp)multiply.Left).Op, Is.InstanceOf<PublicAst.MatMult>());
+        }
+
         [TestCase("match x:\n    case 1:\n        pass\n")]
         [TestCase("def f[T](x: T) -> T:\n    return x\n")]
         [TestCase("type Pair[T] = tuple[T, T]\n")]
@@ -256,6 +426,9 @@ namespace IronPython.Tests {
         [TestCase("lazy import os\n")]
         [TestCase("try:\n    pass\nexcept A, B:\n    pass\n")]
         [TestCase("[*xs for *xs, in items]\n")]
+        [TestCase("async def f(x):\n    await x\n")]
+        [TestCase("async def f(xs):\n    async for x in xs:\n        pass\n")]
+        [TestCase("async def f(ctx):\n    async with ctx:\n        pass\n")]
         public void GeneratedGrammarAcceptsRepresentativePython315Syntax(string source) {
             var tokenizer = new PythonTokenizer(source);
             var actions = new PythonGrammarActionHandler();
@@ -297,7 +470,9 @@ namespace IronPython.Tests {
             Assert.That(result.Success, Is.True);
             Assert.That(result.Position, Is.EqualTo(5));
             Assert.That(tokens.Position, Is.EqualTo(5));
-            Assert.That(actions.ActionIds, Is.EqualTo(new[] { "expr.0" }));
+            Assert.That(
+                actions.ActionIds,
+                Is.EqualTo(new[] { "expr.1", "expr.0", "expr.0" }));
         }
 
         [Test]
@@ -336,7 +511,7 @@ namespace IronPython.Tests {
             Assert.That(tokens.Position, Is.EqualTo(2));
             Assert.That(
                 actions.ActionIds,
-                Is.EqualTo(new[] { "call.0", "expr.0", "start.0" }));
+                Is.EqualTo(new[] { "expr.1", "call.0", "expr.0", "start.0" }));
         }
 
         [Test]

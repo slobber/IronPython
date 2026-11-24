@@ -331,9 +331,11 @@ namespace IronPython.Compiler.Syntax {
             } else {
                 result = MatchAlternatives(rule.Alternatives, position);
                 if (memoEntry is not null && rule.LeftRecursive) {
+                    bool seedActionCompleted = false;
                     while (result.Success && result.Position > memoEntry.Seed.Position) {
                         LeftRecursionGrowthIterations++;
-                        memoEntry.Seed = result;
+                        memoEntry.Seed = CompleteAction(result, position);
+                        seedActionCompleted = true;
                         if (rule.IndirectLeftRecursion) {
                             InvalidateDependencies(memoEntry);
                         }
@@ -343,12 +345,18 @@ namespace IronPython.Compiler.Syntax {
                     result = memoEntry.Seed;
                     memoEntry.Result = result;
                     memoEntry.InProgress = false;
+                    if (seedActionCompleted) {
+                        result = memoEntry.Seed;
+                    } else {
+                        result = CompleteAction(result, position);
+                    }
+                } else {
+                    result = CompleteAction(result, position);
                 }
                 if (memoEntry is not null && !rule.LeftRecursive) {
                     memoEntry.Result = result;
                     memoEntry.InProgress = false;
                 }
-                result = CompleteAction(result, position);
                 if (rule.IsInvalid && result.Success) {
                     var match = new PegInvalidRuleMatch(rule.Name, position, result.Position);
                     _invalidRuleMatches.Add(match);

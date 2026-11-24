@@ -1,13 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003" ToolsVersion="4.0">
   <Target Name="PkgPackage" Condition="'$(MacOS)' == 'true'" DependsOnTargets="Stage" AfterTargets="Package"
-          Outputs="$(PackageDir)\IronPython-$(PackageVersion).pkg">
+          Outputs="$(PackageDir)\CyberStone.IronPython-$(PackageVersion).pkg">
     <!-- We need to create the directory structure we want to package -->
     <PropertyGroup>
       <TempFolder>temp</TempFolder>
       <PackageDebFolder>eng/package/pkg</PackageDebFolder>
       <PackageTempFolder>$(PackageDebFolder)/$(TempFolder)</PackageTempFolder>
-      <PackageLayoutRootDir>$(PackageTempFolder)/Library/Frameworks/IronPython.framework/Versions/$(PackageVersion)</PackageLayoutRootDir>
+      <PackageLayoutRootDir>$(PackageTempFolder)/Library/Frameworks/CyberStone.IronPython.framework/Versions/$(PackageVersion)</PackageLayoutRootDir>
     </PropertyGroup>
 
     <ItemGroup>
@@ -15,15 +15,15 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ApplicationFiles Include="$(StageDir)/net462/*.exe" />
-      <ApplicationFiles Include="$(StageDir)/net462/*.dll" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/*.exe" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/*.dll" />
     </ItemGroup>
 
     <ItemGroup>
-      <DLLFiles Include="$(StageDir)/net462/DLLs/*.dll" />
+      <DLLFiles Include="$(StageDir)/net10.0/DLLs/*.dll" />
     </ItemGroup>
 
-    <Exec Command="chmod 777 $(StageDir)/net462/*.exe" />
+    <Exec Command="chmod 777 $(StageDir)/net10.0/*.exe" />
     <Exec Command="rm -rf $(PackageTempFolder)" />
     <Exec Command="mkdir -p $(PackageTempFolder)" />
 
@@ -38,7 +38,7 @@
     <Copy SourceFiles="@(StdLibFiles)" DestinationFolder="$(PackageLayoutRootDir)/lib/%(StdLibFiles.RecursiveDir)"/>
     <Copy SourceFiles="@(DLLFiles)" DestinationFolder="$(PackageLayoutRootDir)/DLLs" />
 
-    <Exec Command="pkgbuild --root $(PackageTempFolder) --identifier 'org.dotnet.ironpython34' --version '$(PackageVersion)' $(PackageDir)/IronPython-$(PackageVersion).pkg" />
+    <Exec Command="pkgbuild --root $(PackageTempFolder) --identifier 'net.cyberstone.ironpython' --version '$(PackageVersion)' $(PackageDir)/CyberStone.IronPython-$(PackageVersion).pkg" />
 
     <!-- cleanup the directory -->
     <Exec Command="rm -rf $(PackageTempFolder)" />

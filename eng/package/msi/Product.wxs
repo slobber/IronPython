@@ -29,7 +29,15 @@ WHEN PERFORMING MAJOR IP UPGRADES (e.g., 2.5 => 2.6):
       <UpgradeVersion Minimum="0.0.0.0" IncludeMinimum="yes" Maximum="$(var.ProductVersion)" IncludeMaximum="yes" Property="OLDERVERSIONBEINGUPGRADED" OnlyDetect="no" />
     </Upgrade>
 
-    <PropertyRef Id="WIX_IS_NETFRAMEWORK_462_OR_LATER_INSTALLED" />
+    <Property Id="DOTNET_RUNTIME_INSTALLED">
+      <RegistrySearch
+        Id="DotNetRuntimeInstalledSearch"
+        Root="HKLM"
+        Key="SOFTWARE\dotnet\Setup\InstalledVersions\x64\sharedhost"
+        Name="Version"
+        Type="raw"
+        Bitness="always64" />
+    </Property>
 
     <!-- Properties -->
     <Property Id="ARPPRODUCTICON" Value="ipy.ico" />
@@ -51,7 +59,7 @@ WHEN PERFORMING MAJOR IP UPGRADES (e.g., 2.5 => 2.6):
 
     <!-- Launch conditions -->
     <Launch Condition="Privileged" Message="An administrator must approve or install [ProductName]." />
-    <Launch Condition="Installed OR WIX_IS_NETFRAMEWORK_462_OR_LATER_INSTALLED" Message="[ProductName] requires .NET Framework 4.6.2 or later." />
+    <Launch Condition="Installed OR DOTNET_RUNTIME_INSTALLED" Message="[ProductName] requires the .NET 10 or later runtime." />
 
     <!-- Root directories -->
 

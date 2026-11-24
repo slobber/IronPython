@@ -1,18 +1,20 @@
-IronPython 3
-============
+CyberStone.IronPython 3
+=======================
 **There is still much that needs to be done to support Python 3.x. We are working on it, albeit slowly. We welcome all those who would like to help!**
 
 [Official Website](https://ironpython.net)
 
 IronPython is an open-source implementation of the Python programming language that is tightly integrated with .NET. IronPython can use .NET and Python libraries, and other .NET languages can use Python code just as easily.
 
-IronPython 3 targets Python 3, including the re-organized standard library, Unicode strings, and all of the other new features.
+CyberStone.IronPython targets CPython 3.15.2 semantics, including the
+reorganized standard library, Unicode strings, t-strings, type parameters, and
+lazy imports.
 
 
 | **What?** | **Where?** |
 | --------: | :------------: |
 | **Windows/Linux/macOS Builds** | [![Build status](https://dotnet.visualstudio.com/IronLanguages/_apis/build/status/ironpython3)](https://dotnet.visualstudio.com/IronLanguages/_build/latest?definitionId=43) [![Github build status](https://github.com/IronLanguages/ironpython3/workflows/CI/badge.svg)](https://github.com/IronLanguages/ironpython3/actions?workflow=CI) |
-| **Downloads** | [![NuGet](https://img.shields.io/nuget/vpre/IronPython.svg)](https://www.nuget.org/packages/IronPython/latest) [![Release](https://img.shields.io/github/release/IronLanguages/ironpython3.svg?include_prereleases)](https://github.com/IronLanguages/ironpython3/releases/latest)|
+| **Downloads** | [![NuGet](https://img.shields.io/nuget/vpre/CyberStone.IronPython.svg)](https://www.nuget.org/packages/CyberStone.IronPython/latest) |
 | **Help** | [![Gitter chat](https://badges.gitter.im/IronLanguages/ironpython.svg)](https://gitter.im/IronLanguages/ironpython) [![StackExchange](https://img.shields.io/badge/stack%20overflow-ironpython-informational?logo=stack-overflow&logoColor=white)](https://stackoverflow.com/questions/tagged/ironpython) |
 
 
@@ -50,7 +52,8 @@ def greetings(name):
 dynamic greetings = scope.GetVariable("greetings");
 System.Console.WriteLine(greetings("world"));
 ```
-This example assumes that `IronPython` has been added to the C# project as a NuGet package.
+This example assumes that `CyberStone.IronPython` has been added to the C#
+project as a NuGet package.
 
 ## Code of Conduct
 
@@ -86,7 +89,9 @@ See the [Package compatibility](https://github.com/IronLanguages/ironpython3/wik
 
 ## Installation
 
-Binaries of IronPython 3 can be downloaded from the [release page](https://github.com/IronLanguages/ironpython3/releases/latest), available in various formats: `.msi`, `.zip`, `.deb`, `.pkg`. The IronPython package is also available on [NuGet](https://www.nuget.org/packages/IronPython/latest). See the [installation document](https://github.com/IronLanguages/ironpython3/wiki/Installing) for detailed instructions on how to install a standalone IronPython interpreter on various operating systems and .NET frameworks.
+Builds are produced as `.msi`, `.zip`, `.deb`, and `.pkg` packages. The engine
+and console are distributed as `CyberStone.IronPython`,
+`CyberStone.IronPython.StdLib`, and `CyberStone.IronPython.Console`.
 
 ### PowerShell
 
@@ -95,41 +100,41 @@ For usage in PowerShell, you can install using the Install-IronPython.ps1 within
 ```pwsh
 & ([scriptblock]::Create((iwr `
     -Uri 'https://raw.githubusercontent.com/IronLanguages/ironpython3/main/eng/scripts/Install-IronPython.ps1').Content)) `
-    -Path "~/ipyenv/v3.4.2"
+    -Path "~/ipyenv/v3.15.2"
 
 # Optionally, ensure pip:
-# & "~/ipyenv/v3.4.2/ipy" -m ensurepip
+# & "~/ipyenv/v3.15.2/ipy" -m ensurepip
 ```
 
 Once installed, you can start using IronPython directly in PowerShell!
 
 To use the ipy shim, you can use:
 ```pwsh
-& "~/ipyenv/v3.4.2/Enter-IronPythonEnvironment.ps1"
+& "~/ipyenv/v3.15.2/Enter-IronPythonEnvironment.ps1"
 
 ipy -c "print('Hello from IronPython!')"
 ```
 
 ... or to use IronPython embedded in PowerShell, you can use:
 ```pwsh
-Import-Module "~/ipyenv/v3.4.2/IronPython.dll"
+Import-Module "~/ipyenv/v3.15.2/IronPython.dll"
 
 $engine = & {
     $engine = [IronPython.Hosting.Python]::CreateEngine()
 
     # You need to add the correct paths, as IronPython will use PowerShell's installation path by default
     $paths = $engine.GetSearchPaths()
-    $paths.Add("$(Resolve-Path "~/ipyenv/v3.4.2/lib")")
-    $paths.Add("$(Resolve-Path "~/ipyenv/v3.4.2/lib/site-packages")")
+    $paths.Add("$(Resolve-Path "~/ipyenv/v3.15.2/lib")")
+    $paths.Add("$(Resolve-Path "~/ipyenv/v3.15.2/lib/site-packages")")
 
     # To use `wpf` and `sqlite3` you have to add the DLLs search path
     # - the [IronPython.SQLite] and [IronPython.WPF] powershell namespaces will become available on python import
-    $paths.Add("$(Resolve-Path "~/ipyenv/v3.4.2/DLLs")")
+    $paths.Add("$(Resolve-Path "~/ipyenv/v3.15.2/DLLs")")
 
     # or if you prefer to have the powershell namespaces early, you can use:
     # - just note, you will have to initialize _sqlite3 (see further down the script)
-    # Import-Module "~/ipyenv/v3.4.2/DLLs/IronPython.SQLite.dll"
-    # Import-Module "~/ipyenv/v3.4.2/DLLs/IronPython.WPF.dll"
+    # Import-Module "~/ipyenv/v3.15.2/DLLs/IronPython.SQLite.dll"
+    # Import-Module "~/ipyenv/v3.15.2/DLLs/IronPython.WPF.dll"
 
     $engine.SetSearchPaths($paths)
 
