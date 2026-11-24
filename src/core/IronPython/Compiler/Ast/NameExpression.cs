@@ -20,6 +20,15 @@ namespace IronPython.Compiler.Ast {
 
         public string Name { get; }
 
+        /// <summary>
+        /// True when this name is a compiler temporary rather than a name
+        /// visible in Python source. Such names participate in code generation
+        /// but are omitted from locals(), co_varnames, and closure dictionaries.
+        /// </summary>
+        internal bool IsCompilerGenerated { get; set; }
+
+        internal bool SuppressDebugInfo { get; set; }
+
         internal PythonReference Reference { get; set; }
 
         /// <summary>
@@ -67,7 +76,9 @@ namespace IronPython.Compiler.Ast {
                 );
             }
 
-            SourceSpan aspan = span.IsValid ? new SourceSpan(Span.Start, span.End) : SourceSpan.None;
+            SourceSpan aspan = span.IsValid && !SuppressDebugInfo
+                ? new SourceSpan(Span.Start, span.End)
+                : SourceSpan.None;
 
             if (Reference.PythonVariable != null) {
                 assignment = AssignValue(

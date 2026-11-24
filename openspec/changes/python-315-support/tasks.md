@@ -256,7 +256,7 @@
 - [x] 15.13 Implement `continue` in `finally`.
 - [x] 15.14 Implement dict union operators.
 - [x] 15.15 Implement arbitrary decorator expressions.
-- [ ] 15.16 Implement structural pattern matching.
+- [x] 15.16 Implement structural pattern matching.
 - [x] 15.17 Implement parenthesized context managers.
 - [x] 15.18 Implement `zip(strict=True)`.
 - [ ] 15.19 Implement precise expression error ranges.

@@ -191,7 +191,8 @@ namespace IronPython.Compiler.Ast {
                         continue;
                     }
 
-                    if (CellVariables is null || !CellVariables.Contains(variable.Key)) {
+                    if (!variable.Value.IsCompilerGenerated &&
+                        (CellVariables is null || !CellVariables.Contains(variable.Key))) {
                         res.Add(variable.Key);
                     }
                 }
@@ -442,6 +443,8 @@ namespace IronPython.Compiler.Ast {
 
         private MSAst.SymbolDocumentInfo Document => GlobalParent.Document;
 
+        internal MSAst.SymbolDocumentInfo DebugDocument => GlobalParent.Document;
+
         internal MSAst.Expression/*!*/ AddDebugInfo(MSAst.Expression/*!*/ expression, SourceLocation start, SourceLocation end) {
             if (PyContext.PythonOptions.GCStress is not null) {
                 expression = Ast.Block(
@@ -612,7 +615,11 @@ namespace IronPython.Compiler.Ast {
                 AstMethods.CreateLocalContext,
                 parentContext,
                 MutableTuple.Create(ArrayUtils.ConvertAll(closureVariables, x => GetClosureCell(x))),
-                Ast.Constant(ArrayUtils.ConvertAll(closureVariables, x => x.AccessedInScope ? x.Variable.Name : null)),
+                Ast.Constant(ArrayUtils.ConvertAll(
+                    closureVariables,
+                    x => x.Variable.IsCompilerGenerated
+                        ? null
+                        : x.AccessedInScope ? x.Variable.Name : null)),
                 AstUtils.Constant(numFreeVars),
                 AstUtils.Constant(firstArgIdx),
                 AstUtils.Constant(newNamespace)

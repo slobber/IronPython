@@ -66,6 +66,182 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 typeParameters);
         }
 
+        /// <summary>
+        /// Resolves the attributes consumed by a class pattern. This mirrors the
+        /// CPython MATCH_CLASS operation, including its lazy failure behavior for
+        /// missing attributes and its diagnostics for malformed match metadata.
+        /// </summary>
+        [Documentation("")]
+        public static PythonTuple? __match_class__(
+            CodeContext context,
+            [NotNone] object subject,
+            [NotNone] object type,
+            int positionalCount,
+            [NotNone] string keywordNames) {
+            string[] keywordNameList = string.IsNullOrEmpty(keywordNames)
+                ? Array.Empty<string>()
+                : keywordNames.Split('\0');
+            var attributes = new object?[positionalCount + keywordNameList.Length];
+            var seenAttributes = new HashSet<string>(StringComparer.Ordinal);
+
+            if (positionalCount != 0) {
+                bool hasMatchArgs = PythonOps.TryGetBoundAttr(
+                    context,
+                    type,
+                    "__match_args__",
+                    out object? matchArgs);
+                bool matchSelf = !hasMatchArgs && IsMatchSelfType(type);
+
+                if (hasMatchArgs && matchArgs is not PythonTuple) {
+                    throw PythonOps.TypeError(
+                        "{0}.__match_args__ must be a tuple (got {1})",
+                        PythonOps.GetPythonTypeName(type),
+                        PythonOps.GetPythonTypeName(matchArgs));
+                }
+
+                int allowed = matchSelf ? 1 : ((PythonTuple?)matchArgs)?.Count ?? 0;
+                if (allowed < positionalCount) {
+                    throw PythonOps.TypeError(
+                        "{0}() accepts {1} positional sub-pattern{2} ({3} given)",
+                        PythonOps.GetPythonTypeName(type),
+                        allowed,
+                        allowed == 1 ? string.Empty : "s",
+                        positionalCount);
+                }
+
+                if (matchSelf) {
+                    attributes[0] = subject;
+                } else {
+                    var names = (PythonTuple)matchArgs!;
+                    for (int i = 0; i < positionalCount; i++) {
+                        string name = names[i] as string
+                            ?? throw PythonOps.TypeError(
+                                "__match_args__ elements must be strings (got {0})",
+                                PythonOps.GetPythonTypeName(names[i]));
+                        if (!seenAttributes.Add(name)) {
+                            throw PythonOps.TypeError(
+                                "{0}() got multiple sub-patterns for attribute '{1}'",
+                                PythonOps.GetPythonTypeName(type),
+                                name);
+                        }
+                        if (!PythonOps.TryGetBoundAttr(context, subject, name, out object? value)) {
+                            return null;
+                        }
+                        attributes[i] = value;
+                    }
+                }
+            }
+
+            for (int i = 0; i < keywordNameList.Length; i++) {
+                string name = keywordNameList[i];
+                if (!seenAttributes.Add(name)) {
+                    throw PythonOps.TypeError(
+                        "{0}() got multiple sub-patterns for attribute '{1}'",
+                        PythonOps.GetPythonTypeName(type),
+                        name);
+                }
+                if (!PythonOps.TryGetBoundAttr(context, subject, name, out object? value)) {
+                    return null;
+                }
+                attributes[positionalCount + i] = value;
+            }
+
+            return PythonTuple.MakeTuple(attributes);
+        }
+
+        private static bool IsMatchSelfType(object type) {
+            if (type is not PythonType pythonType) {
+                return false;
+            }
+
+            return pythonType == TypeCache.Array
+                || pythonType == TypeCache.Boolean
+                || pythonType == TypeCache.BigInteger
+                || pythonType == TypeCache.ByteArray
+                || pythonType == TypeCache.Bytes
+                || pythonType == TypeCache.Complex
+                || pythonType == TypeCache.Dict
+                || pythonType == TypeCache.Double
+                || pythonType == TypeCache.FrozenDict
+                || pythonType == TypeCache.FrozenSet
+                || pythonType == TypeCache.Int32
+                || pythonType == TypeCache.PythonList
+                || pythonType == TypeCache.PythonTuple
+                || pythonType == TypeCache.Set
+                || pythonType == TypeCache.Single
+                || pythonType == TypeCache.String;
+        }
+
+        /// <summary>
+        /// Checks mapping-pattern keys with Python equality semantics before
+        /// attempting any captures. CPython requires this to raise ValueError
+        /// for duplicate keys even when a key is an attribute lookup.
+        /// </summary>
+        [Documentation("")]
+        public static object __match_mapping_keys__(
+            CodeContext context,
+            [NotNone] params object?[] keys) {
+            for (int i = 0; i < keys.Length; i++) {
+                for (int j = i + 1; j < keys.Length; j++) {
+                    if (PythonOps.EqualRetBool(context, keys[i], keys[j])) {
+                        throw PythonOps.ValueError(
+                            "mapping pattern checks duplicate key ({0})",
+                            PythonOps.Repr(context, keys[j]));
+                    }
+                }
+            }
+            return ScriptingRuntimeHelpers.True;
+        }
+
+        [Documentation("")]
+        public static string? __match_kind__(
+            CodeContext context,
+            [NotNone] object subject) {
+            if (subject is string || subject is Bytes || subject is ByteArray) {
+                return null;
+            }
+
+            PythonType subjectType = DynamicHelpers.GetPythonType(subject);
+            foreach (PythonType type in subjectType.ResolutionOrder) {
+                switch (type.Name) {
+                    case "dict":
+                    case "UserDict":
+                    case "Mapping":
+                    case "MutableMapping":
+                        return "map";
+                    case "list":
+                    case "tuple":
+                    case "UserList":
+                    case "array":
+                    case "memoryview":
+                    case "Sequence":
+                    case "MutableSequence":
+                        return "seq";
+                }
+            }
+
+            object abcModule = Importer.ImportModule(
+                context,
+                null,
+                "collections",
+                false,
+                0);
+            abcModule = PythonOps.GetBoundAttr(context, abcModule, "abc");
+            PythonType sequence = (PythonType)PythonOps.GetBoundAttr(
+                context,
+                abcModule,
+                "Sequence");
+            PythonType mapping = (PythonType)PythonOps.GetBoundAttr(
+                context,
+                abcModule,
+                "Mapping");
+            bool isSequence = PythonOps.IsInstance(context, subject, sequence);
+            bool isMapping = PythonOps.IsInstance(context, subject, mapping);
+            if (isSequence && !isMapping) return "seq";
+            if (isMapping) return "map";
+            return null;
+        }
+
         [Documentation("__import__(name, globals, locals, fromlist, level) -> module\n\nImport a module.")]
         [LightThrowing]
         public static object __import__(CodeContext/*!*/ context, [NotNone] string name, object? globals = null, object? locals = null, object? fromlist = null, int level = 0) {
@@ -847,6 +1023,12 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 // we've wrapped Locals in an PythonDictionary, give the user back the
                 // original object.
                 return adapter.Backing;
+            }
+
+            if (dict._storage is RuntimeVariablesDictionaryStorage) {
+                // Function locals are exposed as a snapshot. The compiler may
+                // predeclare later assignment targets in the backing tuple.
+                return dict.copy(context);
             }
 
             return context.Dict;

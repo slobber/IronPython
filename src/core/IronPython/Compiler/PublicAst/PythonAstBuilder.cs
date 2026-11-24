@@ -808,6 +808,25 @@ namespace IronPython.Compiler.PublicAst {
             return Required(arguments, "a");
         }
 
+        public override object Handle_subject_expr_0(
+            PegActionContext context,
+            PegActionArguments arguments) {
+            var values = new List<AstNodes.ExprBase> {
+                ToExpression(Required(arguments, "value"))
+            };
+            if (arguments.TryGetValue("values", out object? rawValues) && rawValues is not null) {
+                values.AddRange(Sequence(rawValues).Select(ToExpression));
+            }
+            AstSpan span = SpanOf(values.ToArray());
+            return new AstNodes.Tuple(
+                values.ToArray(),
+                new AstNodes.Load(),
+                span.Line,
+                span.Column,
+                span.EndLine,
+                span.EndColumn);
+        }
+
         public override object Handle_expressions_0_1_child_0(
             PegActionContext context,
             PegActionArguments arguments) {
@@ -978,13 +997,13 @@ namespace IronPython.Compiler.PublicAst {
         public override object Handle_literal_pattern_1(
             PegActionContext context,
             PegActionArguments arguments) {
-            return Required(arguments, "value");
+            return BuildMatchValue(Required(arguments, "value"));
         }
 
         public override object Handle_literal_pattern_2(
             PegActionContext context,
             PegActionArguments arguments) {
-            return Required(arguments, "value");
+            return BuildMatchValue(Required(arguments, "value"));
         }
 
         public override object Handle_real_number_0(
@@ -1026,13 +1045,13 @@ namespace IronPython.Compiler.PublicAst {
         public override object Handle_complex_number_0(
             PegActionContext context,
             PegActionArguments arguments) {
-            return BuildBinary(arguments, new AstNodes.Add());
+            return BuildComplexNumber(arguments, new AstNodes.Add());
         }
 
         public override object Handle_complex_number_1(
             PegActionContext context,
             PegActionArguments arguments) {
-            return BuildBinary(arguments, new AstNodes.Sub());
+            return BuildComplexNumber(arguments, new AstNodes.Sub());
         }
 
         public override object Handle_group_0(
@@ -3308,6 +3327,22 @@ namespace IronPython.Compiler.PublicAst {
                 span.EndColumn);
         }
 
+        private static AstNodes.ExprBase BuildComplexNumber(
+            PegActionArguments arguments,
+            AstNodes.OperatorKind @operator) {
+            AstNodes.ExprBase real = ToExpression(Required(arguments, "real"));
+            AstNodes.ExprBase imaginary = ToExpression(Required(arguments, "imag"));
+            AstSpan span = SpanOf(real, imaginary);
+            return new AstNodes.BinOp(
+                real,
+                @operator,
+                imaginary,
+                span.Line,
+                span.Column,
+                span.EndLine,
+                span.EndColumn);
+        }
+
         private static CompareEntry BuildCompareEntry(
             PegActionArguments arguments,
             AstNodes.CompareOpKind @operator) {
@@ -3347,6 +3382,9 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         private static AstNodes.Constant BuildNumberConstant(object? rawValue) {
+            if (rawValue is AstNodes.Constant constant) {
+                return constant;
+            }
             if (rawValue is not PegToken token) {
                 throw new InvalidOperationException(
                     "Numeric literal had an unexpected representation.");

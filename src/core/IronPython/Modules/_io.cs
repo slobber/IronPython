@@ -2052,7 +2052,10 @@ namespace IronPython.Modules {
                         throw PythonOps.ValueError("illegal newline value: {0}", newline);
                 }
 
-                encoding ??= context.LanguageContext.PythonOptions.Utf8Mode ? "UTF-8" : PythonLocale.PreferredEncoding;
+                // CPython 3.15 uses UTF-8 as the text default independent of
+                // the process locale. The explicit locale path remains
+                // available through locale.getpreferredencoding().
+                encoding ??= "utf-8";
                 encoding = text_encoding(encoding);
 
                 if (errors == null) {

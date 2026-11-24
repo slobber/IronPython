@@ -52,7 +52,10 @@ namespace IronPython.Compiler.Ast {
             _binder = binder;
         }
         public override bool Walk(NameExpression node) {
-            _binder.DefineName(node.Name);
+            var variable = _binder.DefineName(node.Name);
+            if (node.IsCompilerGenerated) {
+                variable.IsCompilerGenerated = true;
+            }
             return false;
         }
         public override bool Walk(ParenthesisExpression node) {
@@ -390,7 +393,10 @@ namespace IronPython.Compiler.Ast {
 
             _currentScope = scope;
             try {
-                DefineName(name);
+                var variable = DefineName(name);
+                if (node.Target.IsCompilerGenerated) {
+                    variable.IsCompilerGenerated = true;
+                }
             } finally {
                 _currentScope = currentScope;
             }

@@ -95,16 +95,24 @@ namespace IronPython.Compiler.Ast {
                 while (i-- > 0) {
                     IfStatementTest ist = _tests[i];
 
-                    result = GlobalParent.AddDebugInfoAndVoid(
-                        Ast.Condition(
-                            optimizeDynamicConvert ?
-                                TransformAndDynamicConvert(ist.Test, typeof(bool)) :
-                                GlobalParent.Convert(typeof(bool), Microsoft.Scripting.Actions.ConversionResultKind.ExplicitCast, ist.Test),
-                            TransformMaybeSingleLineSuite(ist.Body, GlobalParent.IndexToLocation(ist.Test.StartIndex)),
-                            result
-                        ),
-                        new SourceSpan(GlobalParent.IndexToLocation(ist.StartIndex), GlobalParent.IndexToLocation(Math.Max(ist.StartIndex, ist.HeaderIndex)))
+                    MSAst.Expression condition = Ast.Condition(
+                        optimizeDynamicConvert ?
+                            TransformAndDynamicConvert(ist.Test, typeof(bool)) :
+                            GlobalParent.Convert(typeof(bool), Microsoft.Scripting.Actions.ConversionResultKind.ExplicitCast, ist.Test),
+                        TransformMaybeSingleLineSuite(ist.Body, GlobalParent.IndexToLocation(ist.Test.StartIndex)),
+                        result
                     );
+                    SourceLocation start = GlobalParent.IndexToLocation(ist.StartIndex);
+                    SourceLocation end = GlobalParent.IndexToLocation(
+                        Math.Max(ist.StartIndex, ist.HeaderIndex));
+                    result = Ast.Block(
+                        Ast.DebugInfo(
+                            GlobalParent.DebugDocument,
+                            start.Line,
+                            start.Column,
+                            end.Line,
+                            end.Column),
+                        condition);
                 }
             }
 

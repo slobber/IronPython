@@ -9,7 +9,7 @@ namespace IronPython.Compiler.Syntax {
     }
 
     public sealed class PegParserOptions {
-        private int _maxRuleDepth = 512;
+        private int _maxRuleDepth = 1024;
         private int _maxRuleInvocations = 1_000_000;
         private int _maxMemoEntries = 250_000;
         private int _pythonMajorVersion = 3;

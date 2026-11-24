@@ -17,10 +17,15 @@ namespace IronPython.Compiler.Syntax {
     public sealed class PegActionArguments : IReadOnlyList<object?> {
         private readonly PegActionArgument[] _arguments;
 
-        public PegActionArguments(IEnumerable<PegActionArgument> arguments) {
+        public PegActionArguments(
+            IEnumerable<PegActionArgument> arguments,
+            string? actionId = null) {
             if (arguments == null) throw new ArgumentNullException(nameof(arguments));
             _arguments = arguments.ToArray();
+            ActionId = actionId;
         }
+
+        public string? ActionId { get; }
 
         public int Count => _arguments.Length;
 
@@ -34,7 +39,9 @@ namespace IronPython.Compiler.Syntax {
                         return _arguments[i].Value;
                     }
                 }
-                throw new KeyNotFoundException("PEG action field was not captured: " + fieldName);
+                throw new KeyNotFoundException(
+                    $"PEG action field was not captured: {fieldName}" +
+                    (ActionId is null ? string.Empty : $" in {ActionId}"));
             }
         }
 

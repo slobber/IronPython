@@ -35,6 +35,8 @@ namespace IronPython.Compiler.Ast {
         /// </summary>
         public string Name { get; }
 
+        internal bool IsCompilerGenerated { get; set; }
+
         /// <summary>
         /// The original scope in which the variable is defined.
         /// </summary>

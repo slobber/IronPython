@@ -516,6 +516,20 @@ namespace IronPython.Runtime {
         }
 
         /// <summary>
+        /// IronPython has no CPython bytecode stream, so there are no bytecode
+        /// line ranges to expose. Keeping this iterator available lets standard
+        /// library consumers such as dis use their normal empty-code path.
+        /// </summary>
+        public IEnumerable<PythonTuple> co_lines() {
+            yield break;
+        }
+
+        public object _varname_from_oparg(int oparg) {
+            PythonTuple names = co_varnames;
+            return oparg >= 0 && oparg < names.Count ? names[oparg] : null;
+        }
+
+        /// <summary>
         /// Returns a list of free variables (variables accessed
         /// from an outer scope).  This does not include variables
         /// accessed in the global scope.

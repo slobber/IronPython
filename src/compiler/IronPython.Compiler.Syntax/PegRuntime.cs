@@ -448,7 +448,7 @@ namespace IronPython.Compiler.Syntax {
                 }
                 if (success) {
                     object? value = alternative.HasAction
-                        ? new PegActionArguments(arguments)
+                        ? new PegActionArguments(arguments, alternative.ActionId)
                         : ImplicitAlternativeValue(arguments);
                     return new PegParseResult(
                         true,

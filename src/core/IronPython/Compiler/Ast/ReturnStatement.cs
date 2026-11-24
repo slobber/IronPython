@@ -17,6 +17,8 @@ namespace IronPython.Compiler.Ast {
 
         public Expression Expression { get; }
 
+        internal bool SuppressDebugInfo { get; set; }
+
         public override MSAst.Expression Reduce() {
             if (Parent.IsGeneratorMethod) {
 #if FEATURE_NET_ASYNC
@@ -33,13 +35,11 @@ namespace IronPython.Compiler.Ast {
                 return GlobalParent.AddDebugInfo(AstUtils.YieldReturn(GeneratorLabel, TransformOrConstantNull(Expression, typeof(object)), -2), Span);
             }
 
-            return GlobalParent.AddDebugInfo(
-                Ast.Return(
-                    FunctionDefinition._returnLabel,
-                    TransformOrConstantNull(Expression, typeof(object))
-                ),
-                Span
+            MSAst.Expression result = Ast.Return(
+                FunctionDefinition._returnLabel,
+                TransformOrConstantNull(Expression, typeof(object))
             );
+            return SuppressDebugInfo ? result : GlobalParent.AddDebugInfo(result, Span);
         }
 
         public override void Walk(PythonWalker walker) {
