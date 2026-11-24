@@ -32,6 +32,9 @@ namespace IronPythonTest.Cases {
                 var altFolder = Path.GetDirectoryName(folder); // drop the trailing test (or tests) folder
                 var fullPath = Path.Combine(libFolder, folder);
                 var altFullPath = Path.GetFullPath(Path.Combine(root, suiteFolder, altFolder));
+                if (!Directory.Exists(fullPath)) {
+                    yield break;
+                }
                 foreach (var filename in Directory.EnumerateFiles(fullPath, "test_*.py", SearchOption.AllDirectories)) {
                     var altFilename = Path.GetFullPath(Path.Combine(altFullPath, Path.GetRelativePath(fullPath, filename)));
                     if (File.Exists(altFilename)) {

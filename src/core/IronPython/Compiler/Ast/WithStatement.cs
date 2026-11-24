@@ -87,7 +87,7 @@ namespace IronPython.Compiler.Ast {
                         manager,
                         _contextManager
                     ),
-                    new SourceSpan(GlobalParent.IndexToLocation(StartIndex), GlobalParent.IndexToLocation(_headerIndex))
+                    new SourceSpan(GlobalParent.IndexToLocation(StartIndex), GlobalParent.IndexToLocation(Math.Max(StartIndex, _headerIndex)))
                 )
             );
 
@@ -124,7 +124,7 @@ namespace IronPython.Compiler.Ast {
                             )
                         )
                     ),
-                    new SourceSpan(GlobalParent.IndexToLocation(StartIndex), GlobalParent.IndexToLocation(_headerIndex))
+                    new SourceSpan(GlobalParent.IndexToLocation(StartIndex), GlobalParent.IndexToLocation(Math.Max(StartIndex, _headerIndex)))
                 )
             );
 

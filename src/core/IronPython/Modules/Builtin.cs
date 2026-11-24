@@ -195,7 +195,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             "eval compiles the code as if were an expression\n" +
             "single compiles a single statement\n\n" +
             "source can either be a string, bytes or an AST object")]
-        public static object compile(CodeContext/*!*/ context, [NotNone] _ast.AST source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] _ast.AST source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null, int _feature_version = -1) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
@@ -219,7 +219,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         }
 
         [Documentation("")] // provided by first overload
-        public static object compile(CodeContext/*!*/ context, [NotNone] IBufferProtocol source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] IBufferProtocol source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null, int _feature_version = -1) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
@@ -234,7 +234,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         }
 
         [Documentation("")] // provided by first overload
-        public static object compile(CodeContext/*!*/ context, [NotNone] string source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] string source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null, int _feature_version = -1) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
@@ -1643,6 +1643,13 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         public static PythonType zip => DynamicHelpers.GetPythonTypeFromType(typeof(Zip));
 
         public static PythonType BaseException => TypeCache.BaseException;
+        public static PythonType BaseExceptionGroup => PythonExceptions.BaseExceptionGroup;
+        public static PythonType ExceptionGroup => PythonExceptions.ExceptionGroup;
+        public static PythonType ImportCycleError => PythonExceptions._ImportError.ImportCycleError;
+        public static PythonType PythonFinalizationError => PythonExceptions.PythonFinalizationError;
+        public static PythonType EncodingWarning => PythonExceptions.EncodingWarning;
+        public static PythonType __lazy_import_type__ =>
+            DynamicHelpers.GetPythonTypeFromType(typeof(LazyImport));
 
         // OSError aliases
         public static PythonType EnvironmentError => PythonExceptions.OSError;
@@ -1679,6 +1686,9 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             if ((cflags & CompileFlags.CO_FUTURE_GENERATOR_STOP) != 0) {
                 langFeat |= ModuleOptions.GeneratorStop;
             }
+            if ((cflags & CompileFlags.CO_FUTURE_ANNOTATIONS) != 0) {
+                pco.FutureAnnotations = true;
+            }
             pco.Module |= langFeat;
 
             // The options created this way never creates
@@ -1699,7 +1709,8 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             CompileFlags cflags = (CompileFlags)flags;
             if ((cflags & ~(CompileFlags.CO_NESTED | CompileFlags.CO_GENERATOR_ALLOWED | CompileFlags.CO_FUTURE_DIVISION | CompileFlags.CO_DONT_IMPLY_DEDENT |
                 CompileFlags.CO_FUTURE_ABSOLUTE_IMPORT | CompileFlags.CO_FUTURE_WITH_STATEMENT | CompileFlags.CO_FUTURE_PRINT_FUNCTION |
-                CompileFlags.CO_FUTURE_UNICODE_LITERALS | CompileFlags.CO_FUTURE_BARRY_AS_BDFL | CompileFlags.CO_FUTURE_GENERATOR_STOP)) != 0) {
+                CompileFlags.CO_FUTURE_UNICODE_LITERALS | CompileFlags.CO_FUTURE_BARRY_AS_BDFL | CompileFlags.CO_FUTURE_GENERATOR_STOP |
+                CompileFlags.CO_FUTURE_ANNOTATIONS | CompileFlags.CO_ITERABLE_COROUTINE)) != 0) {
                 throw PythonOps.ValueError("unrecognized flags");
             }
 

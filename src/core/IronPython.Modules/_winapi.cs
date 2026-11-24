@@ -384,8 +384,8 @@ namespace IronPython.Modules {
         public const int FILE_GENERIC_WRITE = 0x120116;
         public const int GENERIC_READ = unchecked((int)0x80000000);
         public const int GENERIC_WRITE = 0x40000000;
-        public const int INFINITE = unchecked((int)0xffffffff);
-        public const int NMPWAIT_WAIT_FOREVER = unchecked((int)0xffffffff);
+        public const uint INFINITE = 0xffffffff;
+        public const uint NMPWAIT_WAIT_FOREVER = 0xffffffff;
         public const int NULL = 0x0;
         public const int OPEN_EXISTING = 0x3;
         public const int PIPE_ACCESS_DUPLEX = 0x3;

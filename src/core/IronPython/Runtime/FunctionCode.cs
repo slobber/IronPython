@@ -37,6 +37,7 @@ namespace IronPython.Runtime {
         private readonly int _localCount;                           // the number of local variables in the code
         private bool _compilingLight;                               // true if we're compiling for light exceptions
         private int _exceptionCount;
+        private FunctionAttributes? _flagsOverride;
 
         // debugging/tracing support
         private LambdaExpression _tracingLambda;                    // the transformed lambda used for tracing/debugging
@@ -63,6 +64,7 @@ namespace IronPython.Runtime {
             _normalDelegate = code;
             _lambda = scope;
             co_argcount = scope.ArgCount;
+            co_posonlyargcount = scope.PositionalOnlyArgCount;
             co_kwonlyargcount = scope.KwOnlyArgCount;
             _initialDoc = documentation;
 
@@ -90,6 +92,7 @@ namespace IronPython.Runtime {
             _initialDoc = documentation;
             _localCount = scope.Variables == null ? 0 : scope.Variables.Count;
             co_argcount = scope.ArgCount;
+            co_posonlyargcount = scope.PositionalOnlyArgCount;
             co_kwonlyargcount = scope.KwOnlyArgCount;
 
             if (tracing.HasValue) {
@@ -368,8 +371,27 @@ namespace IronPython.Runtime {
 
         internal FunctionAttributes Flags {
             get {
-                return _lambda.Flags;
+                return _flagsOverride ?? _lambda.Flags;
             }
+        }
+
+        public FunctionCode replace(
+            [ParamDictionary] IDictionary<object, object> changes) {
+            var result = (FunctionCode)MemberwiseClone();
+            foreach (KeyValuePair<object, object> change in changes) {
+                string name = change.Key as string
+                    ?? throw PythonOps.TypeError("code.replace() keywords must be strings");
+                switch (name) {
+                    case "co_flags":
+                        result._flagsOverride = (FunctionAttributes)Converter.ConvertToInt32(change.Value);
+                        break;
+                    default:
+                        throw PythonOps.NotImplementedError(
+                            "code.replace() does not support changing {0}",
+                            name);
+                }
+            }
+            return result;
         }
 
         internal bool IsModule {
@@ -412,6 +434,8 @@ namespace IronPython.Runtime {
         }
 
         public int co_argcount { get; }
+
+        public int co_posonlyargcount { get; }
 
         public int co_kwonlyargcount { get; }
 
@@ -481,6 +505,14 @@ namespace IronPython.Runtime {
             get {
                 return (int)Flags;
             }
+        }
+
+        public IEnumerable<object> co_positions() {
+            yield return PythonTuple.MakeTuple(
+                Span.Start.Line,
+                Span.End.Line,
+                Math.Max(Span.Start.Column - 1, 0),
+                Math.Max(Span.End.Column - 1, 0));
         }
 
         /// <summary>
@@ -1026,6 +1058,7 @@ namespace IronPython.Runtime {
                     ArrayUtils.ConvertAll(_lambda.ParameterNames, (x) => Expression.Constant(x))
                 ),
                 Expression.Constant(_lambda.ArgCount),
+                Expression.Constant(_lambda.PositionalOnlyArgCount),
                 Expression.Constant(Flags),
                 Expression.Constant(_lambda.IndexSpan.Start),
                 Expression.Constant(_lambda.IndexSpan.End),

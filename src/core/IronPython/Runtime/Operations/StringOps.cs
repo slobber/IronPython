@@ -1166,6 +1166,16 @@ namespace IronPython.Runtime.Operations {
             }
         }
 
+        public static string removeprefix([NotNone] this string self, [NotNone] string prefix)
+            => self.StartsWith(prefix, StringComparison.Ordinal)
+                ? self.Substring(prefix.Length)
+                : self;
+
+        public static string removesuffix([NotNone] this string self, [NotNone] string suffix)
+            => suffix.Length != 0 && self.EndsWith(suffix, StringComparison.Ordinal)
+                ? self.Substring(0, self.Length - suffix.Length)
+                : self;
+
         public static string strip([NotNone] this string self) {
             return self.Trim();
         }

@@ -4,6 +4,8 @@
 
 #nullable enable
 
+using System;
+
 using IronPython.Runtime.Binding;
 
 using MSAst = System.Linq.Expressions;
@@ -27,11 +29,30 @@ namespace IronPython.Compiler.Ast {
         public bool Simple { get; }
 
         public override MSAst.Expression Reduce() {
-            if (Value is null) {
-                return Empty();
-            } else {
-                return Target.TransformSet(Span, Value, PythonOperationKind.None);
+            if (Parent is PythonAst || Parent is ClassDefinition) {
+                if (Target is NameExpression name) {
+                    MSAst.Expression annotation = MSAst.Expression.Call(
+                        AstMethods.SetAnnotation,
+                        Parent.LocalContext,
+                        MSAst.Expression.Constant(Parent is PythonAst),
+                        MSAst.Expression.Constant(name.Name),
+                        MSAst.Expression.Constant(GlobalParent.GetSourceText(Annotation.IndexSpan)),
+                        MSAst.Expression.Lambda<Func<object>>(
+                            MSAst.Expression.Convert(Annotation, typeof(object))),
+                        MSAst.Expression.Constant(GlobalParent.FutureAnnotations));
+                    if (Value is not null) {
+                        annotation = MSAst.Expression.Block(
+                            annotation,
+                            MSAst.Expression.Empty(),
+                            Target.TransformSet(Span, Value, PythonOperationKind.None));
+                    }
+                    return annotation;
+                }
             }
+
+            return Value is null
+                ? Empty()
+                : Target.TransformSet(Span, Value, PythonOperationKind.None);
         }
 
         public override void Walk(PythonWalker walker) {

@@ -206,6 +206,20 @@ namespace IronPython.Modules {
                                 WriteDouble(res, _isLittleEndian, GetDoubleValue(context, curObj++, values));
                             }
                             break;
+                        case FormatType.ComplexFloat:
+                            for (int j = 0; j < curFormat.Count; j++) {
+                                Complex value = Converter.ConvertToComplex(values[curObj++]);
+                                WriteFloat(res, _isLittleEndian, (float)value.Real);
+                                WriteFloat(res, _isLittleEndian, (float)value.Imaginary);
+                            }
+                            break;
+                        case FormatType.ComplexDouble:
+                            for (int j = 0; j < curFormat.Count; j++) {
+                                Complex value = Converter.ConvertToComplex(values[curObj++]);
+                                WriteDouble(res, _isLittleEndian, value.Real);
+                                WriteDouble(res, _isLittleEndian, value.Imaginary);
+                            }
+                            break;
                         case FormatType.Float:
                             for (int j = 0; j < curFormat.Count; j++) {
                                 var d = GetDoubleValue(context, curObj++, values);
@@ -414,6 +428,20 @@ namespace IronPython.Modules {
                                 res[res_idx++] = CreateDoubleValue(context, ref curIndex, _isLittleEndian, data);
                             }
                             break;
+                        case FormatType.ComplexFloat:
+                            for (int j = 0; j < curFormat.Count; j++) {
+                                double real = CreateFloatValue(context, ref curIndex, _isLittleEndian, data);
+                                double imaginary = CreateFloatValue(context, ref curIndex, _isLittleEndian, data);
+                                res[res_idx++] = new Complex(real, imaginary);
+                            }
+                            break;
+                        case FormatType.ComplexDouble:
+                            for (int j = 0; j < curFormat.Count; j++) {
+                                double real = CreateDoubleValue(context, ref curIndex, _isLittleEndian, data);
+                                double imaginary = CreateDoubleValue(context, ref curIndex, _isLittleEndian, data);
+                                res[res_idx++] = new Complex(real, imaginary);
+                            }
+                            break;
                         case FormatType.CString:
                             res[res_idx++] = CreateString(context, ref curIndex, curFormat.Count, data);
                             break;
@@ -563,6 +591,16 @@ namespace IronPython.Modules {
                         case 'd': // double
                             res.Add(new Format(FormatType.Double, count));
                             count = 1;
+                            break;
+                        case 'Z':
+                            if (i + 1 >= fmt.Length || fmt[i + 1] is not ('f' or 'd')) {
+                                throw Error(context, "bad char in struct format");
+                            }
+                            res.Add(new Format(
+                                fmt[i + 1] == 'f' ? FormatType.ComplexFloat : FormatType.ComplexDouble,
+                                count));
+                            count = 1;
+                            i++;
                             break;
                         case 's': // char[]
                             res.Add(new Format(FormatType.CString, count));
@@ -831,6 +869,8 @@ namespace IronPython.Modules {
             LongLong,
             UnsignedLongLong,
             Double,
+            ComplexFloat,
+            ComplexDouble,
 
             CString,
             PascalString,
@@ -872,6 +912,10 @@ namespace IronPython.Modules {
                 case FormatType.UnsignedLongLong:
                 case FormatType.Double:
                     return 8;
+                case FormatType.ComplexFloat:
+                    return 8;
+                case FormatType.ComplexDouble:
+                    return 16;
                 case FormatType.Pointer:
                 case FormatType.SignedNetPointer:
                 case FormatType.UnsignedNetPointer:

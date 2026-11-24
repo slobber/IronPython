@@ -80,7 +80,8 @@ namespace IronPython.Runtime.Operations {
         /// The default class-creation hook does nothing. Keeping it on object makes
         /// cooperative super().__init_subclass__() calls terminate at a real slot.
         /// </summary>
-        public static void __init_subclass__() { }
+        [ClassMethod, StaticExtensionMethod]
+        public static void __init_subclass__(CodeContext context, PythonType cls) { }
 
         /// <summary>
         /// Creates a new instance of the type

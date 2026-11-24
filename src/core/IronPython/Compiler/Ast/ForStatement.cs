@@ -44,7 +44,7 @@ namespace IronPython.Compiler.Ast {
             // Temporary variable for the IEnumerator object
             MSAst.ParameterExpression enumerator = Ast.Variable(typeof(KeyValuePair<IEnumerator, IDisposable>), "foreach_enumerator");
 
-            return Ast.Block(new[] { enumerator }, TransformFor(Parent, enumerator, List, Left, Body, Else, Span, GlobalParent.IndexToLocation(HeaderIndex), ((ILoopStatement)this).BreakLabel, ((ILoopStatement)this).ContinueLabel, true));
+            return Ast.Block(new[] { enumerator }, TransformFor(Parent, enumerator, List, Left, Body, Else, Span, GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex)), ((ILoopStatement)this).BreakLabel, ((ILoopStatement)this).ContinueLabel, true));
         }
 
         public override void Walk(PythonWalker walker) {

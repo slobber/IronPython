@@ -59,6 +59,7 @@ namespace IronPython.Runtime {
                 case 'B': // unsigned byte
                     return 1;
                 case 'u': // unicode char
+                case 'w': // wide unicode char
                 case 'h': // signed short
                 case 'H': // unsigned short
                     return 2;

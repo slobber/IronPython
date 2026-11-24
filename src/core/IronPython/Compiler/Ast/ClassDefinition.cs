@@ -43,7 +43,7 @@ namespace IronPython.Compiler.Ast {
             Body = body ?? EmptyStatement.PreCompiledInstance;
         }
 
-        public SourceLocation Header => GlobalParent.IndexToLocation(HeaderIndex);
+        public SourceLocation Header => GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex));
 
         public int HeaderIndex { get; set; }
 
@@ -222,7 +222,7 @@ namespace IronPython.Compiler.Ast {
                 AssignValue(Parent.GetVariableExpression(PythonVariable!), classDef),
                 new SourceSpan(
                     GlobalParent.IndexToLocation(StartIndex),
-                    GlobalParent.IndexToLocation(HeaderIndex)
+                    GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex))
                 )
             );
 

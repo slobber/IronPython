@@ -34,16 +34,17 @@ namespace IronPython.Modules {
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Security", "CA2104:DoNotDeclareReadOnlyMutableReferenceTypes")]
         public static readonly PythonType/*!*/ ArrayType = DynamicHelpers.GetPythonTypeFromType(typeof(array));
 
-        public static readonly string typecodes = "bBuhHiIlLqQfd";
+        public static readonly PythonTuple typecodes = PythonTuple.MakeTuple(
+            "b", "B", "u", "w", "h", "H", "i", "I", "l", "L", "q", "Q", "f", "d", "e", "Zf", "Zd");
 
         private static array ArrayReconstructor(CodeContext context, [NotNone] PythonType cls, [NotNone] string typecode, int mformat_code, [NotNone] Bytes items) {
-            if (typecode.Length != 1)
+            if (typecode.Length != 1 && typecode is not ("Zf" or "Zd"))
                 throw PythonOps.TypeError("expected character, got {0}", PythonOps.GetPythonTypeName(typecode));
             if (!typecodes.Contains(typecode))
-                throw PythonOps.ValueError("bad typecode (must be b, B, u, h, H, i, I, l, L, q, Q, f or d)");
+                throw PythonOps.ValueError("bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, f, d, e, Zf or Zd)");
 
             var actualTypeCode = MachineFormatToTypeCode(mformat_code, out bool isBigEndian, out string? encoding);
-            if (TypeCodeToMachineFormat(typecode[0]) == mformat_code) {
+            if (TypeCodeToMachineFormat(typecode) == mformat_code) {
                 // if typecodes are equivelent, use original
                 actualTypeCode = typecode;
             }
@@ -105,27 +106,37 @@ namespace IronPython.Modules {
                     19 => "u",
                     20 => "u",
                     21 => "u",
+                    22 => "Zf",
+                    23 => "Zf",
+                    24 => "Zd",
+                    25 => "Zd",
+                    26 => "e",
+                    27 => "e",
                     _ => throw PythonOps.ValueError("invalid machine code format"),
                 };
             }
         }
 
-        private static int TypeCodeToMachineFormat(char typeCode) {
+        private static int TypeCodeToMachineFormat(string typeCode) {
             return typeCode switch
             {
-                'b' => 1,
-                'B' => 0,
-                'u' => 18,
-                'h' => 4,
-                'H' => 2,
-                'i' => 8,
-                'I' => 6,
-                'l' => TypecodeOps.IsCLong32Bit ? 8 : 12,
-                'L' => TypecodeOps.IsCLong32Bit ? 6 : 10,
-                'q' => 12,
-                'Q' => 10,
-                'f' => 14,
-                'd' => 16,
+                "b" => 1,
+                "B" => 0,
+                "u" => 18,
+                "w" => 20,
+                "h" => 4,
+                "H" => 2,
+                "i" => 8,
+                "I" => 6,
+                "l" => TypecodeOps.IsCLong32Bit ? 8 : 12,
+                "L" => TypecodeOps.IsCLong32Bit ? 6 : 10,
+                "q" => 12,
+                "Q" => 10,
+                "f" => 14,
+                "d" => 16,
+                "e" => 26,
+                "Zf" => 22,
+                "Zd" => 24,
                 _ => throw new InvalidOperationException(),// should never happen
             };
         }
@@ -137,15 +148,36 @@ namespace IronPython.Modules {
             //  _data is readonly to ensure proper size locking during buffer exports
             private readonly ArrayData _data;
             private readonly char _typeCode;
+            private readonly char _complexElementCode;
+            private readonly string _declaredTypeCode;
             private WeakRefTracker? _tracker;
 
             public array([NotNone] string type) {
-                if (type == null || type.Length != 1) {
+                if (type is null) {
                     throw PythonOps.TypeErrorForBadInstance("expected character, got {0}", type);
                 }
+                if (type.Length != 1 && type is not ("Zf" or "Zd")) {
+                    throw PythonOps.ValueError("bad typecode");
+                }
+                if (type == "Z") {
+                    throw PythonOps.ValueError("bad typecode");
+                }
 
-                _typeCode = type[0];
-                _data = CreateData(_typeCode);
+                _declaredTypeCode = type;
+                if (type is "Zf" or "Zd") {
+                    _typeCode = 'Z';
+                    _complexElementCode = type[1];
+                } else {
+                    _typeCode = type[0];
+                    _complexElementCode = '\0';
+                }
+                _data = CreateData(_typeCode, _complexElementCode);
+                if (_typeCode == 'u') {
+                    PythonOps.Warn(
+                        DefaultContext.Default,
+                        PythonExceptions.DeprecationWarning,
+                        "The 'u' type code is deprecated and will be removed in Python 3.16");
+                }
             }
 
             public array([NotNone] string type, [NotNone] Bytes initializer) : this(type) {
@@ -157,7 +189,7 @@ namespace IronPython.Modules {
             }
 
             public array([NotNone] string type, [NotNone] array initializer) : this(type) {
-                if (_typeCode != 'u' && initializer._typeCode == 'u') {
+                if (_typeCode is not ('u' or 'w') && initializer._typeCode is 'u' or 'w') {
                     throw PythonOps.TypeError("cannot use a unicode array to initialize an array with typecode '{0}'", _typeCode);
                 }
 
@@ -165,27 +197,32 @@ namespace IronPython.Modules {
             }
 
             public array([NotNone] string type, object? initializer) : this(type) {
-                if (_typeCode != 'u') {
+                if (_typeCode is not ('u' or 'w')) {
                     if (initializer is string || initializer is Extensible<string>)
                         throw PythonOps.TypeError("cannot use a str to initialize an array with typecode '{0}'", _typeCode);
-                    if (initializer is array arr && arr._typeCode == 'u')
+                    if (initializer is array arr && arr._typeCode is 'u' or 'w')
                         throw PythonOps.TypeError("cannot use a unicode array to initialize an array with typecode '{0}'", _typeCode);
                 }
 
                 ExtendIter(initializer);
             }
 
-            private array(char typeCode, ArrayData data) {
+            private array(char typeCode, ArrayData data, char complexElementCode = '\0') {
                 _typeCode = typeCode;
+                _complexElementCode = complexElementCode;
+                _declaredTypeCode = typeCode == 'Z'
+                    ? "Z" + complexElementCode
+                    : ScriptingRuntimeHelpers.CharToString(typeCode);
                 _data = data;
             }
 
-            private static ArrayData CreateData(char typecode) {
+            private static ArrayData CreateData(char typecode, char complexElementCode = '\0') {
                 return (typecode) switch
                 {
                     'b' => new ArrayData<sbyte>(),
                     'B' => new ArrayData<byte>(),
                     'u' => new ArrayData<char>(),
+                    'w' => new ArrayData<char>(),
                     'h' => new ArrayData<short>(),
                     'H' => new ArrayData<ushort>(),
                     'i' => new ArrayData<int>(),
@@ -196,7 +233,9 @@ namespace IronPython.Modules {
                     'Q' => new ArrayData<ulong>(),
                     'f' => new ArrayData<float>(),
                     'd' => new ArrayData<double>(),
-                    _ => throw PythonOps.ValueError("bad typecode (must be b, B, u, h, H, i, I, l, L, q, Q, f or d)"),
+                    'e' => new ArrayData<Half>(),
+                    'Z' => new ArrayData<Complex>(),
+                    _ => throw PythonOps.ValueError("bad typecode (must be b, B, u, w, h, H, i, I, l, L, q, Q, f, d, e, Zf or Zd)"),
                 };
             }
 
@@ -234,7 +273,7 @@ namespace IronPython.Modules {
                     return new array(array.typecode);
                 }
 
-                return new array(array._typeCode, array._data.Multiply(value));
+                return new array(array._typeCode, array._data.Multiply(value), array._complexElementCode);
             }
 
             public static array operator *([NotNone] array array, BigInteger value) {
@@ -278,11 +317,14 @@ namespace IronPython.Modules {
 
                 byte[] tmp = new byte[itemsize];
                 for (int i = 0; i < bytes.Length; i += itemsize) {
-                    for (int j = 0; j < itemsize; j++) {
-                        tmp[j] = bytes[i + j];
-                    }
-                    for (int j = 0; j < itemsize; j++) {
-                        bytes[i + j] = tmp[itemsize - (j + 1)];
+                    int half = _typeCode == 'Z' ? itemsize / 2 : itemsize;
+                    for (int offset = 0; offset < itemsize; offset += half) {
+                        for (int j = 0; j < half; j++) {
+                            tmp[j] = bytes[i + offset + j];
+                        }
+                        for (int j = 0; j < half; j++) {
+                            bytes[i + offset + j] = tmp[half - (j + 1)];
+                        }
                     }
                 }
                 _data.Clear();
@@ -293,7 +335,7 @@ namespace IronPython.Modules {
             public int count(object? x) => _data.CountItems(x);
 
             private void ExtendArray(array pa) {
-                if (_typeCode != pa._typeCode) {
+                if (typecode != pa.typecode) {
                     throw PythonOps.TypeError("can only extend with array of same kind");
                 }
 
@@ -307,7 +349,7 @@ namespace IronPython.Modules {
                     return;
                 }
 
-                if (_typeCode == 'u' && iterable is string str) {
+                if (_typeCode is ('u' or 'w') && iterable is string str) {
                     FromUnicode(str);
                     return;
                 }
@@ -385,7 +427,7 @@ namespace IronPython.Modules {
             }
 
             public void fromunicode(CodeContext/*!*/ context, [NotNone] string s) {
-                if (_typeCode != 'u') {
+                if (_typeCode is not ('u' or 'w')) {
                     throw PythonOps.ValueError("fromunicode() may only be called on type 'u' arrays");
                 }
 
@@ -404,6 +446,13 @@ namespace IronPython.Modules {
                 return res;
             }
 
+            public int index(object? x, object? start, object? stop = null) {
+                return ((PythonList)tolist()).index(
+                    x,
+                    start is null ? 0 : Converter.ConvertToIndex(start),
+                    stop is null ? _data.Count : Converter.ConvertToIndex(stop));
+            }
+
             public void insert(int i, [NotNone] object x) {
                 if (i > _data.Count) i = _data.Count;
                 if (i < 0) i = _data.Count + i;
@@ -413,7 +462,11 @@ namespace IronPython.Modules {
             }
 
             public int itemsize
-                => TypecodeOps.GetTypecodeWidth(_typeCode);
+                => _typeCode switch {
+                    'e' => 2,
+                    'Z' => _complexElementCode == 'f' ? 8 : 16,
+                    _ => TypecodeOps.GetTypecodeWidth(_typeCode)
+                };
 
             public object pop() {
                 return pop(-1);
@@ -421,7 +474,7 @@ namespace IronPython.Modules {
 
             public object pop(int i) {
                 i = PythonOps.FixIndex(i, _data.Count);
-                object res = _data[i]!;
+                object res = this[i];
                 _data.RemoveAt(i);
                 return res;
             }
@@ -433,13 +486,16 @@ namespace IronPython.Modules {
             public void reverse()
                 => _data.Reverse();
 
+            public void clear() => _data.Clear();
+
             public virtual object this[int index] {
                 get {
                     index = PythonOps.FixIndex(index, _data.Count);
                     switch (_typeCode) {
                         case 'b': return (int)((ArrayData<sbyte>)_data)[index];
                         case 'B': return (int)((ArrayData<byte>)_data)[index];
-                        case 'u': return ScriptingRuntimeHelpers.CharToString(((ArrayData<char>)_data)[index]);
+                        case 'u':
+                        case 'w': return ScriptingRuntimeHelpers.CharToString(((ArrayData<char>)_data)[index]);
                         case 'h': return (int)((ArrayData<short>)_data)[index];
                         case 'H': return (int)((ArrayData<ushort>)_data)[index];
                         case 'i': return ((ArrayData<int>)_data)[index];
@@ -450,6 +506,8 @@ namespace IronPython.Modules {
                         case 'Q': return (BigInteger)((ArrayData<ulong>)_data)[index];
                         case 'f': return (double)((ArrayData<float>)_data)[index];
                         case 'd': return ((ArrayData<double>)_data)[index];
+                        case 'e': return (double)((ArrayData<Half>)_data)[index];
+                        case 'Z': return ((ArrayData<Complex>)_data)[index];
                         default: throw new InvalidOperationException(); // should never happen
                     }
                 }
@@ -466,7 +524,8 @@ namespace IronPython.Modules {
                 switch (_typeCode) {
                     case 'b': bw.Write(((ArrayData<sbyte>)_data)[index]); break;
                     case 'B': bw.Write(((ArrayData<byte>)_data)[index]); break;
-                    case 'u': WriteBinaryChar(bw, ((ArrayData<char>)_data)[index]); break;
+                    case 'u':
+                    case 'w': WriteBinaryChar(bw, ((ArrayData<char>)_data)[index]); break;
                     case 'h': bw.Write(((ArrayData<short>)_data)[index]); break;
                     case 'H': bw.Write(((ArrayData<ushort>)_data)[index]); break;
                     case 'i': bw.Write(((ArrayData<int>)_data)[index]); break;
@@ -477,6 +536,17 @@ namespace IronPython.Modules {
                     case 'Q': bw.Write(((ArrayData<ulong>)_data)[index]); break;
                     case 'f': bw.Write(((ArrayData<float>)_data)[index]); break;
                     case 'd': bw.Write(((ArrayData<double>)_data)[index]); break;
+                    case 'e': bw.Write((Half)((ArrayData<Half>)_data)[index]); break;
+                    case 'Z':
+                        Complex complex = ((ArrayData<Complex>)_data)[index];
+                        if (_complexElementCode == 'f') {
+                            bw.Write((float)complex.Real);
+                            bw.Write((float)complex.Imaginary);
+                        } else {
+                            bw.Write(complex.Real);
+                            bw.Write(complex.Imaginary);
+                        }
+                        break;
                     default: throw new InvalidOperationException(); // should never happen
                 }
                 return ms.ToArray();
@@ -493,19 +563,8 @@ namespace IronPython.Modules {
             [NotNull]
             public object? this[[NotNone] Slice index] {
                 get {
-                    index.Indices(_data.Count, out int start, out int stop, out int step);
-
-                    array pa = new array(ScriptingRuntimeHelpers.CharToString(_typeCode));
-                    if (step < 0) {
-                        for (int i = start; i > stop; i += step) {
-                            pa._data.Add(_data[i]);
-                        }
-                    } else {
-                        for (int i = start; i < stop; i += step) {
-                            pa._data.Add(_data[i]);
-                        }
-                    }
-                    return pa;
+                    var sliced = (PythonList)tolist()[index];
+                    return new array(typecode, sliced);
                 }
                 set {
                     array arr = CheckSliceAssignType(value);
@@ -527,7 +586,7 @@ namespace IronPython.Modules {
             private array CheckSliceAssignType([NotNull] object? value) {
                 if (!(value is array pa)) {
                     throw PythonOps.TypeError("can only assign array (not \"{0}\") to array slice", PythonOps.GetPythonTypeName(value));
-                } else if (pa._typeCode != _typeCode) {
+                } else if (pa.typecode != typecode) {
                     throw PythonOps.TypeError("bad argument type for built-in operation");
                 }
                 return pa;
@@ -572,7 +631,7 @@ namespace IronPython.Modules {
                     PythonTuple.MakeTuple(
                         DynamicHelpers.GetPythonType(this),
                         typecode,
-                        TypeCodeToMachineFormat(_typeCode),
+                        TypeCodeToMachineFormat(typecode),
                         tobytes()
                     ),
                     dict);
@@ -607,13 +666,13 @@ namespace IronPython.Modules {
             }
 
             public string tounicode(CodeContext/*!*/ context) {
-                if (_typeCode != 'u') throw PythonOps.ValueError("only 'u' arrays can be converted to unicode");
+                if (_typeCode is not ('u' or 'w')) throw PythonOps.ValueError("only unicode arrays can be converted to unicode");
 
                 return new string(((ArrayData<char>)_data).Data, 0, _data.Count);
             }
 
             public string/*!*/ typecode {
-                get { return ScriptingRuntimeHelpers.CharToString(_typeCode); }
+                get { return _declaredTypeCode; }
             }
 
             internal MemoryStream ToStream() {
@@ -629,7 +688,8 @@ namespace IronPython.Modules {
                     switch (_typeCode) {
                         case 'b': bw.Write(((ArrayData<sbyte>)_data)[i]); break;
                         case 'B': bw.Write(((ArrayData<byte>)_data)[i]); break;
-                        case 'u': WriteBinaryChar(bw, ((ArrayData<char>)_data)[i]); break;
+                        case 'u':
+                        case 'w': WriteBinaryChar(bw, ((ArrayData<char>)_data)[i]); break;
                         case 'h': bw.Write(((ArrayData<short>)_data)[i]); break;
                         case 'H': bw.Write(((ArrayData<ushort>)_data)[i]); break;
                         case 'i': bw.Write(((ArrayData<int>)_data)[i]); break;
@@ -640,6 +700,17 @@ namespace IronPython.Modules {
                         case 'Q': bw.Write(((ArrayData<ulong>)_data)[i]); break;
                         case 'f': bw.Write(((ArrayData<float>)_data)[i]); break;
                         case 'd': bw.Write(((ArrayData<double>)_data)[i]); break;
+                        case 'e': bw.Write(BitConverter.HalfToUInt16Bits(((ArrayData<Half>)_data)[i])); break;
+                        case 'Z':
+                            Complex complex = ((ArrayData<Complex>)_data)[i];
+                            if (_complexElementCode == 'f') {
+                                bw.Write((float)complex.Real);
+                                bw.Write((float)complex.Imaginary);
+                            } else {
+                                bw.Write(complex.Real);
+                                bw.Write(complex.Imaginary);
+                            }
+                            break;
                         default: throw new InvalidOperationException(); // should never happen
                     }
                 }
@@ -678,7 +749,8 @@ namespace IronPython.Modules {
                     switch (_typeCode) {
                         case 'b': ((ArrayData<sbyte>)_data).Add((sbyte)br.ReadByte()); break;
                         case 'B': ((ArrayData<byte>)_data).Add(br.ReadByte()); break;
-                        case 'u': ((ArrayData<char>)_data).Add(ReadBinaryChar(br)); break;
+                        case 'u':
+                        case 'w': ((ArrayData<char>)_data).Add(ReadBinaryChar(br)); break;
                         case 'h': ((ArrayData<short>)_data).Add(br.ReadInt16()); break;
                         case 'H': ((ArrayData<ushort>)_data).Add(br.ReadUInt16()); break;
                         case 'i': ((ArrayData<int>)_data).Add(br.ReadInt32()); break;
@@ -689,6 +761,14 @@ namespace IronPython.Modules {
                         case 'Q': ((ArrayData<ulong>)_data).Add(br.ReadUInt64()); break;
                         case 'f': ((ArrayData<float>)_data).Add(br.ReadSingle()); break;
                         case 'd': ((ArrayData<double>)_data).Add(br.ReadDouble()); break;
+                        case 'e': ((ArrayData<Half>)_data).Add(BitConverter.UInt16BitsToHalf(br.ReadUInt16())); break;
+                        case 'Z':
+                            if (_complexElementCode == 'f') {
+                                ((ArrayData<Complex>)_data).Add(new Complex(br.ReadSingle(), br.ReadSingle()));
+                            } else {
+                                ((ArrayData<Complex>)_data).Add(new Complex(br.ReadDouble(), br.ReadDouble()));
+                            }
+                            break;
                         default: throw new InvalidOperationException(); // should never happen
                     }
                 }
@@ -702,7 +782,8 @@ namespace IronPython.Modules {
                     switch (_typeCode) {
                         case 'b': ((ArrayData<sbyte>)_data)[i] = (sbyte)br.ReadByte(); break;
                         case 'B': ((ArrayData<byte>)_data)[i] = br.ReadByte(); break;
-                        case 'u': ((ArrayData<char>)_data)[i] = ReadBinaryChar(br); break;
+                        case 'u':
+                        case 'w': ((ArrayData<char>)_data)[i] = ReadBinaryChar(br); break;
                         case 'h': ((ArrayData<short>)_data)[i] = br.ReadInt16(); break;
                         case 'H': ((ArrayData<ushort>)_data)[i] = br.ReadUInt16(); break;
                         case 'i': ((ArrayData<int>)_data)[i] = br.ReadInt32(); break;
@@ -713,6 +794,12 @@ namespace IronPython.Modules {
                         case 'Q': ((ArrayData<ulong>)_data)[i] = br.ReadUInt64(); break;
                         case 'f': ((ArrayData<float>)_data)[i] = br.ReadSingle(); break;
                         case 'd': ((ArrayData<double>)_data)[i] = br.ReadDouble(); break;
+                        case 'e': ((ArrayData<Half>)_data)[i] = BitConverter.UInt16BitsToHalf(br.ReadUInt16()); break;
+                        case 'Z':
+                            ((ArrayData<Complex>)_data)[i] = _complexElementCode == 'f'
+                                ? new Complex(br.ReadSingle(), br.ReadSingle())
+                                : new Complex(br.ReadDouble(), br.ReadDouble());
+                            break;
                         default: throw new InvalidOperationException(); // should never happen
                     }
                 }
@@ -732,7 +819,8 @@ namespace IronPython.Modules {
                     switch (_typeCode) {
                         case 'b': ((ArrayData<sbyte>)_data)[i] = (sbyte)br.ReadByte(); break;
                         case 'B': ((ArrayData<byte>)_data)[i] = br.ReadByte(); break;
-                        case 'u': ((ArrayData<char>)_data)[i] = ReadBinaryChar(br); break;
+                        case 'u':
+                        case 'w': ((ArrayData<char>)_data)[i] = ReadBinaryChar(br); break;
                         case 'h': ((ArrayData<short>)_data)[i] = br.ReadInt16(); break;
                         case 'H': ((ArrayData<ushort>)_data)[i] = br.ReadUInt16(); break;
                         case 'i': ((ArrayData<int>)_data)[i] = br.ReadInt32(); break;
@@ -743,6 +831,12 @@ namespace IronPython.Modules {
                         case 'Q': ((ArrayData<ulong>)_data)[i] = br.ReadUInt64(); break;
                         case 'f': ((ArrayData<float>)_data)[i] = br.ReadSingle(); break;
                         case 'd': ((ArrayData<double>)_data)[i] = br.ReadDouble(); break;
+                        case 'e': ((ArrayData<Half>)_data)[i] = BitConverter.UInt16BitsToHalf(br.ReadUInt16()); break;
+                        case 'Z':
+                            ((ArrayData<Complex>)_data)[i] = _complexElementCode == 'f'
+                                ? new Complex(br.ReadSingle(), br.ReadSingle())
+                                : new Complex(br.ReadDouble(), br.ReadDouble());
+                            break;
                         default: throw new InvalidOperationException(); // should never happen
                     }
                 }
@@ -770,7 +864,8 @@ namespace IronPython.Modules {
                 switch (_typeCode) {
                     case 'b': return new[] { (byte)((ArrayData<sbyte>)_data)[index] };
                     case 'B': return new[] { ((ArrayData<byte>)_data)[index] };
-                    case 'u': return BitConverter.GetBytes(((ArrayData<char>)_data)[index]);
+                    case 'u':
+                    case 'w': return BitConverter.GetBytes(((ArrayData<char>)_data)[index]);
                     case 'h': return BitConverter.GetBytes(((ArrayData<short>)_data)[index]);
                     case 'H': return BitConverter.GetBytes(((ArrayData<ushort>)_data)[index]);
                     case 'i': return BitConverter.GetBytes(((ArrayData<int>)_data)[index]);
@@ -781,6 +876,15 @@ namespace IronPython.Modules {
                     case 'Q': return BitConverter.GetBytes(((ArrayData<ulong>)_data)[index]);
                     case 'f': return BitConverter.GetBytes(((ArrayData<float>)_data)[index]);
                     case 'd': return BitConverter.GetBytes(((ArrayData<double>)_data)[index]);
+                    case 'e': return BitConverter.GetBytes(BitConverter.HalfToUInt16Bits(((ArrayData<Half>)_data)[index]));
+                    case 'Z': {
+                        Complex complex = ((ArrayData<Complex>)_data)[index];
+                        return _complexElementCode == 'f'
+                            ? BitConverter.GetBytes((float)complex.Real)
+                                .Concat(BitConverter.GetBytes((float)complex.Imaginary)).ToArray()
+                            : BitConverter.GetBytes(complex.Real)
+                                .Concat(BitConverter.GetBytes(complex.Imaginary)).ToArray();
+                    }
                     default: throw new InvalidOperationException(); // should never happen
                 }
             }
@@ -789,7 +893,8 @@ namespace IronPython.Modules {
                 switch (_typeCode) {
                     case 'b': return (sbyte)bytes[0];
                     case 'B': return bytes[0];
-                    case 'u': return BitConverter.ToChar(bytes, 0);
+                    case 'u':
+                    case 'w': return BitConverter.ToChar(bytes, 0);
                     case 'h': return BitConverter.ToInt16(bytes, 0);
                     case 'H': return BitConverter.ToUInt16(bytes, 0);
                     case 'i': return BitConverter.ToInt32(bytes, 0);
@@ -797,9 +902,14 @@ namespace IronPython.Modules {
                     case 'l': if (TypecodeOps.IsCLong32Bit) goto case 'i'; else goto case 'q';
                     case 'L': if (TypecodeOps.IsCLong32Bit) goto case 'I'; else goto case 'Q';
                     case 'q': return BitConverter.ToInt64(bytes, 0);
-                    case 'Q': return BitConverter.ToInt64(bytes, 0);
                     case 'f': return BitConverter.ToSingle(bytes, 0);
                     case 'd': return BitConverter.ToDouble(bytes, 0);
+                    case 'Q': return BitConverter.ToUInt64(bytes, 0);
+                    case 'e': return BitConverter.UInt16BitsToHalf(BitConverter.ToUInt16(bytes, 0));
+                    case 'Z':
+                        return _complexElementCode == 'f'
+                            ? new Complex(BitConverter.ToSingle(bytes, 0), BitConverter.ToSingle(bytes, 4))
+                            : new Complex(BitConverter.ToDouble(bytes, 0), BitConverter.ToDouble(bytes, 8));
                     default: throw new InvalidOperationException(); // should never happen
                 }
             }
@@ -814,7 +924,8 @@ namespace IronPython.Modules {
                 switch (_typeCode) {
                     case 'b': dataTuple = PythonTuple.MakeTuple(((ArrayData<sbyte>)_data).Data); break;
                     case 'B': dataTuple = PythonTuple.MakeTuple(((ArrayData<byte>)_data).Data); break;
-                    case 'u': dataTuple = PythonTuple.MakeTuple(((ArrayData<char>)_data).Data); break;
+                    case 'u':
+                    case 'w': dataTuple = PythonTuple.MakeTuple(((ArrayData<char>)_data).Data); break;
                     case 'h': dataTuple = PythonTuple.MakeTuple(((ArrayData<short>)_data).Data); break;
                     case 'H': dataTuple = PythonTuple.MakeTuple(((ArrayData<ushort>)_data).Data); break;
                     case 'i': dataTuple = PythonTuple.MakeTuple(((ArrayData<int>)_data).Data); break;
@@ -825,6 +936,8 @@ namespace IronPython.Modules {
                     case 'Q': dataTuple = PythonTuple.MakeTuple(((ArrayData<ulong>)_data).Data); break;
                     case 'f': dataTuple = PythonTuple.MakeTuple(((ArrayData<float>)_data).Data); break;
                     case 'd': dataTuple = PythonTuple.MakeTuple(((ArrayData<double>)_data).Data); break;
+                    case 'e': dataTuple = PythonTuple.MakeTuple(((ArrayData<Half>)_data).Data); break;
+                    case 'Z': dataTuple = PythonTuple.MakeTuple(((ArrayData<Complex>)_data).Data); break;
                     default: throw new InvalidOperationException(); // should never happen
                 }
 
@@ -837,7 +950,7 @@ namespace IronPython.Modules {
                 if (_data.Count != pa._data.Count) return false;
 
                 for (int i = 0; i < _data.Count; i++) {
-                    if (!comparer.Equals(_data[i], pa._data[i])) {
+                    if (!comparer.Equals(this[i], pa[i])) {
                         return false;
                     }
                 }
@@ -1019,7 +1132,7 @@ namespace IronPython.Modules {
             #region IBufferProtocol Members
 
             IPythonBuffer IBufferProtocol.GetBuffer(BufferFlags flags, bool throwOnError) {
-                return _data.GetBuffer(this, _typeCode.ToString(), flags);
+                return _data.GetBuffer(this, typecode, flags);
             }
 
             #endregion

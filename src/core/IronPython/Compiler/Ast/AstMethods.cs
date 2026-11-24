@@ -61,8 +61,10 @@ namespace IronPython.Compiler.Ast {
         public static readonly MethodInfo UnpackIterable = GetMethod((Func<CodeContext, object, int, int, object>)PythonOps.UnpackIterable);
         public static readonly MethodInfo GetGlobalContext = GetMethod((Func<CodeContext, CodeContext>)PythonOps.GetGlobalContext);
         public static readonly MethodInfo GetParentContextFromFunction = GetMethod((Func<PythonFunction, CodeContext>)PythonOps.GetParentContextFromFunction);
-        public static readonly MethodInfo MakeFunction = GetMethod((Func<CodeContext, FunctionCode, object, object[], PythonDictionary, PythonDictionary, object>)PythonOps.MakeFunction);
-        public static readonly MethodInfo MakeFunctionDebug = GetMethod((Func<CodeContext/*!*/, FunctionCode, object, object[], PythonDictionary, PythonDictionary, Delegate, object>)PythonOps.MakeFunctionDebug);
+        public static readonly MethodInfo MakeAnnotationFunction = GetMethod((Func<string[], string[], Func<object>[], bool, AnnotationFunction>)PythonOps.MakeAnnotationFunction);
+        public static readonly MethodInfo MakeLazyAnnotationFunction = GetMethod((Func<CodeContext, string[], string[], bool, AnnotationFunction>)PythonOps.MakeLazyAnnotationFunction);
+        public static readonly MethodInfo MakeFunction = GetMethod((Func<CodeContext, FunctionCode, object, object[], PythonDictionary, PythonDictionary, object, object>)PythonOps.MakeFunction);
+        public static readonly MethodInfo MakeFunctionDebug = GetMethod((Func<CodeContext/*!*/, FunctionCode, object, object[], PythonDictionary, PythonDictionary, Delegate, object, object>)PythonOps.MakeFunctionDebug);
         public static readonly MethodInfo MakeClosureCell = GetMethod((Func<ClosureCell>)PythonOps.MakeClosureCell);
         public static readonly MethodInfo MakeClosureCellWithValue = GetMethod((Func<object, ClosureCell>)PythonOps.MakeClosureCellWithValue);
         public static readonly MethodInfo LookupName = GetMethod((Func<CodeContext, string, object>)PythonOps.LookupName);
@@ -75,6 +77,7 @@ namespace IronPython.Compiler.Ast {
         public static readonly MethodInfo MakeSet = GetMethod((Func<object[], SetCollection>)PythonOps.MakeSet);
         public static readonly MethodInfo MakeEmptySet = GetMethod((Func<SetCollection>)PythonOps.MakeEmptySet);
         public static readonly MethodInfo MakeDictFromKeyValueItems = GetMethod((Func<object[], PythonDictionary>)PythonOps.MakeDictFromKeyValueItems);
+        public static readonly MethodInfo SetAnnotation = GetMethod((Action<CodeContext, bool, string, string, Func<object>, bool>)PythonOps.SetAnnotation);
         public static readonly MethodInfo MakeHomogeneousDictFromKeyValueItems = GetMethod((Func<object[], PythonDictionary>)PythonOps.MakeHomogeneousDictFromKeyValueItems);
         public static readonly MethodInfo CreateLocalContext = GetMethod((Func<CodeContext, MutableTuple, string[], int, int, bool, CodeContext>)PythonOps.CreateLocalContext);
         public static readonly MethodInfo UpdateStackTrace = GetMethod((Action<Exception, CodeContext, FunctionCode, int>)PythonOps.UpdateStackTrace);
@@ -91,7 +94,7 @@ namespace IronPython.Compiler.Ast {
 #if FEATURE_NET_ASYNC
         public static readonly MethodInfo PushAsyncFrame = GetMethod((Action<CodeContext, AsyncBodyFrame, FunctionCode>)PythonOps.PushAsyncFrame);
         public static readonly MethodInfo AsTaskForAwait = GetMethod((Func<object, System.Threading.Tasks.Task<object>>)PythonOps.AsTaskForAwait);
-        public static readonly MethodInfo MakeAsyncCoroutine = GetMethod((Func<PythonFunction, Func<System.Threading.Tasks.Task<object>>, Microsoft.Scripting.Runtime.AsyncInterruptSource, PythonCoroutine>)PythonOps.MakeAsyncCoroutine);
+        public static readonly MethodInfo MakeAsyncCoroutine = GetMethod((Func<PythonFunction, Func<System.Threading.Tasks.Task<object>>, Microsoft.Scripting.Runtime.AsyncInterruptSource, Microsoft.Scripting.Runtime.AsyncSuspensionCoordinator, PythonCoroutine>)PythonOps.MakeAsyncCoroutine);
         public static readonly MethodInfo MakeAsyncGenerator = GetMethod((Func<PythonFunction, System.Collections.Generic.IAsyncEnumerable<object>, System.Runtime.CompilerServices.StrongBox<object>, System.Runtime.CompilerServices.StrongBox<System.Exception>, System.Threading.CancellationTokenSource, PythonAsyncGenerator>)PythonOps.MakeAsyncGenerator);
 #endif
 

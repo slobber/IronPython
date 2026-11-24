@@ -47,6 +47,10 @@ namespace IronPython.Runtime.Exceptions {
         #region Custom Exception Code
 
         public partial class _SyntaxError : BaseException {
+            public object end_lineno { get; set; }
+
+            public object end_offset { get; set; }
+
             public override string ToString() {
                 if (filename is string fn) {
                     if (lineno is int ln) {
@@ -68,7 +72,7 @@ namespace IronPython.Runtime.Exceptions {
                     // (msg, (filename, lineno, offset, text))
                     if (args.Length == 2) {
                         var locationInfo = PythonTuple.Make(args[1]);
-                        if (locationInfo.__len__() != 4) {
+                        if (locationInfo.__len__() is not (4 or 6)) {
                             throw PythonOps.IndexError("tuple index out of range");
                         }
 
@@ -76,6 +80,10 @@ namespace IronPython.Runtime.Exceptions {
                         lineno = locationInfo[1];
                         offset = locationInfo[2];
                         text = locationInfo[3];
+                        if (locationInfo.__len__() == 6) {
+                            end_lineno = locationInfo[4];
+                            end_offset = locationInfo[5];
+                        }
                     }
                 }
             }
@@ -603,6 +611,22 @@ for k, v in toError.items():
         }
 
         public partial class _ImportError {
+            [MultiRuntimeAware]
+            private static PythonType ImportCycleErrorStorage;
+
+            public static PythonType ImportCycleError {
+                get {
+                    if (ImportCycleErrorStorage is null) {
+                        Interlocked.CompareExchange(
+                            ref ImportCycleErrorStorage,
+                            CreateSubType(ImportError, "ImportCycleError",
+                                (msg, innerException) => new ImportException(msg, innerException)),
+                            null);
+                    }
+                    return ImportCycleErrorStorage;
+                }
+            }
+
             public void __init__([ParamDictionary] IDictionary<string, object> kwargs, [NotNone] params object[] args) {
                 base.__init__(args);
 
@@ -618,6 +642,38 @@ for k, v in toError.items():
                             throw PythonOps.TypeError($"'{pair.Key}' is an invalid keyword argument for this function");
                     }
                 }
+            }
+        }
+
+        [MultiRuntimeAware]
+        private static PythonType PythonFinalizationErrorStorage;
+
+        public static PythonType PythonFinalizationError {
+            get {
+                if (PythonFinalizationErrorStorage is null) {
+                    Interlocked.CompareExchange(
+                        ref PythonFinalizationErrorStorage,
+                        CreateSubType(RuntimeError, "PythonFinalizationError",
+                            (msg, innerException) => new RuntimeException(msg, innerException)),
+                        null);
+                }
+                return PythonFinalizationErrorStorage;
+            }
+        }
+
+        [MultiRuntimeAware]
+        private static PythonType EncodingWarningStorage;
+
+        public static PythonType EncodingWarning {
+            get {
+                if (EncodingWarningStorage is null) {
+                    Interlocked.CompareExchange(
+                        ref EncodingWarningStorage,
+                        CreateSubType(Warning, "EncodingWarning",
+                            (msg, innerException) => new PythonException(msg, innerException)),
+                        null);
+                }
+                return EncodingWarningStorage;
             }
         }
 

@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
@@ -95,6 +96,16 @@ namespace IronPython.Compiler.Ast {
             }
         }
 
+        internal override int PositionalOnlyArgCount {
+            get {
+                int count = 0;
+                while (count < _parameters.Length && _parameters[count].IsPositionalOnly) {
+                    count++;
+                }
+                return count;
+            }
+        }
+
         internal override int KwOnlyArgCount {
             get {
                 int kwOnlyArgCount = 0;
@@ -108,7 +119,7 @@ namespace IronPython.Compiler.Ast {
 
         public Statement Body { get; set; }
 
-        public SourceLocation Header => GlobalParent.IndexToLocation(HeaderIndex);
+        public SourceLocation Header => GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex));
 
         public int HeaderIndex { get; set; }
 
@@ -319,7 +330,7 @@ namespace IronPython.Compiler.Ast {
             MSAst.Expression function = MakeFunctionExpression();
             return GlobalParent.AddDebugInfoAndVoid(
                 AssignValue(Parent.GetVariableExpression(PythonVariable), function),
-                new SourceSpan(GlobalParent.IndexToLocation(StartIndex), GlobalParent.IndexToLocation(HeaderIndex))
+                new SourceSpan(GlobalParent.IndexToLocation(StartIndex), GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex)))
             );
         }
 
@@ -329,15 +340,12 @@ namespace IronPython.Compiler.Ast {
         internal MSAst.Expression MakeFunctionExpression() {
             var defaults = new List<MSAst.Expression>();
             var kwdefaults = new List<MSAst.Expression>();
-            var annotations = new List<MSAst.Expression>();
-
-            if (ReturnAnnotation != null) {
-                annotations.Add(Ast.Constant("return", typeof(string)));
-                annotations.Add(AstUtils.Convert(ReturnAnnotation, typeof(object)));
-            }
+            var annotationNames = new List<MSAst.Expression>();
+            var annotationSources = new List<MSAst.Expression>();
 
             foreach (var param in _parameters) {
-                if (param.Kind == ParameterKind.Normal && param.DefaultValue != null) {
+                if ((param.Kind == ParameterKind.Normal || param.Kind == ParameterKind.PositionalOnly)
+                    && param.DefaultValue != null) {
                     defaults.Add(AstUtils.Convert(param.DefaultValue, typeof(object)));
                 }
 
@@ -347,10 +355,21 @@ namespace IronPython.Compiler.Ast {
                 }
 
                 if (param.Annotation != null) {
-                    annotations.Add(Ast.Constant(param.Name, typeof(string)));
-                    annotations.Add(AstUtils.Convert(param.Annotation, typeof(object)));
+                    AddAnnotation(param.Name, param.Annotation);
                 }
             }
+            if (ReturnAnnotation != null) {
+                AddAnnotation("return", ReturnAnnotation);
+            }
+
+            MSAst.Expression annotationFunction = annotationNames.Count == 0
+                ? AstUtils.Constant(null, typeof(object))
+                : Ast.Call(
+                    AstMethods.MakeLazyAnnotationFunction,
+                    Parent.LocalContext,
+                    Ast.NewArrayInit(typeof(string), annotationNames),
+                    Ast.NewArrayInit(typeof(string), annotationSources),
+                    Ast.Constant(GlobalParent.FutureAnnotations, typeof(bool)));
 
             MSAst.Expression funcCode = GlobalParent.Constant(GetOrMakeFunctionCode());
             FuncCodeExpr = funcCode;
@@ -378,14 +397,8 @@ namespace IronPython.Compiler.Ast {
                                 kwdefaults
                             )
                         ),
-                    annotations.Count == 0 ? AstUtils.Constant(null, typeof(PythonDictionary)) :
-                        (MSAst.Expression)Ast.Call(                                                 // 6. annotations
-                            AstMethods.MakeDictFromKeyValueItems,
-                            Ast.NewArrayInit(
-                                typeof(object),
-                                annotations
-                            )
-                        ),
+                    AstUtils.Constant(null, typeof(PythonDictionary)),
+                    annotationFunction,
 #if FEATURE_NET_ASYNC
                     // Async generators are lowered via AsyncEnumerableExpression in the body,
                     // so they must not be wrapped as a PythonGenerator here — only plain (non-async) generators are.
@@ -413,24 +426,25 @@ namespace IronPython.Compiler.Ast {
                                 kwdefaults
                             )
                         ),
-                    annotations.Count == 0 ? AstUtils.Constant(null, typeof(PythonDictionary)) :
-                        (MSAst.Expression)Ast.Call(                                                 // 6. annotations
-                            AstMethods.MakeDictFromKeyValueItems,
-                            Ast.NewArrayInit(
-                                typeof(object),
-                                annotations
-                            )
-                        )
+                    AstUtils.Constant(null, typeof(PythonDictionary)),
+                    annotationFunction
                 );
             }
 
             return AddDecorators(ret, Decorators);
+
+            void AddAnnotation(string name, Expression annotation) {
+                annotationNames.Add(Ast.Constant(name, typeof(string)));
+                annotationSources.Add(Ast.Constant(
+                    GlobalParent.GetSourceText(annotation.IndexSpan),
+                    typeof(string)));
+            }
         }
 
         #region IInstructionProvider Members
 
         void IInstructionProvider.AddInstructions(LightCompiler compiler) {
-            if (Decorators != null) {
+            if (Decorators != null || ReturnAnnotation != null || _parameters.Any(param => param.Annotation != null)) {
                 // decorators aren't supported, skip using the optimized instruction.
                 compiler.Compile(Reduce());
                 return;
@@ -463,7 +477,8 @@ namespace IronPython.Compiler.Ast {
             int defaultCount = 0;
             for (int i = _parameters.Length - 1; i >= 0; i--) {
                 var param = _parameters[i];
-                if (param.Kind == ParameterKind.Normal && param.DefaultValue != null) {
+                if ((param.Kind == ParameterKind.Normal || param.Kind == ParameterKind.PositionalOnly)
+                    && param.DefaultValue != null) {
                     compiler.Compile(AstUtils.Convert(param.DefaultValue, typeof(object)));
                     defaultCount++;
                 }
@@ -776,18 +791,21 @@ namespace IronPython.Compiler.Ast {
                     // The AsyncInterruptSource is shared by AsyncExpression, which threads it into AsyncHelpers.DriveAsync,
                     // and PythonCoroutine, which uses it to implement coro.throw(exc).
                     var interrupts = MSAst.Expression.Variable(typeof(Microsoft.Scripting.Runtime.AsyncInterruptSource), "$interrupts");
-                    var asyncBody = AstUtils.Async(Name, body, interrupts);
+                    var coordinator = MSAst.Expression.Variable(typeof(Microsoft.Scripting.Runtime.AsyncSuspensionCoordinator), "$asyncCoordinator");
+                    var asyncBody = AstUtils.Async(Name, body, interrupts, coordinator: coordinator);
                     if (asyncFrame is not null) {
                         asyncBody = asyncBody.WithObserver(asyncFrame);
                     }
                     body = MSAst.Expression.Block(
-                        [interrupts],
+                        [interrupts, coordinator],
                         MSAst.Expression.Assign(interrupts, MSAst.Expression.New(typeof(Microsoft.Scripting.Runtime.AsyncInterruptSource))),
+                        MSAst.Expression.Assign(coordinator, MSAst.Expression.New(typeof(Microsoft.Scripting.Runtime.AsyncSuspensionCoordinator))),
                         Ast.Call(
                             AstMethods.MakeAsyncCoroutine,
                             _functionParam,
                             MSAst.Expression.Lambda<Func<Task<object>>>(asyncBody),
-                            interrupts));
+                            interrupts,
+                            coordinator));
                 }
                 if (asyncFrame is not null) {
                     // A new AsyncBodyFrame for each call, so that each coroutine or async generator moves its own frame.

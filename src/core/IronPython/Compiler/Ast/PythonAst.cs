@@ -169,6 +169,14 @@ namespace IronPython.Compiler.Ast {
         /// </summary>
         internal bool SkipStarredExpressionCheck { get; set; }
 
+        internal string GetSourceText(IndexSpan span) {
+            string source = _compilerContext.SourceUnit.GetCode();
+            if (string.IsNullOrEmpty(source) || span.Start < 0 || span.End <= span.Start || span.End > source.Length) {
+                return string.Empty;
+            }
+            return source.Substring(span.Start, span.End - span.Start);
+        }
+
         public override string Name {
             get {
                 return "<module>";
@@ -407,7 +415,9 @@ namespace IronPython.Compiler.Ast {
             AddInitialization(block);
 
             string doc = GetDocumentation(_body);
-            if (doc != null || IsModule) {
+            bool isExecOrEvalModule = IsModule &&
+                (((PythonCompilerOptions)_compilerContext.Options).Module & ModuleOptions.ExecOrEvalCode) != 0;
+            if (doc != null || (IsModule && !isExecOrEvalModule)) {
                 block.Add(AssignValue(GetVariableExpression(DocVariable), Ast.Constant(doc)));
             }
 
@@ -451,7 +461,8 @@ namespace IronPython.Compiler.Ast {
 
 
         private void AddInitialization(ReadOnlyCollectionBuilder<MSAst.Expression> block) {
-            if (IsModule) {
+            if (IsModule &&
+                (((PythonCompilerOptions)_compilerContext.Options).Module & ModuleOptions.ExecOrEvalCode) == 0) {
                 block.Add(AssignValue(GetVariableExpression(FileVariable), Ast.Constant(ModuleFileName)));
                 block.Add(AssignValue(GetVariableExpression(NameVariable), Ast.Constant(ModuleName)));
                 block.Add(AssignValue(GetVariableExpression(PackageVariable), Ast.Constant(null)));
@@ -583,6 +594,8 @@ namespace IronPython.Compiler.Ast {
         /// </remarks>
         internal bool IsAdaptiveCompilationDisabled
             => _adaptiveCompilationDisabled ??= PyContext.IsAdaptiveCompilationDisabled(_compilerContext.SourceUnit);
+
+        internal bool FutureAnnotations => ((PythonCompilerOptions)_compilerContext.Options).FutureAnnotations;
 
         private MSAst.Expression GetGlobalContext() {
             if (_contextInfo != null) {

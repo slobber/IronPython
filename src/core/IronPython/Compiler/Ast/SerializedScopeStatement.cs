@@ -23,9 +23,10 @@ namespace IronPython.Compiler.Ast {
         private readonly FunctionAttributes _flags;
         private readonly string[] _parameterNames;
         private readonly int _argCount;
+        private readonly int _positionalOnlyArgCount;
         private readonly int _kwOnlyArgCount;
 
-        internal SerializedScopeStatement(string name, string[] parameterNames, int argCount, FunctionAttributes flags, int startIndex, int endIndex, string path, string[] freeVars, string[] names, string[] cellVars, string[] varNames) {
+        internal SerializedScopeStatement(string name, string[] parameterNames, int argCount, int positionalOnlyArgCount, FunctionAttributes flags, int startIndex, int endIndex, string path, string[] freeVars, string[] names, string[] cellVars, string[] varNames) {
             _name = name;
             _filename = path;
             _flags = flags;
@@ -33,6 +34,7 @@ namespace IronPython.Compiler.Ast {
             _parameterNames = parameterNames;
 
             _argCount = argCount;
+            _positionalOnlyArgCount = positionalOnlyArgCount;
             _kwOnlyArgCount = parameterNames.Length - argCount;
             if (flags.HasFlag(FunctionAttributes.ArgumentList)) _kwOnlyArgCount--;
             if (flags.HasFlag(FunctionAttributes.KeywordDictionary)) _kwOnlyArgCount--;
@@ -86,6 +88,8 @@ namespace IronPython.Compiler.Ast {
         internal override string[] ParameterNames => _parameterNames;
 
         internal override int ArgCount => _argCount;
+
+        internal override int PositionalOnlyArgCount => _positionalOnlyArgCount;
 
         internal override int KwOnlyArgCount => _kwOnlyArgCount;
     }

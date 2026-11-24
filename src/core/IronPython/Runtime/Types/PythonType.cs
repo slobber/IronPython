@@ -250,20 +250,39 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             "Usage",
             "IPY01",
             Justification = "The descriptor setter accepts a Python dictionary value.")]
-        public PythonDictionary __annotations__ { get; set; } = new PythonDictionary();
+        public PythonDictionary __annotations__ {
+            get {
+                if (_annotate is not null) {
+                    _annotations = PythonCalls.Call(
+                        DefaultContext.Default,
+                        _annotate,
+                        ScriptingRuntimeHelpers.Int32ToObject(1)) as PythonDictionary
+                        ?? new PythonDictionary();
+                    _annotate = null;
+                }
+                return _annotations;
+            }
+            set {
+                _annotations = value ?? new PythonDictionary();
+                _annotate = null;
+            }
+        }
 
-        public static object? __new__(CodeContext/*!*/ context, [NotNone] PythonType cls, [NotNone] string name, [NotNone] PythonTuple bases, [NotNone] PythonDictionary dict) {
-            return __new__(context, cls, name, bases, dict, string.Empty, null);
+        private PythonDictionary _annotations = new PythonDictionary();
+        private object? _annotate;
+
+        public static object? __new__(CodeContext/*!*/ context, [NotNone] PythonType cls, [NotNone] string typeName, [NotNone] PythonTuple typeBases, [NotNone] PythonDictionary typeDict) {
+            return __new__(context, cls, typeName, typeBases, typeDict, string.Empty, null);
         }
 
         public static object? __new__(
             CodeContext context,
             [NotNone] PythonType cls,
-            [NotNone] string name,
-            [NotNone] PythonTuple bases,
-            [NotNone] PythonDictionary dict,
+            [NotNone] string typeName,
+            [NotNone] PythonTuple typeBases,
+            [NotNone] PythonDictionary typeDict,
             [ParamDictionary] IDictionary<object, object> keywordArguments) {
-            return __new__(context, cls, name, bases, dict, string.Empty, keywordArguments);
+            return __new__(context, cls, typeName, typeBases, typeDict, string.Empty, keywordArguments);
         }
 
         internal static object? __new__(
@@ -313,6 +332,13 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             }
 
             if (type is PythonType createdType) {
+                if (dict.TryGetValue("__annotate__", out object? annotate)) {
+                    createdType._annotate = annotate;
+                }
+                if (dict.TryGetValue("__annotations__", out object? annotations)
+                    && annotations is PythonDictionary annotationDictionary) {
+                    createdType._annotations = annotationDictionary;
+                }
                 NotifySetNames(context, createdType, dict);
                 CallInitSubclass(context, createdType, bases, keywordArguments);
             }
@@ -352,7 +378,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 #nullable restore
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1822:MarkMembersAsStatic")]
-        public void __init__(string name, PythonTuple bases, PythonDictionary dict, [ParamDictionary] IDictionary<object, object> kwargs) {
+        public void __init__(string typeName, PythonTuple typeBases, PythonDictionary typeDict, [ParamDictionary] IDictionary<object, object> kwargs) {
         }
 
         internal static PythonType FindMetaClass(PythonType cls, PythonTuple bases) {
@@ -392,25 +418,35 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             PythonTuple bases,
             IDictionary<object, object> keywordArguments) {
             if (bases.Count == 0) return;
-            if (bases[0] is not PythonType firstBase
-                || !firstBase.TryResolveSlot(context, "__init_subclass__", out PythonTypeSlot slot)) {
-                return;
+            TypeCache.Object.TryResolveSlot(context, "__init_subclass__", out PythonTypeSlot objectSlot);
+            PythonTypeSlot slot = null;
+            PythonType declaringType = null;
+            foreach (PythonType baseType in type.ResolutionOrder) {
+                if (ReferenceEquals(baseType, type)) continue;
+                if (!baseType.TryResolveSlot(context, "__init_subclass__", out PythonTypeSlot candidate)) continue;
+                if (ReferenceEquals(candidate, objectSlot)) continue;
+                slot = candidate;
+                declaringType = baseType;
+                break;
             }
-            if (TypeCache.Object.TryResolveSlot(context, "__init_subclass__", out PythonTypeSlot objectSlot)
-                && ReferenceEquals(slot, objectSlot)) {
-                return;
-            }
-            object callback = slot.TryGetValue(context, null, firstBase, out object bound)
+            if (slot is null || declaringType is null) return;
+
+            object callback = slot.TryGetValue(context, null, declaringType, out object bound)
                 ? bound
                 : null;
             if (callback is null) return;
+            bool callbackIsBound = callback is Method;
             if (keywordArguments is null || keywordArguments.Count == 0) {
-                PythonCalls.Call(context, callback, type);
+                if (callbackIsBound) {
+                    PythonCalls.Call(context, callback);
+                } else {
+                    PythonCalls.Call(context, callback, type);
+                }
             } else {
                 PythonCalls.CallWithKeywordArgs(
                     context,
                     callback,
-                    new object[] { type },
+                    callbackIsBound ? Array.Empty<object>() : new object[] { type },
                     keywordArguments);
             }
         }
@@ -523,11 +559,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 return null;
             }
 
-            string comma = "";
-            StringBuilder error = new StringBuilder("Can't instantiate abstract class ");
-            error.Append(Name);
-            error.Append(" with abstract methods ");
-
+            var names = new List<string>();
             int i = 0;
             do {
                 string s = en.Current as string;
@@ -545,14 +577,15 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                     );
                 }
 
-                error.Append(comma);
-                error.Append(en.Current);
-
-                comma = ", ";
+                names.Add(s);
                 i++;
             } while (en.MoveNext());
 
-            return error.ToString();
+            names.Sort(StringComparer.Ordinal);
+            string quoted = string.Join(", ", names.Select(name => PythonOps.Repr(context, name)));
+            return names.Count == 1
+                ? $"class {Name} without an implementation for abstract method {quoted}"
+                : $"class {Name} without an implementation for abstract methods {quoted}";
         }
 
         [SpecialName, PropertyMethod, WrapperDescriptor]
@@ -1950,10 +1983,6 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         #region User type initialization
 
         private void InitializeUserType(CodeContext/*!*/ context, string name, PythonTuple bases, PythonDictionary vars, string selfNames) {
-            // we don't support overriding __mro__
-            if (vars.ContainsKey("__mro__"))
-                throw new NotImplementedException("Overriding __mro__ of built-in types is not implemented");
-
             // cannot override mro when inheriting from type
             if (vars.ContainsKey("mro")) {
                 foreach (object o in bases) {
@@ -1971,17 +2000,19 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             _pythonContext = context.LanguageContext;
             _resolutionOrder = CalculateMro(this, _bases);
 
-            bool hasSlots = false;
+            PythonType slotBase = null;
             foreach (PythonType pt in _bases) {
                 // if we directly inherit from 2 types with slots then the indexes would
                 // conflict so inheritance isn't allowed.
                 int slotCount = pt.GetUsedSlotCount();
 
                 if (slotCount != 0) {
-                    if (hasSlots) {
+                    if (slotBase is not null
+                        && !pt.IsSubclassOf(slotBase)
+                        && !slotBase.IsSubclassOf(pt)) {
                         throw PythonOps.TypeError("multiple bases have instance lay-out conflict");
                     }
-                    hasSlots = true;
+                    slotBase = pt;
                 }
 
                 pt.AddSubType(this);

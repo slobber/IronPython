@@ -44,7 +44,7 @@ namespace IronPython.Runtime.Operations {
         }
 
         public static object? CallWithKeywordArgs(CodeContext context, object? func, object?[] args, IDictionary<object, object> dict) {
-            return context.LanguageContext.CallWithKeywords(func, args, dict);
+            return context.LanguageContext.CallWithKeywordsAndContext(context, func!, args, dict);
         }
     }
 }

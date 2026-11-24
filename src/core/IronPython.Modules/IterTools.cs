@@ -52,6 +52,43 @@ namespace IronPython.Modules {
             return PythonTuple.MakeTuple(res);
         }
 
+        [PythonType]
+        public class batched : IterBase {
+            public batched(CodeContext context, object iterable, int n, bool strict = false) {
+                if (n < 1) {
+                    throw PythonOps.ValueError("n must be at least one");
+                }
+                InnerEnumerator = PythonOps.GetEnumerator(
+                    Batch(context, PythonOps.GetEnumerator(iterable), n, strict));
+            }
+
+            private static IEnumerable<object> Batch(
+                CodeContext context,
+                IEnumerator source,
+                int size,
+                bool strict) {
+                while (source.MoveNext()) {
+                    var batch = PythonTuple.MakeTuple(new object[size]);
+                    int count = 0;
+                    do {
+                        batch._data[count++] = source.Current;
+                    } while (count < size && source.MoveNext());
+
+                    if (count != size) {
+                        if (strict) {
+                            throw PythonOps.ValueError(
+                                "batched(): incomplete batch");
+                        }
+                        var partial = new object[count];
+                        Array.Copy(batch._data, partial, count);
+                        yield return PythonTuple.MakeTuple(partial);
+                        yield break;
+                    }
+                    yield return batch;
+                }
+            }
+        }
+
         /// <summary>
         /// Base class used for iterator wrappers.
         /// </summary>

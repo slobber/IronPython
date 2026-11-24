@@ -36,6 +36,18 @@ namespace IronPython.Modules {
             return Check(radians, radians * radiansToDegrees);
         }
 
+        public static double ulp(double value) {
+            if (double.IsNaN(value)) return double.NaN;
+            if (double.IsInfinity(value)) return double.PositiveInfinity;
+
+            long bits = BitConverter.DoubleToInt64Bits(Math.Abs(value));
+            int exponent = (int)(((ulong)bits >> 52) & 0x7ff);
+            if (exponent == 0) {
+                return BitConverter.Int64BitsToDouble(1);
+            }
+            return Math.ScaleB(1.0, exponent - 1023 - 52);
+        }
+
         public static double radians(double degrees) {
             return Check(degrees, degrees * degreesToRadians);
         }

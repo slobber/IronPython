@@ -429,7 +429,9 @@ namespace IronPython.Runtime.Binding {
                         case ArgumentType.Named:
                             _needCodeTest = true;
                             bool foundName = false;
-                            for (int j = 0; j < normalArgumentCount + keywordOnlyArgumentCount; j++) {
+                            for (int j = _func.Value.PositionalOnlyArgumentCount;
+                                j < normalArgumentCount + keywordOnlyArgumentCount;
+                                j++) {
                                 if (_func.Value.ArgNames[j] == Signature.GetArgumentName(i)) {
                                     if (exprArgs[j] != null) {
                                         // kw-argument provided for already provided normal argument.

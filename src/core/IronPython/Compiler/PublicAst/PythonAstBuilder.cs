@@ -4,6 +4,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
+using System.Numerics;
 using IronPython.Compiler.Generated;
 using IronPython.Compiler.Syntax;
 using AstNodes = IronPython.Compiler.Syntax.Ast;
@@ -1158,7 +1159,7 @@ namespace IronPython.Compiler.PublicAst {
         public override object Handle_slice_0_3_0(
             PegActionContext context,
             PegActionArguments arguments) {
-            return Required(arguments, "d");
+            return arguments.TryGetValue("d", out object? value) ? value! : null!;
         }
 
         public override object Handle_slice_1(
@@ -1457,7 +1458,7 @@ namespace IronPython.Compiler.PublicAst {
         public override object Handle_class_def_raw_1_3_0(
             PegActionContext context,
             PegActionArguments arguments) {
-            return Required(arguments, "z");
+            return arguments.TryGetValue("z", out object? value) ? value! : null!;
         }
 
         public override object Handle_function_def_0(
@@ -3416,8 +3417,11 @@ namespace IronPython.Compiler.PublicAst {
             string text = rawValue is PegToken token ? token.Value : ToText(rawValue);
             AstSpan span = SpanOf(rawValue);
             return new AstNodes.Constant(
-                text.Replace("{{", "{", StringComparison.Ordinal)
-                    .Replace("}}", "}", StringComparison.Ordinal),
+                IronPython.Runtime.LiteralParser.ParseString(
+                    text.Replace("{{", "{", StringComparison.Ordinal)
+                        .Replace("}}", "}", StringComparison.Ordinal)
+                        .AsSpan(),
+                    isRaw: false),
                 null,
                 span.Line,
                 span.Column,
@@ -3895,22 +3899,43 @@ namespace IronPython.Compiler.PublicAst {
                 return new System.Numerics.Complex(0.0, value);
             }
             if (normalized.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) {
-                return long.Parse(normalized.Substring(2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+                return NormalizeInteger(ParseIntegerDigits(normalized.Substring(2), 16));
             }
             if (normalized.StartsWith("0o", StringComparison.OrdinalIgnoreCase)) {
-                return Convert.ToInt64(normalized.Substring(2), 8);
+                return NormalizeInteger(ParseIntegerDigits(normalized.Substring(2), 8));
             }
             if (normalized.StartsWith("0b", StringComparison.OrdinalIgnoreCase)) {
-                return Convert.ToInt64(normalized.Substring(2), 2);
+                return NormalizeInteger(ParseIntegerDigits(normalized.Substring(2), 2));
             }
             if (int.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out int integer)) {
                 return integer;
+            }
+            if (BigInteger.TryParse(normalized, NumberStyles.Integer, CultureInfo.InvariantCulture, out BigInteger bigInteger)) {
+                return bigInteger;
             }
             if (double.TryParse(normalized, NumberStyles.Float, CultureInfo.InvariantCulture, out double real)) {
                 return real;
             }
             throw new FormatException($"Invalid numeric literal '{text}'.");
         }
+
+        private static BigInteger ParseIntegerDigits(string digits, int radix) {
+            BigInteger value = BigInteger.Zero;
+            foreach (char digit in digits) {
+                int number = digit switch {
+                    >= '0' and <= '9' => digit - '0',
+                    >= 'a' and <= 'f' => digit - 'a' + 10,
+                    >= 'A' and <= 'F' => digit - 'A' + 10,
+                    _ => throw new FormatException()
+                };
+                if (number >= radix) throw new FormatException();
+                value = (value * radix) + number;
+            }
+            return value;
+        }
+
+        private static object NormalizeInteger(BigInteger value)
+            => value >= int.MinValue && value <= int.MaxValue ? (int)value : value;
 
         private static object DecodeStringLiteral(string literal) {
             int quote = literal.IndexOfAny('\'', '"');

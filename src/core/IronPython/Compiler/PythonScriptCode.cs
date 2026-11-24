@@ -62,6 +62,7 @@ namespace IronPython.Compiler {
             object e = PythonOps.SaveCurrentExceptionState();
             PushFrame(ctx, _code);
             try {
+                PythonOps.FinalizeModuleAnnotations(ctx);
                 return target(ctx, _code);
             } finally {
                 PythonOps.RestoreCurrentExceptionState(e);

@@ -16,6 +16,7 @@ namespace IronPython.Compiler.Ast {
     using Ast = MSAst.Expression;
 
     public enum ParameterKind {
+        PositionalOnly,
         Normal,
         List,
         Dictionary,
@@ -26,7 +27,7 @@ namespace IronPython.Compiler.Ast {
     /// Parameter base class
     /// </summary>
     public class Parameter : Node {
-        protected readonly ParameterKind _kind;
+        protected ParameterKind _kind;
         protected Expression _defaultValue;
 
         public Parameter(string name)
@@ -54,9 +55,17 @@ namespace IronPython.Compiler.Ast {
 
         public bool IsDictionary => _kind == ParameterKind.Dictionary;
 
+        public bool IsPositionalOnly => _kind == ParameterKind.PositionalOnly;
+
         internal bool IsKeywordOnly => _kind == ParameterKind.KeywordOnly;
 
         internal ParameterKind Kind => _kind;
+
+        internal void MarkPositionalOnly() {
+            if (_kind == ParameterKind.Normal) {
+                _kind = ParameterKind.PositionalOnly;
+            }
+        }
 
         internal PythonVariable PythonVariable { get; set; }
 

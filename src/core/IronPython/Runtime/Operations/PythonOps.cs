@@ -1091,6 +1091,33 @@ namespace IronPython.Runtime.Operations {
             }
         }
 
+        public static void SetAnnotation(
+            CodeContext context,
+            bool isGlobal,
+            string name,
+            string source,
+            Func<object> evaluator,
+            bool stringOnly) {
+            PythonDictionary target = isGlobal ? context.GlobalDict : context.Dict;
+            if (!target.TryGetValue("__annotate__", out object? annotate)
+                || annotate is not AnnotationFunction annotationFunction) {
+                annotationFunction = new AnnotationFunction(stringOnly);
+                target["__annotate__"] = annotationFunction;
+                if (isGlobal) {
+                    target["__annotations__"] = new PythonDictionary();
+                }
+            }
+            annotationFunction.Add(name, source, evaluator);
+        }
+
+        public static void FinalizeModuleAnnotations(CodeContext context) {
+            PythonDictionary target = context.GlobalDict;
+            if (target.TryGetValue("__annotate__", out object? annotate)
+                && annotate is AnnotationFunction annotationFunction) {
+                target["__annotations__"] = annotationFunction.Evaluate();
+            }
+        }
+
         [Obsolete("Use PythonCalls.Call")]
         public static object? CallWithArgsTuple(object func, object?[] args, object argsTuple) {
             if (argsTuple is PythonTuple tp) {
@@ -1595,15 +1622,19 @@ namespace IronPython.Runtime.Operations {
 
             // Fasttrack for metaclass == `type`
             if (metaclass is null) {
-                if (keywords != null && keywords.Count > 0) {
-                    throw TypeError("type() takes no keyword arguments");
-                }
                 // this makes sure that object is a base
                 if (bases.Count == 0) {
                     bases = PythonTuple.MakeTuple(TypeCache.Object);
                 }
 
-                return PythonType.__new__(parentContext, TypeCache.PythonType, name, bases, vars, selfNames)!;
+                return PythonType.__new__(
+                    parentContext,
+                    TypeCache.PythonType,
+                    name,
+                    bases,
+                    vars,
+                    selfNames,
+                    keywords)!;
             }
 
             // Dispatch to the metaclass to do class creation and initialization
@@ -1613,6 +1644,40 @@ namespace IronPython.Runtime.Operations {
             // calls our function...
             PythonContext pc = parentContext.LanguageContext;
 
+            if (metaclass is PythonType metaclassType) {
+                PythonDictionary namespaceDict = classdict as PythonDictionary ?? attrdict;
+                if (!metaclassType.TryResolveSlot(parentContext, "__new__", out PythonTypeSlot newSlot)
+                    || !newSlot.TryGetValue(parentContext, null, metaclassType, out object newCallable)) {
+                    throw PythonOps.TypeError("metaclass {0} has no __new__", metaclassType.Name);
+                }
+                if (newCallable is staticmethod staticNew) {
+                    newCallable = staticNew._func;
+                }
+                object? created = CallWithNamedArguments(
+                    parentContext,
+                    newCallable,
+                    new object[] { metaclassType, name, bases, namespaceDict },
+                    keywords ?? MakeEmptyDict());
+                if (created is null) {
+                    throw PythonOps.TypeError("metaclass __new__ returned None");
+                }
+
+                if (metaclassType.TryResolveSlot(parentContext, "__init__", out PythonTypeSlot initSlot)
+                    && initSlot.TryGetValue(parentContext, null, metaclassType, out object initCallable)) {
+                    CallWithNamedArguments(
+                        parentContext,
+                        initCallable,
+                        new object[] { created, name, bases, namespaceDict },
+                        keywords ?? MakeEmptyDict());
+                }
+
+                VerifyClassCell(parentContext, created, name, vars);
+                if (created is PythonType createdType && createdType.BaseTypes.Count == 0) {
+                    createdType.BaseTypes.Add(TypeCache.Object);
+                }
+                return created;
+            }
+
             object? obj = pc.MetaClassCallSite.Target(
                 pc.MetaClassCallSite,
                 parentContext,
@@ -1620,8 +1685,7 @@ namespace IronPython.Runtime.Operations {
                 name,
                 bases,
                 classdict ?? attrdict,
-                keywords ?? MakeEmptyDict()
-            );
+                keywords ?? MakeEmptyDict());
 
             // If __class__ is used, verify that it has been set
             VerifyClassCell(parentContext, obj, name, vars);
@@ -1633,6 +1697,49 @@ namespace IronPython.Runtime.Operations {
 
             return obj;
             // ------------------------------------------------------------------------
+
+            static object? CallWithNamedArguments(
+                CodeContext context,
+                object callable,
+                object?[] positional,
+                PythonDictionary keywords) {
+                if (keywords.Count == 0) {
+                    return PythonCalls.Call(context, callable, positional);
+                }
+
+                var arguments = new Argument[positional.Length + keywords.Count];
+                for (int i = 0; i < positional.Length; i++) {
+                    arguments[i] = Argument.Simple;
+                }
+                int index = positional.Length;
+                var keywordValues = new object?[keywords.Count];
+                int valueIndex = 0;
+                foreach (KeyValuePair<object, object> keyword in keywords) {
+                    arguments[index++] = new Argument(
+                        keyword.Key as string
+                        ?? throw PythonOps.TypeError("keywords must be strings"));
+                    keywordValues[valueIndex++] = keyword.Value;
+                }
+
+                PythonInvokeBinder binder = context.LanguageContext.Invoke(
+                    new CallSignature(arguments));
+                var operands = new List<Expression> {
+                    Expression.Constant(context, typeof(CodeContext)),
+                    Expression.Constant(callable, typeof(object))
+                };
+                foreach (object? value in positional) {
+                    operands.Add(Expression.Constant(value, typeof(object)));
+                }
+                foreach (object? value in keywordValues) {
+                    operands.Add(Expression.Constant(value, typeof(object)));
+                }
+
+                return Expression.Lambda<Func<object?>>(
+                    Expression.Convert(
+                        Expression.Dynamic(binder, typeof(object), operands),
+                        typeof(object)))
+                    .Compile()();
+            }
 
             static Func<CodeContext, CodeContext> GetClassCode(CodeContext/*!*/ context, FunctionCode funcCode, Func<CodeContext, CodeContext> body) {
                 if (body == null) {
@@ -2177,11 +2284,11 @@ namespace IronPython.Runtime.Operations {
         }
 
         public static object LazyImportTop(CodeContext context, string fullName, int level) {
-            return new LazyImportModule(fullName, level);
+            return new LazyImport(fullName, null, level);
         }
 
         public static object LazyImportBottom(CodeContext context, string fullName, int level) {
-            return new LazyImportModule(fullName, level);
+            return new LazyImport(fullName, null, level);
         }
 
         public static object LazyImportFrom(
@@ -2189,7 +2296,7 @@ namespace IronPython.Runtime.Operations {
             string moduleName,
             string memberName,
             int level) {
-            return new LazyImportMember(moduleName, memberName, level);
+            return new LazyImport(moduleName, memberName, level);
         }
 
         /// <summary>
@@ -3413,6 +3520,19 @@ namespace IronPython.Runtime.Operations {
             };
             if (task is not null) return task;
 
+            if (value is PythonGenerator generator &&
+                (generator.gi_code.co_flags & (int)CompileFlags.CO_ITERABLE_COROUTINE) != 0) {
+                var sawBareYield = new StrongBox<bool>();
+                Task<object?> iteratorTask = DriveAwaitIterator(generator, sawBareYield);
+                if (sawBareYield.Value) AsyncSuspensionCoordinator.MarkYield(iteratorTask);
+                return iteratorTask;
+            }
+
+            if (TryGetBoundAttr(value, "add_done_callback", out object? addDoneCallback) &&
+                TryGetBoundAttr(value, "result", out object? resultMethod)) {
+                return ObservePythonFuture(value!, addDoneCallback!, resultMethod!);
+            }
+
 #if NETCOREAPP
             // ValueTask<T> of arbitrary T
             Type valueType = value!.GetType();
@@ -3433,6 +3553,41 @@ namespace IronPython.Runtime.Operations {
             throw TypeError("object of type '{0}' can't be used in 'await' expression", PythonOps.GetPythonTypeName(value));
         }
 
+        private sealed class ObservedFutureState {
+            public readonly TaskCompletionSource<object?> Completion = new();
+            public readonly object ResultMethod;
+
+            public ObservedFutureState(object resultMethod) {
+                ResultMethod = resultMethod;
+            }
+        }
+
+        private static readonly BuiltinFunction ObserveFutureCompletion = BuiltinFunction.MakeFunction(
+            nameof(CompleteObservedFuture),
+            new[] { typeof(PythonOps).GetMethod(nameof(CompleteObservedFuture), System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)! },
+            typeof(PythonOps));
+
+        private static Task<object?> ObservePythonFuture(object future, object addDoneCallback, object resultMethod) {
+            var state = new ObservedFutureState(resultMethod);
+            PythonOps.SetAttr(DefaultContext.Default, future, "__ironpython_future_state__", state);
+            PythonCalls.Call(DefaultContext.Default, addDoneCallback, ObserveFutureCompletion);
+            return state.Completion.Task;
+        }
+
+        [PythonHidden]
+        private static void CompleteObservedFuture(object future) {
+            CodeContext context = DefaultContext.Default;
+            if (!TryGetBoundAttr(context, future, "__ironpython_future_state__", out object? value) ||
+                value is not ObservedFutureState state) {
+                return;
+            }
+            try {
+                state.Completion.TrySetResult(PythonCalls.Call(context, state.ResultMethod));
+            } catch (Exception exception) {
+                state.Completion.TrySetException(exception);
+            }
+        }
+
 
         /// <summary>
         ///   Drives a Python awaitable's <c>__await__()</c> iterator to completion,
@@ -3443,7 +3598,9 @@ namespace IronPython.Runtime.Operations {
         ///   terminates with <c>StopIteration</c> whose value is the <c>await</c> result. Mirrors the generator-pump <c>AsTask</c>,
         ///   but is async and at the Python-iterator level.
         /// </remarks>
-        private static async Task<object?> DriveAwaitIterator(object? iterator) {
+        private static async Task<object?> DriveAwaitIterator(
+            object? iterator,
+            StrongBox<bool>? sawBareYield = null) {
             CodeContext context = DefaultContext.Default;
             // Generators feed the awaited result back via send();
             // plain iterators (e.g. iter([])) only support __next__() and ignore sent values.
@@ -3464,8 +3621,16 @@ namespace IronPython.Runtime.Operations {
                     if (clrExc is StopIterationException si) return StopIterationValue(si);
                     throw clrExc;
                 }
-                // The yielded value is itself awaitable — drive it and feed the result back in.
-                sendValue = await AsTaskForAwait(yielded);
+                if (yielded is null) {
+                    // A bare yield from a generator-based coroutine relinquishes control
+                    // to the event loop for one iteration even though there is no awaited value.
+                    sendValue = null;
+                    if (sawBareYield is not null) sawBareYield.Value = true;
+                    await Task.Yield();
+                } else {
+                    // The yielded value is itself awaitable — drive it and feed the result back in.
+                    sendValue = await AsTaskForAwait(yielded);
+                }
             }
 
             static object? StopIterationValue(StopIterationException e)
@@ -3498,8 +3663,12 @@ namespace IronPython.Runtime.Operations {
         ///   The supplied <see cref="AsyncInterruptSource"/> is the one the body's driver,
         ///   <see cref="Microsoft.Scripting.Runtime.AsyncHelpers.DriveAsync"/>, uses — the coroutine uses it to implement <c>coro.throw(exc)</c>.
         /// </remarks>
-        public static PythonCoroutine MakeAsyncCoroutine(PythonFunction function, Func<Task<object?>> taskFactory, AsyncInterruptSource interrupts) {
-            return new PythonCoroutine(taskFactory, function.__name__, function.__code__, interrupts);
+        public static PythonCoroutine MakeAsyncCoroutine(
+            PythonFunction function,
+            Func<Task<object?>> taskFactory,
+            AsyncInterruptSource interrupts,
+            AsyncSuspensionCoordinator coordinator) {
+            return new PythonCoroutine(taskFactory, function.__name__, function.__code__, interrupts, function.Context, coordinator);
         }
 
 
@@ -3552,22 +3721,53 @@ namespace IronPython.Runtime.Operations {
             return new TemplateObject(parts.ToArray());
         }
 
-        public static FunctionCode MakeFunctionCode(CodeContext/*!*/ context, string name, string documentation, string[] parameterNames, int argCount, FunctionAttributes flags, int startIndex, int endIndex, string path, Delegate code, string[] freeVars, string[] names, string[] cellVars, string[] varNames, int localCount) {
-            Compiler.Ast.SerializedScopeStatement scope = new Compiler.Ast.SerializedScopeStatement(name, parameterNames, argCount, flags, startIndex, endIndex, path, freeVars, names, cellVars, varNames);
+        public static FunctionCode MakeFunctionCode(CodeContext/*!*/ context, string name, string documentation, string[] parameterNames, int argCount, int positionalOnlyArgCount, FunctionAttributes flags, int startIndex, int endIndex, string path, Delegate code, string[] freeVars, string[] names, string[] cellVars, string[] varNames, int localCount) {
+            Compiler.Ast.SerializedScopeStatement scope = new Compiler.Ast.SerializedScopeStatement(name, parameterNames, argCount, positionalOnlyArgCount, flags, startIndex, endIndex, path, freeVars, names, cellVars, varNames);
 
             return new FunctionCode(context.LanguageContext, code, scope, documentation, localCount);
         }
 
-        [NoSideEffects]
-        public static object MakeFunction(CodeContext/*!*/ context, FunctionCode funcInfo, object modName, object[] defaults, PythonDictionary kwdefaults, PythonDictionary annotations) {
-            return new PythonFunction(context, funcInfo, modName, defaults, kwdefaults, annotations, null);
+        public static AnnotationFunction MakeAnnotationFunction(
+            string[] names,
+            string[] sources,
+            Func<object>[] evaluators,
+            bool stringOnly) {
+            return new AnnotationFunction(names, sources, evaluators, stringOnly);
+        }
+
+        public static AnnotationFunction MakeLazyAnnotationFunction(
+            CodeContext context,
+            string[] names,
+            string[] sources,
+            bool stringOnly) {
+            return new AnnotationFunction(context, names, sources, stringOnly);
         }
 
         [NoSideEffects]
-        public static object MakeFunctionDebug(CodeContext/*!*/ context, FunctionCode funcInfo, object modName, object[] defaults, PythonDictionary kwdefaults, PythonDictionary annotations, Delegate target) {
+        public static object MakeFunction(
+            CodeContext/*!*/ context,
+            FunctionCode funcInfo,
+            object modName,
+            object[] defaults,
+            PythonDictionary kwdefaults,
+            PythonDictionary annotations,
+            object? annotate = null) {
+            return new PythonFunction(context, funcInfo, modName, defaults, kwdefaults, annotations, null, annotate);
+        }
+
+        [NoSideEffects]
+        public static object MakeFunctionDebug(
+            CodeContext/*!*/ context,
+            FunctionCode funcInfo,
+            object modName,
+            object[] defaults,
+            PythonDictionary kwdefaults,
+            PythonDictionary annotations,
+            Delegate target,
+            object? annotate = null) {
             funcInfo.SetDebugTarget(context.LanguageContext, target);
 
-            return new PythonFunction(context, funcInfo, modName, defaults, kwdefaults, annotations, null);
+            return new PythonFunction(context, funcInfo, modName, defaults, kwdefaults, annotations, null, annotate);
         }
 
         public static CodeContext FunctionGetContext(PythonFunction func) {

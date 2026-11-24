@@ -118,6 +118,8 @@ namespace IronPython.Compiler.Ast {
 
         internal virtual int ArgCount => 0;
 
+        internal virtual int PositionalOnlyArgCount => 0;
+
         internal virtual int KwOnlyArgCount => 0;
 
         internal virtual FunctionAttributes Flags => FunctionAttributes.None;

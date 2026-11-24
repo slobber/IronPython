@@ -36,7 +36,9 @@ namespace IronPython.Compiler.Ast {
                 lock (YieldFromAstLock) {
                     if (_yieldFromAst is null) {
                         bool useGeneratedParser = Parser.UseGeneratedParser;
+                        bool skipBuildAstBinding = Modules._ast._skipBuildAstBinding;
                         Parser.UseGeneratedParser = false;
+                        Modules._ast._skipBuildAstBinding = true;
                         try {
                             _yieldFromAst = (Modules._ast.AST)Modules.Builtin.compile(Runtime.DefaultContext.Default, @"
 from builtins import iter as __yieldfromprefix_iter, next as __yieldfromprefix_next
@@ -82,6 +84,7 @@ else:
 ", "", "exec", flags: Modules._ast.PyCF_ONLY_AST);
                         } finally {
                             Parser.UseGeneratedParser = useGeneratedParser;
+                            Modules._ast._skipBuildAstBinding = skipBuildAstBinding;
                         }
                     }
                 }

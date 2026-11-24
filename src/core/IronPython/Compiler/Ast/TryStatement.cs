@@ -116,7 +116,7 @@ namespace IronPython.Compiler.Ast {
                         PushLineUpdated(false, lineUpdated!),
                         LightExceptions.RewriteExternal(
                             AstUtils.Try(
-                                Parent.AddDebugInfo(AstUtils.Empty(), new SourceSpan(Span.Start, GlobalParent.IndexToLocation(HeaderIndex))),
+                                Parent.AddDebugInfo(AstUtils.Empty(), new SourceSpan(Span.Start, GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex)))),
                                 Ast.Assign(previousExceptionContext, Ast.Call(AstMethods.SaveCurrentExceptionState)),
                                 body,
                                 AstUtils.Constant(null)
@@ -148,7 +148,7 @@ namespace IronPython.Compiler.Ast {
                 result =
                     LightExceptions.RewriteExternal(
                         AstUtils.Try(
-                            GlobalParent.AddDebugInfo(AstUtils.Empty(), new SourceSpan(Span.Start, GlobalParent.IndexToLocation(HeaderIndex))),
+                            GlobalParent.AddDebugInfo(AstUtils.Empty(), new SourceSpan(Span.Start, GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex)))),
                             // save existing line updated
                             PushLineUpdated(false, lineUpdated!),
                             Ast.Assign(previousExceptionContext, Ast.Call(AstMethods.SaveCurrentExceptionState)),
@@ -205,7 +205,7 @@ namespace IronPython.Compiler.Ast {
                     // we use a fault to know when we have an exception and when control leaves normally (via
                     // either a return or the body completing successfully).
                     AstUtils.Try(
-                        Parent.AddDebugInfo(AstUtils.Empty(), new SourceSpan(Span.Start, GlobalParent.IndexToLocation(HeaderIndex))),
+                        Parent.AddDebugInfo(AstUtils.Empty(), new SourceSpan(Span.Start, GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex)))),
                         Ast.Assign(tryThrows, AstUtils.Constant(null, typeof(Exception))),
                         body,
                         AstUtils.Empty()
@@ -319,7 +319,7 @@ namespace IronPython.Compiler.Ast {
                                     tsh.Target.TransformSet(SourceSpan.None, converted, PythonOperationKind.None),
                                     GlobalParent.AddDebugInfo(
                                         tsh.Body,
-                                        new SourceSpan(GlobalParent.IndexToLocation(tsh.StartIndex), GlobalParent.IndexToLocation(tsh.HeaderIndex))
+                                        new SourceSpan(GlobalParent.IndexToLocation(tsh.StartIndex), GlobalParent.IndexToLocation(Math.Max(tsh.StartIndex, tsh.HeaderIndex)))
                                     ),
                                     AstUtils.Empty()
                                 ),
@@ -347,7 +347,7 @@ namespace IronPython.Compiler.Ast {
                             Ast.TryFinally(
                                 GlobalParent.AddDebugInfo(
                                     tsh.Body,
-                                    new SourceSpan(GlobalParent.IndexToLocation(tsh.StartIndex), GlobalParent.IndexToLocation(tsh.HeaderIndex))
+                                    new SourceSpan(GlobalParent.IndexToLocation(tsh.StartIndex), GlobalParent.IndexToLocation(Math.Max(tsh.StartIndex, tsh.HeaderIndex)))
                                 ),
                                 Ast.Call(AstMethods.RestoreCurrentExceptionState, previousException)
                             )
@@ -373,7 +373,7 @@ namespace IronPython.Compiler.Ast {
                         Ast.TryFinally(
                             GlobalParent.AddDebugInfo(
                                 tsh.Body,
-                                new SourceSpan(GlobalParent.IndexToLocation(tsh.StartIndex), GlobalParent.IndexToLocation(tsh.HeaderIndex))
+                                new SourceSpan(GlobalParent.IndexToLocation(tsh.StartIndex), GlobalParent.IndexToLocation(Math.Max(tsh.StartIndex, tsh.HeaderIndex)))
                             ),
                             Ast.Call(AstMethods.RestoreCurrentExceptionState, previousException)
                         );

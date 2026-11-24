@@ -33,6 +33,9 @@ namespace IronPython.Modules {
         public const string __version__ = "62047";
         public const int PyCF_ONLY_AST = 0x400;
 
+        [ThreadStatic]
+        internal static bool _skipBuildAstBinding;
+
         private class ThrowingErrorSink : ErrorSink {
             public static new readonly ThrowingErrorSink/*!*/ Default = new ThrowingErrorSink();
 
@@ -82,6 +85,9 @@ namespace IronPython.Modules {
                 (PythonOptions)context.LanguageContext.Options)) {
 
                 PythonAst ast = parser.ParseFile(true);
+                if (!_skipBuildAstBinding) {
+                    ast.Bind();
+                }
                 return ConvertToAST(ast, mode);
             }
         }
@@ -111,10 +117,27 @@ namespace IronPython.Modules {
         public abstract class AST {
             protected int? _lineno; // both lineno and col_offset are expected to be int, in cpython anything is accepted
             protected int? _col_offset;
+            protected int? _end_lineno;
+            protected int? _end_col_offset;
 
             public PythonTuple _fields { get; protected set; } = PythonTuple.EMPTY;
 
             public PythonTuple _attributes { get; protected set; } = PythonTuple.EMPTY;
+
+            public void __init__([ParamDictionary] IDictionary<object, object> kwargs) {
+                foreach (object field in _fields) {
+                    if (field is not string name || kwargs.ContainsKey(name)) {
+                        continue;
+                    }
+                    System.Reflection.PropertyInfo property = GetType().GetProperty(name);
+                    if (property?.GetValue(this) is null) {
+                        throw PythonOps.TypeError(
+                            "{0} constructor missing required field {1}",
+                            PythonOps.GetPythonTypeName(this),
+                            PythonOps.Repr(DefaultContext.Default, name));
+                    }
+                }
+            }
 
             public int lineno {
                 get {
@@ -130,6 +153,28 @@ namespace IronPython.Modules {
                     throw PythonOps.AttributeErrorForMissingAttribute(PythonOps.GetPythonTypeName(this), "col_offset");
                 }
                 set { _col_offset = value; }
+            }
+
+            public int end_lineno {
+                get {
+                    if (_end_lineno != null) return (int)_end_lineno;
+                    if (_lineno != null) return (int)_lineno;
+                    throw PythonOps.AttributeErrorForMissingAttribute(
+                        PythonOps.GetPythonTypeName(this),
+                        "end_lineno");
+                }
+                set { _end_lineno = value; }
+            }
+
+            public int end_col_offset {
+                get {
+                    if (_end_col_offset != null) return (int)_end_col_offset;
+                    if (_col_offset != null) return (int)_col_offset;
+                    throw PythonOps.AttributeErrorForMissingAttribute(
+                        PythonOps.GetPythonTypeName(this),
+                        "end_col_offset");
+                }
+                set { _end_col_offset = value; }
             }
 
             public void __setstate__(PythonDictionary state) {
@@ -191,6 +236,11 @@ namespace IronPython.Modules {
 
                 // IronPython counts from 1; CPython counts from 0
                 _col_offset = node.Start.Column - 1;
+                SourceLocation end = node.End;
+                if (end.IsValid) {
+                    _end_lineno = end.Line;
+                    _end_col_offset = end.Column - 1;
+                }
             }
 
             internal static PythonList ConvertStatements(Statement stmt) {
@@ -338,6 +388,13 @@ namespace IronPython.Modules {
                     ast = new Bytes((IronPython.Runtime.Bytes)expr.Value);
                 else if (expr.Value is IronPython.Runtime.Types.Ellipsis)
                     ast = Ellipsis.Instance;
+                else if (expr.Value is PythonTuple tuple) {
+                    var items = new PythonList(tuple.Count);
+                    foreach (object item in tuple) {
+                        items.Add(Convert(new ConstantExpression(item)));
+                    }
+                    ast = new Tuple(items, Load.Instance);
+                }
                 else
                     throw new ArgumentTypeException("Unexpected constant type: " + expr.Value.GetType());
 

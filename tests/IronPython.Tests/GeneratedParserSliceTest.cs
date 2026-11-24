@@ -583,6 +583,61 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void GeneratedAstPreservesSourceLocations() {
+            const string source =
+                "value = 1\n" +
+                "if value:\n" +
+                "    value = 2\n";
+            var parser = new PegParser(
+                PythonGrammarDescriptors.Rules,
+                new PythonTokenizer(source),
+                new PythonAstBuilder());
+
+            PegParseResult parsed = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+
+            Assert.That(parsed.Success, Is.True,
+                parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
+            var module = (PublicAst.Module)parsed.Value;
+            var conditional = (PublicAst.If)module.Body[1];
+            Assert.Multiple(() => {
+                Assert.That(module.Body[0].LineNumber, Is.EqualTo(1));
+                Assert.That(conditional.LineNumber, Is.EqualTo(2));
+                Assert.That(conditional.Test.LineNumber, Is.EqualTo(2));
+                Assert.That(((PublicAst.Assign)conditional.Body[0]).LineNumber, Is.EqualTo(3));
+            });
+
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
+            SourceUnit sourceUnit = pythonContext.CreateSnippet(
+                source,
+                "<location-test>",
+                SourceCodeKind.File);
+            var lowered = PublicAstLowerer.LowerModule(
+                module,
+                new CompilerContext(
+                    sourceUnit,
+                    new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
+                    ErrorSink.Default));
+            lowered.Bind();
+            var loweredConditional = (IronPython.Compiler.Ast.IfStatement)
+                ((IronPython.Compiler.Ast.SuiteStatement)lowered.Body).Statements[1];
+            Assert.Multiple(() => {
+                Assert.That(loweredConditional.StartIndex, Is.EqualTo(10));
+                Assert.That(lowered._lineLocations.Take(2), Is.EqualTo(new[] { 10, 20 }));
+                Assert.That(loweredConditional.Start.Line, Is.EqualTo(2));
+                Assert.That(loweredConditional.Tests[0].Start.Line, Is.EqualTo(2));
+                Assert.That(
+                    ((IronPython.Compiler.Ast.SuiteStatement)loweredConditional.Tests[0].Body)
+                        .Statements[0]
+                        .Start
+                        .Line,
+                    Is.EqualTo(3));
+            });
+        }
+
+        [Test]
         public void GeneratedParserFacadePreservesAsyncFunctionScopes() {
             var engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
@@ -957,7 +1012,10 @@ namespace IronPython.Tests {
             Assert.That(parsed.Success, Is.True,
                 parser.LastFailure != null ? parser.LastFailure.Message : parsed.ToString());
             var engine = Python.CreateEngine();
-            engine.SetSearchPaths(new[] { GetStdLibPath() });
+            engine.SetSearchPaths(new[] {
+                GetStdLibPath(),
+                System.IO.Path.Combine(System.AppContext.BaseDirectory, "lib")
+            });
             var pythonContext = (PythonContext)HostingHelpers.GetLanguageContext(engine);
             SourceUnit sourceUnit = pythonContext.CreateSnippet(
                 string.Empty,
@@ -1027,12 +1085,69 @@ namespace IronPython.Tests {
                     "namespace = {}\n" +
                     "exec(compiled, namespace)\n" +
                     "assert namespace['value'] == 'pkg.mod'\n");
+                ScriptScope astScope = isolatedEngine.CreateScope();
+                isolatedEngine.Execute(
+                    "import ast\n" +
+                    "tree = ast.parse('value = 1\\nif value:\\n    value = 2\\n', feature_version=6)\n" +
+                    "target_name = tree.body[0].targets[0].id\n" +
+                    "first_line = tree.body[0].lineno\n" +
+                    "if_line = tree.body[1].lineno\n" +
+                    "nested_line = tree.body[1].body[0].lineno\n",
+                    astScope);
+                Assert.Multiple(() => {
+                    Assert.That(astScope.GetVariable<string>("target_name"), Is.EqualTo("value"));
+                    Assert.That(astScope.GetVariable<int>("first_line"), Is.EqualTo(1));
+                    Assert.That(astScope.GetVariable<int>("if_line"), Is.EqualTo(2));
+                    Assert.That(astScope.GetVariable<int>("nested_line"), Is.EqualTo(3));
+                });
 
                 var warningsEngine = Python.CreateEngine(new Dictionary<string, object> {
                     ["NoSite"] = true
                 });
                 warningsEngine.SetSearchPaths(new[] { GetStdLibPath() });
                 warningsEngine.Execute("import warnings");
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void ImportsTypingWithGeneratedParser() {
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.SetSearchPaths(new[] { GetStdLibPath() });
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                try {
+                    engine.Execute(
+                        "import typing\n" +
+                        "assert typing.Any is not None\n" +
+                        "assert typing.TypeVar is not None\n");
+                } catch (System.Exception exception) {
+                    string formatted = engine.GetService<Microsoft.Scripting.Hosting.ExceptionOperations>()
+                        .FormatException(exception);
+                    Assert.Fail($"Generated parser typing import failed:\n{formatted}");
+                }
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void ImportsGbkViaGeneratedParser() {
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.SetSearchPaths(new[] { GetStdLibPath() });
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "import encodings.gbk\n" +
+                    "encoded = '\\u4e2d\\u6587'.encode('gbk')\n" +
+                    "assert encoded.decode('gbk') == '\\u4e2d\\u6587'\n");
             } finally {
                 Parser.UseGeneratedParser = previousParserMode;
             }
@@ -1072,6 +1187,7 @@ namespace IronPython.Tests {
         [TestCase("async def f(ctx):\n    async with ctx:\n        pass\n")]
         [TestCase("async def f(xs):\n    return [x async for x in xs]\n")]
         [TestCase("async def f(xs):\n    return (x async for x in xs)\n")]
+        [TestCase("async def f(obj):\n    value = await obj.call(  # type: ignore\n        1, timeout=None)\n")]
         [TestCase("if x:\n    if y:\n        z += f\". Did you mean: '{s}'?\"\n    else:\n        pass\n")]
         [TestCase("if a:\n    if b:\n        if c:\n            pass\n        else:\n            pass\nelif d:\n    pass\n")]
         [TestCase("if a:\n    pass\nelif a and b and \\\n        c:\n    pass\n")]

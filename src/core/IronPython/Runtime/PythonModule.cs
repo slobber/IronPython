@@ -29,6 +29,7 @@ namespace IronPython.Runtime {
     public class PythonModule : IDynamicMetaObjectProvider, IPythonMembersList {
         private readonly PythonDictionary _dict;
         private Scope _scope;
+        private object _evaluatedAnnotate;
 
         public PythonModule() {
             _dict = new PythonDictionary();
@@ -98,10 +99,26 @@ namespace IronPython.Runtime {
                 // never look in the dict for these...
                 case "__dict__": return __dict__;
                 case "__class__": return DynamicHelpers.GetPythonType(this);
+                case "__annotations__":
+                    if (_dict.TryGetValue("__annotate__", out object annotate)
+                        && annotate is not null
+                        && !ReferenceEquals(_evaluatedAnnotate, annotate)) {
+                        res = PythonCalls.Call(
+                            context,
+                            annotate,
+                            ScriptingRuntimeHelpers.Int32ToObject(1));
+                        _dict["__annotations__"] = res;
+                        _evaluatedAnnotate = annotate;
+                        return res;
+                    }
+                    break;
             }
 
             if (_dict.TryGetValue(name, out res)) {
                 return res;
+            }
+            if (_dict.TryGetValue("__getattr__", out object getAttribute)) {
+                return PythonCalls.Call(context, getAttribute, name);
             }
 
             // fall back to object to provide all of our other attributes (e.g. __setattr__, etc...)
@@ -151,6 +168,9 @@ namespace IronPython.Runtime {
             Debug.Assert(value != Uninitialized.Instance);
 
             _dict[name] = value;
+            if (name == "__annotations__") {
+                _evaluatedAnnotate = null;
+            }
         }
 
         public void __delattr__(CodeContext/*!*/ context, string name) {

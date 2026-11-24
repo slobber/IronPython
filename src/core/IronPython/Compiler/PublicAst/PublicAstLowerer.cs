@@ -10,6 +10,10 @@ using AstNodes = IronPython.Compiler.Syntax.Ast;
 namespace IronPython.Compiler.PublicAst {
     public static class PublicAstLowerer {
         private static int _matchTemp;
+        [ThreadStatic]
+        private static SourceLocationMap? _sourceLocations;
+        [ThreadStatic]
+        private static string? _className;
 
         public static CompilerAst.PythonAst LowerModule(
             AstNodes.Module module,
@@ -17,23 +21,35 @@ namespace IronPython.Compiler.PublicAst {
             if (module == null) throw new ArgumentNullException(nameof(module));
             if (context == null) throw new ArgumentNullException(nameof(context));
 
-            CompilerAst.Statement[] statements = module.Body
-                .Select(LowerStatement)
-                .ToArray();
-            return new CompilerAst.PythonAst(
-                new CompilerAst.SuiteStatement(statements),
-                true,
-                ModuleOptions.ExecOrEvalCode,
-                false,
-                context,
-                Array.Empty<int>()) {
-                SkipNamedExpressionCheck = true,
-                SkipStarredExpressionCheck = true
-            };
+            if (module.Body.OfType<AstNodes.ImportFrom>().Any(importFrom =>
+                    string.Equals(importFrom.Module, "__future__", StringComparison.Ordinal)
+                    && importFrom.Names.Any(alias => string.Equals(alias.Name, "annotations", StringComparison.Ordinal)))) {
+                ((PythonCompilerOptions)context.Options).FutureAnnotations = true;
+            }
+
+            var locations = SourceLocationMap.Create(context.SourceUnit.GetCode());
+            _sourceLocations = locations;
+            try {
+                CompilerAst.Statement[] statements = module.Body
+                    .Select(LowerStatement)
+                    .ToArray();
+                return new CompilerAst.PythonAst(
+                    new CompilerAst.SuiteStatement(statements),
+                    true,
+                    ModuleOptions.ExecOrEvalCode,
+                    false,
+                    context,
+                    locations.LineStarts) {
+                    SkipNamedExpressionCheck = true,
+                    SkipStarredExpressionCheck = true
+                };
+            } finally {
+                _sourceLocations = null;
+            }
         }
 
         public static CompilerAst.Statement LowerStatement(AstNodes.Stmt statement) {
-            return statement switch {
+            CompilerAst.Statement lowered = statement switch {
                 AstNodes.Assign assign => new CompilerAst.AssignmentStatement(
                     assign.Targets.Select(LowerExpression).ToArray(),
                     LowerExpression(assign.Value)),
@@ -63,8 +79,8 @@ namespace IronPython.Compiler.PublicAst {
                 AstNodes.Assert assert => new CompilerAst.AssertStatement(
                     LowerExpression(assert.Test),
                     assert.Msg is null ? null! : LowerExpression(assert.Msg)),
-                AstNodes.Global global => new CompilerAst.GlobalStatement(global.Names.ToArray()),
-                AstNodes.Nonlocal nonlocal => new CompilerAst.NonlocalStatement(nonlocal.Names.ToArray()),
+                AstNodes.Global global => new CompilerAst.GlobalStatement(global.Names.Select(MangleIdentifier).ToArray()),
+                AstNodes.Nonlocal nonlocal => new CompilerAst.NonlocalStatement(nonlocal.Names.Select(MangleIdentifier).ToArray()),
                 AstNodes.Delete delete => new CompilerAst.DelStatement(
                     delete.Targets.Select(LowerExpression).ToArray()),
                 AstNodes.Break => new CompilerAst.BreakStatement(),
@@ -102,6 +118,29 @@ namespace IronPython.Compiler.PublicAst {
                 AstNodes.ClassDef @class => LowerClass(@class),
                 _ => throw Unsupported(statement)
             };
+            SetLocation(lowered, statement);
+            int headerIndex = GetStartOffset(statement);
+            switch (lowered) {
+                case CompilerAst.WhileStatement @while:
+                    @while.HeaderIndex = headerIndex;
+                    break;
+                case CompilerAst.ForStatement @for:
+                    @for.HeaderIndex = headerIndex;
+                    break;
+                case CompilerAst.AsyncForStatement @for:
+                    @for.HeaderIndex = headerIndex;
+                    break;
+                case CompilerAst.WithStatement @with:
+                    @with.HeaderIndex = headerIndex;
+                    break;
+                case CompilerAst.AsyncWithStatement @with:
+                    @with.HeaderIndex = headerIndex;
+                    break;
+                case CompilerAst.TryStatement @try:
+                    @try.HeaderIndex = headerIndex;
+                    break;
+            }
+            return lowered;
         }
 
         private static CompilerAst.FromImportStatement LowerImportFrom(
@@ -157,8 +196,8 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         public static CompilerAst.Expression LowerExpression(AstNodes.ExprBase expression) {
-            return expression switch {
-                AstNodes.Name name => new CompilerAst.NameExpression(name.Id),
+            CompilerAst.Expression lowered = expression switch {
+                AstNodes.Name name => new CompilerAst.NameExpression(MangleIdentifier(name.Id)),
                 AstNodes.Constant constant => new CompilerAst.ConstantExpression(constant.Value),
                 AstNodes.List list => new CompilerAst.ListExpression(
                     list.Elts.Select(LowerExpression).ToArray()),
@@ -176,7 +215,7 @@ namespace IronPython.Compiler.PublicAst {
                         null)).ToArray()),
                 AstNodes.Attribute attribute => new CompilerAst.MemberExpression(
                     LowerExpression(attribute.Value),
-                    attribute.Attr),
+                    MangleIdentifier(attribute.Attr)),
                 AstNodes.Subscript subscript => new CompilerAst.IndexExpression(
                     LowerExpression(subscript.Value),
                     LowerExpression(subscript.Slice)),
@@ -247,6 +286,8 @@ namespace IronPython.Compiler.PublicAst {
                     LowerExpression(unary.Operand)),
                 _ => throw Unsupported(expression)
             };
+            SetLocation(lowered, expression);
+            return lowered;
         }
 
         public static object? ExecuteModule(
@@ -454,7 +495,10 @@ namespace IronPython.Compiler.PublicAst {
             while (true) {
                 tests.Add(new CompilerAst.IfStatementTest(
                     LowerExpression(current.Test),
-                    LowerSuite(current.Body)));
+                    LowerSuite(current.Body)) {
+                    HeaderIndex = GetStartOffset(current)
+                });
+                SetLocation(tests[tests.Count - 1], current);
                 if (current.Orelse.Count == 1 && current.Orelse[0] is AstNodes.If continuation) {
                     current = continuation;
                     continue;
@@ -709,9 +753,12 @@ namespace IronPython.Compiler.PublicAst {
             CompilerAst.Expression value,
             System.Collections.Generic.IList<CompilerAst.Statement> statements) {
             string name = "__match_tmp_" + System.Threading.Interlocked.Increment(ref _matchTemp);
-            return new CompilerAst.NamedExpression(
-                new CompilerAst.NameExpression(name),
-                value);
+            var target = new CompilerAst.NameExpression(name) {
+                IndexSpan = value.IndexSpan
+            };
+            return new CompilerAst.NamedExpression(target, value) {
+                IndexSpan = value.IndexSpan
+            };
         }
 
         private static CompilerAst.Expression Call(
@@ -772,12 +819,16 @@ namespace IronPython.Compiler.PublicAst {
                 LowerSuite(body),
                 handlers.Select(handler => {
                     AstNodes.ExceptHandler typedHandler = (AstNodes.ExceptHandler)handler;
-                    return new CompilerAst.TryStatementHandler(
+                    var loweredHandler = new CompilerAst.TryStatementHandler(
                         typedHandler.Type is null ? null! : LowerExpression(typedHandler.Type),
                         typedHandler.Name is null
                             ? null!
                             : new CompilerAst.NameExpression(typedHandler.Name),
-                        LowerSuite(typedHandler.Body));
+                        LowerSuite(typedHandler.Body)) {
+                        HeaderIndex = GetStartOffset(typedHandler)
+                    };
+                    SetLocation(loweredHandler, typedHandler);
+                    return loweredHandler;
                 }).ToArray(),
                 orelse.Count == 0 ? null : LowerSuite(orelse),
                 finalbody.Count == 0 ? null : LowerSuite(finalbody));
@@ -791,7 +842,8 @@ namespace IronPython.Compiler.PublicAst {
                 function.Body,
                 function.DecoratorList,
                 function.Returns,
-                false);
+                false,
+                function);
         }
 
         private static CompilerAst.FunctionDefinition LowerFunction(
@@ -802,7 +854,8 @@ namespace IronPython.Compiler.PublicAst {
                 function.Body,
                 function.DecoratorList,
                 function.Returns,
-                true);
+                true,
+                function);
         }
 
         private static CompilerAst.FunctionDefinition LowerFunction(
@@ -811,12 +864,16 @@ namespace IronPython.Compiler.PublicAst {
             System.Collections.Generic.IReadOnlyList<AstNodes.Stmt> body,
             System.Collections.Generic.IReadOnlyList<AstNodes.ExprBase> decorators,
             AstNodes.ExprBase? returns,
-            bool isAsync) {
+            bool isAsync,
+            AstNodes.PythonAstNode source) {
+            string loweredName = MangleIdentifier(name);
             var function = new CompilerAst.FunctionDefinition(
-                name,
+                loweredName,
                 LowerParameters(arguments, name),
                 LowerSuite(body),
-                isAsync);
+                isAsync) {
+                HeaderIndex = GetStartOffset(source)
+            };
             function.IsGenerator = ContainsYield(body);
             function.GeneratorStop = true;
             function.Decorators = decorators.Select(LowerExpression).ToArray();
@@ -830,10 +887,14 @@ namespace IronPython.Compiler.PublicAst {
             AstNodes.Arguments arguments,
             string? functionName) {
             var parameters = new System.Collections.Generic.List<CompilerAst.Parameter>();
-            AstNodes.Arg[] positional = arguments.Posonlyargs
+            AstNodes.Arg[] positionalOnly = arguments.Posonlyargs.ToArray();
+            AstNodes.Arg[] positional = positionalOnly
                 .Concat(arguments.Args)
                 .ToArray();
-            parameters.AddRange(positional.Select(argument => LowerParameter(argument)));
+            parameters.AddRange(positionalOnly.Select(argument => LowerParameter(
+                argument,
+                CompilerAst.ParameterKind.PositionalOnly)));
+            parameters.AddRange(arguments.Args.Select(argument => LowerParameter(argument)));
             int firstDefault = positional.Length - arguments.Defaults.Count;
             if (firstDefault < 0) {
                 throw new InvalidOperationException(
@@ -888,15 +949,43 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         private static CompilerAst.ClassDefinition LowerClass(AstNodes.ClassDef @class) {
+            CompilerAst.Expression[] bases = @class.Bases.Select(LowerExpression).ToArray();
+            CompilerAst.Keyword[] keywords = @class.Keywords.Select(keyword => new CompilerAst.Keyword(
+                keyword.ArgName,
+                LowerExpression(keyword.Value))).ToArray();
+            CompilerAst.Expression[] decorators = @class.DecoratorList.Select(LowerExpression).ToArray();
+
+            string? previousClass = _className;
+            _className = @class.Name;
+            CompilerAst.SuiteStatement body;
+            try {
+                body = LowerSuite(@class.Body);
+            } finally {
+                _className = previousClass;
+            }
+
             var definition = new CompilerAst.ClassDefinition(
-                @class.Name,
-                @class.Bases.Select(LowerExpression).ToArray(),
-                @class.Keywords.Select(keyword => new CompilerAst.Keyword(
-                    keyword.ArgName,
-                    LowerExpression(keyword.Value))).ToArray(),
-                LowerSuite(@class.Body));
-            definition.Decorators = @class.DecoratorList.Select(LowerExpression).ToArray();
+                MangleIdentifier(@class.Name),
+                bases,
+                keywords,
+                body) {
+                HeaderIndex = GetStartOffset(@class)
+            };
+            definition.Decorators = decorators;
             return definition;
+        }
+
+        private static string MangleIdentifier(string name) {
+            if (_className is null ||
+                name.Length < 2 ||
+                name[0] != '_' ||
+                name[1] != '_' ||
+                name.EndsWith("__", StringComparison.Ordinal)) {
+                return name;
+            }
+
+            string className = _className.TrimStart('_');
+            return className.Length == 0 ? name : "_" + className + name;
         }
 
         private static CompilerAst.SuiteStatement LowerSuite(
@@ -1168,9 +1257,52 @@ namespace IronPython.Compiler.PublicAst {
             };
         }
 
+        private static void SetLocation(
+            CompilerAst.Node lowered,
+            AstNodes.PythonAstNode source) {
+            SourceLocationMap? locations = _sourceLocations;
+            if (locations is null) return;
+
+            int start = locations.ToOffset(source.LineNumber, source.ColumnOffset);
+            int end = locations.ToOffset(
+                source.EndLineNumber ?? source.LineNumber,
+                source.EndColumnOffset ?? source.ColumnOffset);
+            if (end < start) end = start;
+            lowered.IndexSpan = new Microsoft.Scripting.IndexSpan(start, end - start);
+        }
+
+        private static int GetStartOffset(AstNodes.PythonAstNode source) {
+            return _sourceLocations?.ToOffset(source.LineNumber, source.ColumnOffset) ?? 0;
+        }
+
         private static NotSupportedException Unsupported(AstNodes.PythonAstNode node) {
             return new NotSupportedException(
                 $"Public AST node '{node.NodeKind}' has no compiler-AST lowering yet.");
+        }
+
+        private sealed class SourceLocationMap {
+            private readonly int[] _lineStarts;
+
+            private SourceLocationMap(int[] lineStarts) {
+                _lineStarts = lineStarts;
+                LineStarts = lineStarts.Skip(1).ToArray();
+            }
+
+            public int[] LineStarts { get; }
+
+            public static SourceLocationMap Create(string? source) {
+                source ??= string.Empty;
+                var starts = new System.Collections.Generic.List<int> { 0 };
+                for (int i = 0; i < source.Length; i++) {
+                    if (source[i] == '\n') starts.Add(i + 1);
+                }
+                return new SourceLocationMap(starts.ToArray());
+            }
+
+            public int ToOffset(int? lineNumber, int? columnOffset) {
+                int line = Math.Clamp((lineNumber ?? 1) - 1, 0, _lineStarts.Length - 1);
+                return _lineStarts[line] + Math.Max(columnOffset ?? 0, 0);
+            }
         }
 
         private sealed class PatternResult {

@@ -170,6 +170,240 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void CompileAcceptsFeatureVersionKeyword() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "code = compile('value = 2', '<feature>', 'exec', _feature_version=6)\n" +
+                "namespace = {}\n" +
+                "exec(code, namespace)\n" +
+                "assert namespace['value'] == 2\n");
+        }
+
+        [Test]
+        public void FunctionAnnotationsAreLazyAndSupportFormats() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "class LazyAnnotation:\n" +
+                    "    def method(self, value: int) -> LazyAnnotation:\n" +
+                    "        return self\n" +
+                    "annotation_function = LazyAnnotation.__dict__['method'].__annotate__\n" +
+                    "annotation_values = LazyAnnotation.__dict__['method'].__annotations__\n" +
+                    "annotation_strings = annotation_function(4)\n" +
+                    "assert annotation_values == {'value': int, 'return': LazyAnnotation}\n" +
+                    "assert annotation_strings == {'value': 'int', 'return': 'LazyAnnotation'}\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void ModuleAndClassVariableAnnotationsAreRecorded() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "module_value: int\n" +
+                    "class AnnotatedValues:\n" +
+                    "    value: int\n" +
+                    "    named: str = 'value'\n",
+                    scope);
+                engine.Execute(
+                    "assert __annotations__ == {'module_value': int}, repr(__annotations__)\n" +
+                    "assert AnnotatedValues.__annotations__ == {'value': int, 'named': str}, repr(AnnotatedValues.__annotations__)\n" +
+                    "assert AnnotatedValues.named == 'value', repr(AnnotatedValues.named)\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void FutureAnnotationsStoreSourceTextWithoutResolution() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "from __future__ import annotations\n" +
+                    "module_value: UndefinedName\n" +
+                    "class FutureAnnotations:\n" +
+                    "    class_value: UndefinedName\n" +
+                    "    def method(self, value: UndefinedName) -> UndefinedName:\n" +
+                    "        return value\n",
+                    scope);
+                engine.Execute(
+                    "assert __annotations__ == {'module_value': 'UndefinedName'}\n" +
+                    "assert FutureAnnotations.__annotations__ == {'class_value': 'UndefinedName'}\n" +
+                    "assert FutureAnnotations.method.__annotations__ == {\n" +
+                    "    'value': 'UndefinedName', 'return': 'UndefinedName'}\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [TestCase(false)]
+        [TestCase(true)]
+        public void PositionalOnlyParametersRejectKeywords(bool useGeneratedParser) {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = useGeneratedParser;
+            try {
+                engine.Execute(
+                    "def positional_only(value, /, keyword):\n" +
+                    "    return value, keyword\n" +
+                    "positional_result = positional_only(1, keyword=2)\n" +
+                    "assert positional_result == (1, 2)\n" +
+                    "assert positional_only.__code__.co_posonlyargcount == 1\n" +
+                    "try:\n" +
+                    "    positional_only(value=1, keyword=2)\n" +
+                    "except TypeError as exc:\n" +
+                    "    positional_error = str(exc)\n" +
+                    "assert \"unexpected keyword argument 'value'\" in positional_error\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void AstConstructorsValidateRequiredAndUnknownFields() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "import ast\n" +
+                "constant = ast.Constant(value=1)\n" +
+                "assert constant.value == 1\n" +
+                "try:\n" +
+                "    ast.Constant(value=1, unknown=2)\n" +
+                "except TypeError as exc:\n" +
+                "    unknown_error = str(exc)\n" +
+                "try:\n" +
+                "    ast.Constant()\n" +
+                "except TypeError as exc:\n" +
+                "    missing_error = str(exc)\n" +
+                "assert 'unknown' in unknown_error, unknown_error\n" +
+                "assert 'value' in missing_error, missing_error\n");
+        }
+
+        [Test]
+        public void LazyImportsResolveOnAccessAndCall() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "lazy import math as lazy_math\n" +
+                    "lazy from math import sqrt as lazy_sqrt\n" +
+                    "import types\n" +
+                    "assert type(lazy_math) is types.LazyImportType\n" +
+                    "assert type(lazy_sqrt) is types.LazyImportType\n" +
+                    "assert lazy_math.sqrt(16.0) == 4.0\n" +
+                    "assert lazy_sqrt(25.0) == 5.0\n");
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void TimeModuleProvidesNanosecondClocks() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "import time\n" +
+                "assert isinstance(time.time_ns(), int)\n" +
+                "assert isinstance(time.monotonic_ns(), int)\n" +
+                "assert isinstance(time.perf_counter_ns(), int)\n" +
+                "assert isinstance(time.process_time_ns(), int)\n" +
+                "assert isinstance(time.thread_time_ns(), int)\n" +
+                "assert time.get_clock_info('time_ns').adjustable\n" +
+                "assert not time.get_clock_info('perf_counter_ns').adjustable\n");
+        }
+
+        [Test]
+        public void SysModuleExposesPlatformAndJitMetadata() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "import sys\n" +
+                "assert sys.platlibdir == 'lib'\n" +
+                "assert sys._jit.is_available() is False\n" +
+                "assert sys._jit.is_enabled() is False\n" +
+                "assert sys._jit.is_active() is False\n");
+        }
+
+        [Test]
+        public void CodeReplaceAndSysconfigSurfaceAreAvailable() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "import _sysconfig\n" +
+                "assert _sysconfig.config_vars()['VERSION'] == '3.15'\n" +
+                "def generator():\n" +
+                "    yield 1\n" +
+                "replacement = generator.__code__.replace(\n" +
+                "    co_flags=generator.__code__.co_flags | 0x100)\n" +
+                "assert replacement.co_flags & 0x100\n");
+        }
+
+        [Test]
+        public void ExceptionGroupsSupportSplitAndSubgroup() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "group = ExceptionGroup('errors', [ValueError('v'), TypeError('t')])\n" +
+                "assert isinstance(group, BaseExceptionGroup)\n" +
+                "assert group.message == 'errors'\n" +
+                "assert len(group.exceptions) == 2\n" +
+                "matching, rest = group.split(lambda exc: isinstance(exc, ValueError))\n" +
+                "assert len(matching.exceptions) == 1\n" +
+                "assert len(rest.exceptions) == 1\n" +
+                "subgroup = group.subgroup(lambda exc: isinstance(exc, TypeError))\n" +
+                "assert len(subgroup.exceptions) == 1\n");
+        }
+
+        [Test]
+        public void ItertoolsBatchedSupportsStrictMode() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "from itertools import batched\n" +
+                "assert list(batched('ABCDE', 2)) == [('A', 'B'), ('C', 'D'), ('E',)]\n" +
+                "try:\n" +
+                "    list(batched('ABCDE', 2, strict=True))\n" +
+                "except ValueError as exc:\n" +
+                "    batched_error = str(exc)\n" +
+                "assert 'incomplete batch' in batched_error\n");
+        }
+
+        [Test]
         public void DictionaryPreservesInsertionOrderAcrossStorageMutations() {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
@@ -278,6 +512,21 @@ namespace IronPython.Tests {
                 "        super().__init_subclass__(**kwargs)\n" +
                 "class CooperativeChild(CooperativeHook):\n" +
                 "    pass\n" +
+                "class KeywordHook:\n" +
+                "    keyword = None\n" +
+                "    def __init_subclass__(cls, marker=None):\n" +
+                "        KeywordHook.keyword = marker\n" +
+                "class KeywordChild(KeywordHook, marker=42):\n" +
+                "    pass\n" +
+                "class InitSubclassMeta(type):\n" +
+                "    pass\n" +
+                "class MetaclassHook:\n" +
+                "    called = False\n" +
+                "    def __init_subclass__(cls, *args, **kwargs):\n" +
+                "        MetaclassHook.called = True\n" +
+                "        super().__init_subclass__(*args, **kwargs)\n" +
+                "class MetaclassHookChild(MetaclassHook, metaclass=InitSubclassMeta):\n" +
+                "    pass\n" +
                 "class NamedDescriptor:\n" +
                 "    def __set_name__(self, owner, name):\n" +
                 "        self.owner_name = owner.__name__\n" +
@@ -313,6 +562,8 @@ namespace IronPython.Tests {
                 "assert note_error.__notes__ == ['detail'], 'notes'\n" +
                 "assert HookBase.subclass_name == 'HookChild', 'init subclass'\n" +
                 "assert CooperativeHook.calls == ['CooperativeChild'], 'cooperative init subclass'\n" +
+                "assert KeywordHook.keyword == 42, 'init subclass keywords'\n" +
+                "assert MetaclassHook.called, 'metaclass init subclass'\n" +
                 "assert Described.value.owner_name == 'Described', 'set name owner'\n" +
                 "assert Described.value.attribute_name == 'value', 'set name attribute'\n" +
                 "assert decorated() == 3, 'decorator'\n" +

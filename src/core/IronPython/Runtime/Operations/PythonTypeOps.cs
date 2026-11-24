@@ -146,7 +146,9 @@ namespace IronPython.Runtime.Operations {
             }
 
             object newInst;
-            bool res = dts.TryGetValue(context, dt, dt, out newInst);
+            // __new__ is implicitly a static method.  Binding it to the type object
+            // would prepend the class twice once PythonTypeOps prepends it for the call.
+            bool res = dts.TryGetValue(context, null, dt, out newInst);
             Debug.Assert(res);
 
             return newInst;

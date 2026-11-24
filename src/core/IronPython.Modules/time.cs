@@ -138,7 +138,17 @@ namespace IronPython.Modules {
 
         public static double perf_counter() => clock();
 
+        public static BigInteger perf_counter_ns()
+            => (BigInteger)Stopwatch.GetTimestamp() * 1_000_000_000 / Stopwatch.Frequency;
+
         public static double process_time() => Process.GetCurrentProcess().TotalProcessorTime.TotalSeconds;
+
+        public static BigInteger process_time_ns()
+            => (BigInteger)(Process.GetCurrentProcess().TotalProcessorTime.Ticks * 100);
+
+        public static double thread_time() => process_time();
+
+        public static BigInteger thread_time_ns() => process_time_ns();
 
         public static string ctime(CodeContext/*!*/ context)
             => asctime(context, localtime());
@@ -155,10 +165,17 @@ namespace IronPython.Modules {
                     return new SimpleNamespace(new Dictionary<string, object?> { { "adjustable", false }, { "implementation", "Stopwatch.ElapsedTicks" }, { "monotonic", true }, { "resolution", 1e-7 } });
                 case "process_time":
                     return new SimpleNamespace(new Dictionary<string, object?> { { "adjustable", false }, { "implementation", "Process.TotalProcessorTime" }, { "monotonic", true }, { "resolution", 1e-7 } });
+                case "perf_counter_ns":
+                    return new SimpleNamespace(new Dictionary<string, object?> { { "adjustable", false }, { "implementation", "Stopwatch.GetTimestamp" }, { "monotonic", true }, { "resolution", 1 } });
+                case "process_time_ns":
+                case "thread_time":
+                case "thread_time_ns":
+                    return new SimpleNamespace(new Dictionary<string, object?> { { "adjustable", false }, { "implementation", "Process.TotalProcessorTime" }, { "monotonic", true }, { "resolution", 100 } });
                 case "clock":
                     PythonOps.Warn(context, PythonExceptions.DeprecationWarning, "time.clock has been deprecated in Python 3.3 and will be removed from Python 3.8: use time.perf_counter or time.process_time instead");
                     return new SimpleNamespace(new Dictionary<string, object?> { { "adjustable", false }, { "implementation", "Stopwatch.ElapsedTicks" }, { "monotonic", true }, { "resolution", 1e-7 } });
                 case "time":
+                case "time_ns":
                     return new SimpleNamespace(new Dictionary<string, object?> { { "adjustable", true }, { "implementation", "DateTime.Now" }, { "monotonic", false }, { "resolution", 0.015625 } });
                 default:
                     throw PythonOps.ValueError("unknown clock");
@@ -179,6 +196,9 @@ namespace IronPython.Modules {
 
         public static double time()
             => TicksToTimestamp(DateTime.UtcNow.Ticks);
+
+        public static BigInteger time_ns()
+            => (BigInteger)(DateTime.UtcNow.Ticks - epochTicks) * 100;
 
         public static PythonTuple localtime()
             => localtime(null);

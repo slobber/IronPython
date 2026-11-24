@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -86,6 +87,197 @@ namespace IronPython.Modules {
 
         public const int dllhandle = 0;
         public static string pycache_prefix;
+        public const string platlibdir = "lib";
+        public const string _vpath = "";
+        public static readonly JitInfo _jit = new JitInfo();
+        public static readonly Monitoring monitoring = new Monitoring();
+
+        private sealed class CoroutineOriginTrackingState {
+            public int Depth;
+        }
+
+        private static readonly ConditionalWeakTable<PythonContext, CoroutineOriginTrackingState> _coroutineOriginTracking = new();
+        private sealed class AsyncGeneratorHookState {
+            public object FirstIter;
+            public object Finalizer;
+        }
+
+        private static readonly ConditionalWeakTable<PythonContext, AsyncGeneratorHookState> _asyncGeneratorHooks = new();
+
+        public static int get_coroutine_origin_tracking_depth(CodeContext context)
+            => _coroutineOriginTracking.GetOrCreateValue(context.LanguageContext).Depth;
+
+        public static void set_coroutine_origin_tracking_depth(CodeContext context, int depth) {
+            if (depth < 0) throw PythonOps.ValueError("depth must be non-negative");
+            _coroutineOriginTracking.GetOrCreateValue(context.LanguageContext).Depth = depth;
+        }
+
+        public static AsyncGenHooks get_asyncgen_hooks(CodeContext context) {
+            AsyncGeneratorHookState state = _asyncGeneratorHooks.GetOrCreateValue(context.LanguageContext);
+            lock (state) return new AsyncGenHooks(state.FirstIter, state.Finalizer);
+        }
+
+        public static void set_asyncgen_hooks(CodeContext context, object firstiter = null, object finalizer = null) {
+            if (firstiter is not null && !PythonOps.IsCallable(context, firstiter)) {
+                throw PythonOps.TypeError("firstiter must be callable");
+            }
+            if (finalizer is not null && !PythonOps.IsCallable(context, finalizer)) {
+                throw PythonOps.TypeError("finalizer must be callable");
+            }
+
+            AsyncGeneratorHookState state = _asyncGeneratorHooks.GetOrCreateValue(context.LanguageContext);
+            lock (state) {
+                state.FirstIter = firstiter;
+                state.Finalizer = finalizer;
+            }
+        }
+
+        [PythonType("asyncgen_hooks")]
+        public sealed class AsyncGenHooks : PythonTuple {
+            public AsyncGenHooks(object firstiter, object finalizer)
+                : base(new[] { firstiter, finalizer }) {
+                this.firstiter = firstiter;
+                this.finalizer = finalizer;
+            }
+
+            public readonly object firstiter;
+            public readonly object finalizer;
+        }
+
+        [PythonType("_JitInfo")]
+        public sealed class JitInfo {
+            public bool is_available() => false;
+
+            public bool is_enabled() => false;
+
+            public bool is_active() => false;
+        }
+
+        [PythonType("monitoring")]
+        public sealed class Monitoring {
+            public const int DEBUGGER_ID = 0;
+            public const int COVERAGE_ID = 1;
+            public const int PROFILER_ID = 2;
+            public const int OPTIMIZER_ID = 5;
+            public static readonly object MISSING = new();
+            public const int DISABLE = 0;
+
+            private readonly string[] _tools = new string[6];
+            private readonly int[] _events = new int[6];
+            private readonly Dictionary<(int Tool, int Event), object> _callbacks = new();
+
+            public readonly SimpleNamespace events = new SimpleNamespace(
+                new Dictionary<string, object> {
+                    ["PY_START"] = 1 << 1,
+                    ["PY_RESUME"] = 1 << 2,
+                    ["PY_RETURN"] = 1 << 3,
+                    ["PY_YIELD"] = 1 << 4,
+                    ["CALL"] = 1 << 5,
+                    ["LINE"] = 1 << 6,
+                    ["INSTRUCTION"] = 1 << 7,
+                    ["JUMP"] = 1 << 8,
+                    ["BRANCH"] = 1 << 9,
+                    ["BRANCH_LEFT"] = 1 << 10,
+                    ["BRANCH_RIGHT"] = 1 << 11,
+                    ["STOP_ITERATION"] = 1 << 12,
+                    ["RAISE"] = 1 << 13,
+                    ["RERAISE"] = 1 << 14,
+                    ["EXCEPTION_HANDLED"] = 1 << 15,
+                    ["PY_UNWIND"] = 1 << 16,
+                    ["PY_THROW"] = 1 << 17,
+                    ["C_RETURN"] = 1 << 18,
+                    ["C_RAISE"] = 1 << 19
+                });
+
+            public void use_tool_id(int toolId, [NotNone] string name) {
+                ValidateTool(toolId);
+                if (_tools[toolId] is not null) {
+                    throw PythonOps.ValueError("tool {0} is already in use", toolId);
+                }
+                _tools[toolId] = name;
+            }
+
+            public void free_tool_id(int toolId) {
+                ValidateTool(toolId);
+                _tools[toolId] = null;
+                _events[toolId] = 0;
+                foreach (var key in _callbacks.Keys.Where(key => key.Tool == toolId).ToArray()) {
+                    _callbacks.Remove(key);
+                }
+            }
+
+            public void clear_tool_id(int toolId) {
+                ValidateTool(toolId);
+                _events[toolId] = 0;
+                foreach (var key in _callbacks.Keys.Where(key => key.Tool == toolId).ToArray()) {
+                    _callbacks.Remove(key);
+                }
+            }
+
+            public string get_tool(int toolId) {
+                ValidateTool(toolId);
+                return _tools[toolId];
+            }
+
+            public int get_events(int toolId) {
+                ValidateTool(toolId);
+                RequireTool(toolId);
+                return _events[toolId];
+            }
+
+            public void set_events(int toolId, int eventSet) {
+                ValidateTool(toolId);
+                RequireTool(toolId);
+                _events[toolId] = eventSet;
+            }
+
+            public void set_local_events(int toolId, object code, int eventSet) {
+                ValidateTool(toolId);
+                RequireTool(toolId);
+            }
+
+            public object register_callback(int toolId, int eventId, object callback) {
+                ValidateTool(toolId);
+                RequireTool(toolId);
+                var key = (toolId, eventId);
+                _callbacks.TryGetValue(key, out object previous);
+                if (callback is null) {
+                    _callbacks.Remove(key);
+                } else {
+                    _callbacks[key] = callback;
+                }
+                return previous ?? MISSING;
+            }
+
+            public void restart_events() { }
+
+            public PythonDictionary _all_events() {
+                var result = new PythonDictionary();
+                foreach (KeyValuePair<object, object> pair in events.__dict__) {
+                    if (pair.Key is not string eventName || pair.Value is not int eventId) continue;
+                    int tools = 0;
+                    for (int tool = 0; tool < _events.Length; tool++) {
+                        if ((_events[tool] & eventId) != 0) {
+                            tools |= 1 << tool;
+                        }
+                    }
+                    if (tools != 0) result[eventName] = tools;
+                }
+                return result;
+            }
+
+            private static void ValidateTool(int toolId) {
+                if (toolId < 0 || toolId >= 6) {
+                    throw PythonOps.ValueError("invalid tool id");
+                }
+            }
+
+            private void RequireTool(int toolId) {
+                if (_tools[toolId] is null) {
+                    throw PythonOps.ValueError("tool {0} is not in use", toolId);
+                }
+            }
+        }
 
         public static void audit(CodeContext context, [NotNone] string eventName, [NotNone] params object[] args) {
             if (eventName is null) throw PythonOps.TypeError("audit() argument 1 must be str, not None");

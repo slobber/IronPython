@@ -103,7 +103,7 @@ namespace IronPython.Compiler.Ast {
                             TransformMaybeSingleLineSuite(ist.Body, GlobalParent.IndexToLocation(ist.Test.StartIndex)),
                             result
                         ),
-                        new SourceSpan(GlobalParent.IndexToLocation(ist.StartIndex), GlobalParent.IndexToLocation(ist.HeaderIndex))
+                        new SourceSpan(GlobalParent.IndexToLocation(ist.StartIndex), GlobalParent.IndexToLocation(Math.Max(ist.StartIndex, ist.HeaderIndex)))
                     );
                 }
             }

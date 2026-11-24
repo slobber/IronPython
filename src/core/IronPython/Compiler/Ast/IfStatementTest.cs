@@ -2,6 +2,8 @@
 // The .NET Foundation licenses this file to you under the Apache 2.0 License.
 // See the LICENSE file in the project root for more information.
 
+using System;
+
 using Microsoft.Scripting;
 
 namespace IronPython.Compiler.Ast {
@@ -11,7 +13,7 @@ namespace IronPython.Compiler.Ast {
             Body = body;
         }
 
-        public SourceLocation Header => GlobalParent.IndexToLocation(HeaderIndex);
+        public SourceLocation Header => GlobalParent.IndexToLocation(Math.Max(StartIndex, HeaderIndex));
 
         public int HeaderIndex { set; get; }
 

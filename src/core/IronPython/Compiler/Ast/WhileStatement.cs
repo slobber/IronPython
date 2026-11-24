@@ -2,6 +2,8 @@
 // The .NET Foundation licenses this file to you under the Apache 2.0 License.
 // See the LICENSE file in the project root for more information.
 
+using System;
+
 using MSAst = System.Linq.Expressions;
 
 using Microsoft.Scripting;
@@ -28,8 +30,15 @@ namespace IronPython.Compiler.Ast {
 
         public Statement ElseStatement { get; }
 
+        internal int HeaderIndex {
+            get => _indexHeader;
+            set => _indexHeader = value;
+        }
+
         private SourceSpan Header
-            => new SourceSpan(GlobalParent.IndexToLocation(StartIndex), GlobalParent.IndexToLocation(_indexHeader));
+            => new SourceSpan(
+                GlobalParent.IndexToLocation(StartIndex),
+                GlobalParent.IndexToLocation(Math.Max(StartIndex, _indexHeader)));
 
         public void SetLoc(PythonAst globalParent, int start, int header, int end) {
             SetLoc(globalParent, start, end);

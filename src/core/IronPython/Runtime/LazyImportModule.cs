@@ -5,6 +5,7 @@
 #nullable enable
 
 using System;
+using System.Runtime.CompilerServices;
 
 using IronPython.Runtime.Operations;
 
@@ -25,6 +26,11 @@ namespace IronPython.Runtime {
         }
 
         public object __getattribute__(CodeContext context, [NotNone] string name) {
+            return PythonOps.GetBoundAttr(context, Load(context), name);
+        }
+
+        [SpecialName]
+        public object GetCustomMember(CodeContext context, [NotNone] string name) {
             return PythonOps.GetBoundAttr(context, Load(context), name);
         }
 

@@ -193,8 +193,8 @@
 - [x] 12.1 Preserve parameter, return, variable, and module annotations in the
   public AST.
 - [ ] 12.2 Implement annotation scopes and name resolution.
-- [ ] 12.3 Implement module and class `__annotations__`.
-- [ ] 12.4 Implement `from __future__ import annotations`.
+- [x] 12.3 Implement module and class `__annotations__`.
+- [x] 12.4 Implement `from __future__ import annotations`.
 - [ ] 12.5 Implement PEP 649/749 deferred annotation evaluation.
 - [ ] 12.6 Implement `annotationlib` and `__annotate__`.
 - [ ] 12.7 Implement `inspect.get_annotations`, `inspect.signature`, and
@@ -251,7 +251,7 @@
 - [ ] 15.8 Implement PEP 563 compatibility mode.
 - [x] 15.9 Guarantee dictionary insertion order.
 - [x] 15.10 Implement assignment expressions.
-- [ ] 15.11 Implement positional-only parameters.
+- [x] 15.11 Implement positional-only parameters.
 - [x] 15.12 Implement f-string debug expressions.
 - [x] 15.13 Implement `continue` in `finally`.
 - [x] 15.14 Implement dict union operators.
@@ -268,7 +268,7 @@
 - [x] 15.25 Implement bracketless `except`/`except*`.
 - [ ] 15.26 Implement the PEP 765 `finally` control-flow warning.
 - [x] 15.27 Implement unpacking in 3.15 comprehensions.
-- [ ] 15.28 Implement 3.15 AST constructor strictness.
+- [x] 15.28 Implement 3.15 AST constructor strictness.
 - [ ] 15.29 Implement 3.15 lazy-import syntax and runtime behavior.
 - [x] 15.30 Implement 3.14/3.15 t-string syntax and runtime objects.
 

@@ -1115,6 +1115,8 @@ namespace IronPython.Compiler {
                     } else if (name == "generator_stop") {
                         // New in 3.5, mandatory in 3.7
                         _languageFeatures |= ModuleOptions.GeneratorStop;
+                    } else if (name == "annotations") {
+                        ((PythonCompilerOptions)_context.Options).FutureAnnotations = true;
                     } else if (name == "nested_scopes") {
                     } else if (name == "generators") {
                     } else {
@@ -1454,6 +1456,9 @@ namespace IronPython.Compiler {
                         return null;
                     }
 
+                    for (int i = 0; i < pl.Count; i++) {
+                        pl[i].MarkPositionalOnly();
+                    }
                     readTrueDivide = true;
                 } else if (MaybeEat(TokenKind.Multiply)) {
                     if (readMultiply) {

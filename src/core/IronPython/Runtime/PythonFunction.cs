@@ -44,6 +44,7 @@ namespace IronPython.Runtime {
         private string _qualname;                       // the qualified name of the method
         private object _doc;                            // the current documentation string
         private PythonDictionary _annotations;          // annotations for the function
+        private object _annotate;                       // lazy annotation evaluator
 
         private static int[] _depth_fast = new int[20]; // hi-perf thread static data to avoid hitting a real thread static
         [ThreadStatic] private static int DepthSlow;    // current depth stored in a real thread static with fast depth runs out
@@ -86,7 +87,15 @@ namespace IronPython.Runtime {
             FunctionCompatibility = CalculatedCachedCompat();
         }
 
-        internal PythonFunction(CodeContext/*!*/ context, FunctionCode funcInfo, object modName, object[] defaults, PythonDictionary kwdefaults, PythonDictionary annotations, MutableTuple closure) {
+        internal PythonFunction(
+            CodeContext/*!*/ context,
+            FunctionCode funcInfo,
+            object modName,
+            object[] defaults,
+            PythonDictionary kwdefaults,
+            PythonDictionary annotations,
+            MutableTuple closure,
+            object annotate = null) {
             Assert.NotNull(context, funcInfo);
 
             _context = context;
@@ -97,6 +106,7 @@ namespace IronPython.Runtime {
             _name = funcInfo.co_name;
             _qualname = _name;
             _annotations = annotations ?? new PythonDictionary();
+            _annotate = annotate;
 
             Debug.Assert(_defaults.Length <= _code.co_argcount);
             Debug.Assert((__kwdefaults__?.Count ?? 0) <= _code.co_kwonlyargcount);
@@ -122,11 +132,22 @@ namespace IronPython.Runtime {
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
         public PythonDictionary __annotations__ {
             get {
+                if (_annotate is not null && _annotations.Count == 0) {
+                    _annotations = (PythonDictionary)PythonCalls.Call(
+                        _context,
+                        _annotate,
+                        ScriptingRuntimeHelpers.Int32ToObject(1));
+                }
                 return _annotations;
             }
             set {
                 _annotations = value ?? new PythonDictionary();
             }
+        }
+
+        public object __annotate__ {
+            get => _annotate;
+            set => _annotate = value;
         }
 
         [PropertyMethod, SpecialName, System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1822:MarkMembersAsStatic")]
@@ -375,6 +396,8 @@ namespace IronPython.Runtime {
         /// </summary>
         internal int NormalArgumentCount => _code.co_argcount;
 
+        internal int PositionalOnlyArgumentCount => _code.co_posonlyargcount;
+
         /// <summary>
         /// Gets the number of keyword-only parameters.
         /// </summary>
@@ -539,6 +562,7 @@ namespace IronPython.Runtime {
 
                 return Value;
             }
+            set => Value = value;
         }
 
         #region ICodeFormattable Members

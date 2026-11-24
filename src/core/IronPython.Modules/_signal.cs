@@ -399,8 +399,6 @@ namespace IronPython.Modules {
 
 
         [Documentation("""
-        NOT YET IMPLEMENTED
-
         set_wakeup_fd(fd) -> fd
 
         Sets the fd to be written to (with '\0') when a signal
@@ -409,8 +407,15 @@ namespace IronPython.Modules {
 
         The fd must be non-blocking.
         """)]
-        public static void set_wakeup_fd(CodeContext/*!*/ context, uint fd) {
-            throw new NotImplementedException(); //TODO
+        public static int set_wakeup_fd(CodeContext/*!*/ context, int fd, bool warn_on_full_buffer = true) {
+            if (fd < -1) throw PythonOps.ValueError("invalid fd");
+
+            PythonSignalState state = GetPythonSignalState(context);
+            lock (state.SyncRoot) {
+                int previous = state.WakeupFd;
+                state.WakeupFd = fd;
+                return previous;
+            }
         }
 
 
@@ -430,6 +435,8 @@ namespace IronPython.Modules {
         /// This class is used to store the installed signal handlers.
         /// </summary>
         private class PythonSignalState : IDisposable {
+            public int WakeupFd = -1;
+
             // this provides us with access to the Main thread's stack
             public readonly PythonContext SignalPythonContext;
 

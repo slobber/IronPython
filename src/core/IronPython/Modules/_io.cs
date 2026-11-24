@@ -2053,6 +2053,7 @@ namespace IronPython.Modules {
                 }
 
                 encoding ??= context.LanguageContext.PythonOptions.Utf8Mode ? "UTF-8" : PythonLocale.PreferredEncoding;
+                encoding = text_encoding(encoding);
 
                 if (errors == null) {
                     errors = "strict";

@@ -250,7 +250,10 @@ namespace IronPython.Runtime.Exceptions {
             /// tuple code formatted.
             /// </summary>
             public virtual string/*!*/ __repr__(CodeContext/*!*/ context) {
-                return _type.Name + ((ICodeFormattable)args).__repr__(context);
+                var tuple = (PythonTuple)args;
+                return _type.Name + (tuple.Count == 1
+                    ? "(" + PythonOps.Repr(context, tuple[0]) + ")"
+                    : tuple.__repr__(context));
             }
 
             #endregion

@@ -118,6 +118,8 @@ namespace IronPython.Compiler {
             set { _skipFirstLine = value; }
         }
 
+        internal bool FutureAnnotations { get; set; }
+
         internal CompilationMode CompilationMode {
             get {
                 return _compilationMode;

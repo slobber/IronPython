@@ -30,8 +30,9 @@ namespace IronPython.Compiler.Ast {
             Operator = op;
             Left = left;
             Right = right;
-            StartIndex = left.StartIndex;
-            EndIndex = right.EndIndex;
+            int start = Math.Min(left.StartIndex, right.StartIndex);
+            int end = Math.Max(left.EndIndex, right.EndIndex);
+            IndexSpan = new IndexSpan(start, end - start);
         }
 
         public Expression Left { get; }

@@ -38,6 +38,8 @@ using System.IO.Pipes;
 [assembly: PythonModule("nt", typeof(IronPython.Modules.PythonNT))]
 namespace IronPython.Modules {
     public static partial class PythonNT {
+        public static bool _supports_virtual_terminal() => true;
+
         public const string __doc__ = "Provides low-level operating system access for files, the environment, etc...";
 
         public static PythonTuple _path_splitroot([NotNone] string path) {

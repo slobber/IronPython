@@ -529,7 +529,8 @@ namespace IronPython.Compiler.Syntax {
             int column = _column;
             while (_index < _source.Length && !IsNewLine(_source[_index])) AdvanceChar();
             string text = _source.Substring(start, _index - start);
-            if (text.StartsWith("# type:", StringComparison.OrdinalIgnoreCase)) {
+            if (_brackets.Count == 0
+                && text.StartsWith("# type:", StringComparison.OrdinalIgnoreCase)) {
                 AddToken(PythonTokenKind.TypeComment, start, line, column, text);
             }
         }
