@@ -222,7 +222,10 @@ namespace IronPython.Compiler.PublicAst {
                     "__build_type_alias__",
                     Constant(name.Name),
                     thunk,
-                    Constant(typeParameters)));
+                    Constant(typeParameters),
+                    Constant(_className is null
+                        ? name.Name
+                        : _className + "." + name.Name)));
         }
 
         public static CompilerAst.Expression LowerExpression(AstNodes.ExprBase expression) {

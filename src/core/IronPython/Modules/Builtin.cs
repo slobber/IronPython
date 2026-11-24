@@ -50,8 +50,20 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             CodeContext context,
             [NotNone] string name,
             [NotNone] object thunk,
-            [NotNone] PythonTuple typeParameters) {
-            return new TypeAliasObject(name, thunk, typeParameters);
+            [NotNone] PythonTuple typeParameters,
+            string? qualname = null,
+            object? module = null) {
+            string resolvedQualname = qualname ?? name;
+            if (module is null
+                && context.GlobalDict.TryGetValue("__name__", out object? moduleName)) {
+                module = moduleName;
+            }
+            return new TypeAliasObject(
+                name,
+                resolvedQualname,
+                module,
+                thunk,
+                typeParameters);
         }
 
         [Documentation("__import__(name, globals, locals, fromlist, level) -> module\n\nImport a module.")]

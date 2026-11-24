@@ -356,7 +356,9 @@ namespace IronPython.Tests {
                     "pair_args = pair_alias.__args__\n" +
                     "pair_args_text = repr(pair_args)\n" +
                     "pair_origin = pair_alias.__origin__\n" +
-                    "pair_text = str(pair_alias)\n",
+                    "pair_text = str(pair_alias)\n" +
+                    "pair_qualname = Pair.__qualname__\n" +
+                    "pair_module = Pair.__module__\n",
                     scope);
             } finally {
                 Parser.UseGeneratedParser = previousParserMode;
@@ -370,6 +372,39 @@ namespace IronPython.Tests {
                     scope.GetVariable<TypeAliasObject>("pair_origin").__name__,
                     Is.EqualTo("Pair"));
                 Assert.That(scope.GetVariable<string>("pair_text"), Is.EqualTo("Pair[int]"));
+                Assert.That(scope.GetVariable<string>("pair_qualname"), Is.EqualTo("Pair"));
+                Assert.That(scope.GetVariable<object>("pair_module"), Is.Not.Null);
+            });
+        }
+
+        [Test]
+        public void FunctionalTypeAliasExposesCpythonMetadata() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "from typing import TypeAliasType, TypeVar\n" +
+                    "T = TypeVar('T')\n" +
+                    "Alias = TypeAliasType('Alias', list[T], type_params=(T,), " +
+                    "qualname='Owner.Alias')\n" +
+                    "alias_qualname = Alias.__qualname__\n" +
+                    "alias_parameters = Alias.__parameters__\n" +
+                    "alias_args = Alias[int].__args__\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+
+            Assert.Multiple(() => {
+                Assert.That(scope.GetVariable<string>("alias_qualname"), Is.EqualTo("Owner.Alias"));
+                Assert.That(
+                    ((PythonTuple)scope.GetVariable("alias_parameters")).Count,
+                    Is.EqualTo(1));
+                Assert.That(scope.GetVariable<PythonTuple>("alias_args"), Has.Count.EqualTo(1));
             });
         }
 
