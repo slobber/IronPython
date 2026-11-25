@@ -95,23 +95,22 @@ namespace IronPython.Runtime {
             if (_typeParameters.Count == 0) {
                 throw PythonOps.TypeError("Only generic type aliases are subscriptable");
             }
-            bool variadic = _typeParameters.Any(parameter =>
-                DynamicHelpers.GetPythonType(parameter).Name == "TypeVarTuple");
-            if (!variadic && _typeParameters.Count == 1 && arguments.Length != 1) {
-                throw PythonOps.TypeError(
-                    $"Too many arguments for {_name}; actual {arguments.Length}, expected 1");
-            }
-            if (!variadic && _typeParameters.Count > 1 && arguments.Length != _typeParameters.Count) {
-                throw PythonOps.TypeError(
-                    $"Too {(arguments.Length > _typeParameters.Count ? "many" : "few")} arguments " +
-                    $"for {_name}; actual {arguments.Length}, expected {_typeParameters.Count}");
-            }
-            return new GenericAlias(this, arguments);
+            return new GenericAlias(
+                this,
+                GenericAlias.NormalizeArguments(PythonTuple.MakeTuple(arguments)),
+                false);
         }
 
         public object __or__(object? other) => new UnionType(this, other);
 
         public object __ror__(object? other) => new UnionType(other, this);
+
+        public GenericAliasIterator __iter__(CodeContext context) {
+            object typing = Importer.ImportModule(context, null, "typing", false, 0);
+            object unpack = PythonOps.GetBoundAttr(context, typing, "Unpack");
+            object getItem = PythonOps.GetBoundAttr(context, unpack, "__getitem__");
+            return new GenericAliasIterator(PythonCalls.Call(context, getItem, this));
+        }
 
         [SpecialName]
         public object? GetCustomMember(CodeContext context, [NotNone] string name) {
@@ -126,5 +125,23 @@ namespace IronPython.Runtime {
 
         public object __repr__(CodeContext context) =>
             _qualname;
+
+        public object __reduce_ex__(CodeContext context, int protocol) {
+            if (_module is string moduleName
+                && moduleName.Length != 0
+                && !_qualname.Contains('.', System.StringComparison.Ordinal)) {
+                return _qualname;
+            }
+
+            object picklingError = Importer.ImportModule(context, null, "pickle", false, 0);
+            object errorType = PythonOps.GetBoundAttr(context, picklingError, "PicklingError");
+            object error = PythonCalls.Call(
+                context,
+                errorType,
+                $"Can't pickle {this}: it's not found as a module-level global")!;
+            throw PythonOps.MakeException(context, error);
+        }
+
+        public object __reduce__(CodeContext context) => __reduce_ex__(context, 0);
     }
 }

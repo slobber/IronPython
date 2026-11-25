@@ -3155,6 +3155,28 @@ namespace IronPython.Runtime.Operations {
             return function.__dict__[name] = value;
         }
 
+        public static PythonFunction SetFunctionTypeParameters(
+            PythonFunction function,
+            PythonTuple typeParameters) {
+            function.__dict__["__type_params__"] = typeParameters;
+            return function;
+        }
+
+        public static PythonTuple ExpandTypeParameters(PythonTuple typeParameters) {
+            var parameters = new List<object?>();
+            foreach (object parameter in typeParameters) {
+                if (DynamicHelpers.GetPythonType(parameter).Name == "TypeVarTuple") {
+                    var enumerator = PythonOps.GetEnumerator(parameter);
+                    while (enumerator.MoveNext()) {
+                        parameters.Add(enumerator.Current);
+                    }
+                } else {
+                    parameters.Add(parameter);
+                }
+            }
+            return PythonTuple.MakeTuple(parameters.ToArray());
+        }
+
         public static void PythonFunctionDeleteDict() {
             throw PythonOps.TypeError("cannot delete __dict__");
         }
@@ -3909,7 +3931,8 @@ namespace IronPython.Runtime.Operations {
         [NoSideEffects]
         public static object CheckUninitializedFree(object value, string name) {
             if (value == Uninitialized.Instance) {
-                throw new UnboundNameException($"free variable '{name}' referenced before assignment in enclosing scope");
+                throw new UnboundNameException(
+                    $"cannot access free variable '{name}' where it is not associated with a value");
             }
             return value;
         }
@@ -4259,6 +4282,10 @@ namespace IronPython.Runtime.Operations {
         /// </summary>
         public static object? LookupName(CodeContext/*!*/ context, string name) {
             object? value;
+            if (name is "__build_type_alias__" or "__build_type_parameter__"
+                && context.TryLookupBuiltin(name, out value)) {
+                return value;
+            }
             if (context.TryLookupName(name, out value)) {
                 return value;
             } else if (context.TryLookupBuiltin(name, out value)) {
@@ -4268,7 +4295,19 @@ namespace IronPython.Runtime.Operations {
             throw PythonOps.NameError(name);
         }
 
+        public static object GetCompilerIntrinsic(CodeContext context, string name) {
+            if (name is "__build_type_alias__" or "__build_type_parameter__"
+                && context.TryLookupBuiltin(name, out object? value)) {
+                return value!;
+            }
+            throw PythonOps.NameError(name);
+        }
+
         public static object? LookupLocalName(CodeContext context, string name, object? defaultValue) {
+            if (name is "__build_type_alias__" or "__build_type_parameter__"
+                && context.TryLookupBuiltin(name, out object? intrinsic)) {
+                return intrinsic;
+            }
             if (context.TryGetVariable(name, out object? value)) {
                 return value;
             }
@@ -4357,6 +4396,13 @@ namespace IronPython.Runtime.Operations {
         internal static object? GetVariable(CodeContext/*!*/ context, string name, bool isGlobal, bool lightThrow) {
             object? res;
             if (isGlobal) {
+                if (name is "__build_type_alias__" or "__build_type_parameter__") {
+                    var intrinsicBuiltins = context.GetBuiltinsDict();
+                    if (intrinsicBuiltins is not null
+                        && intrinsicBuiltins.TryGetValue(name, out res)) {
+                        return res;
+                    }
+                }
                 if (context.TryGetGlobalVariable(name, out res)) {
                     return res;
                 }

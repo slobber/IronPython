@@ -44,6 +44,8 @@ namespace IronPython.Runtime.Types {
             return 0x1e1a6208;
         }
 
+        public string __reduce__() => "Ellipsis";
+
         #endregion
     }
 
@@ -78,6 +80,8 @@ namespace IronPython.Runtime.Types {
         public int __hash__() {
             return 0x1e1a1e98;
         }
+
+        public string __reduce__() => "NotImplemented";
 
         #endregion
     }

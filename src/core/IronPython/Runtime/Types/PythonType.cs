@@ -685,8 +685,14 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
         public object this[[NotNone] params object[] args] {
             get {
-                if (args.Length == 1 && args[0] is PythonTuple tuple) {
+                if (args.Length == 1 && args[0] is PythonTuple tuple && tuple.Count != 0) {
                     args = tuple.ToArray();
+                }
+                if (this != TypeCache.PythonType && IsSubclassOf(TypeCache.PythonType)) {
+                    throw PythonOps.TypeError("type '{0}' is not subscriptable", Name);
+                }
+                if (!IsSubscriptableGenericType()) {
+                    throw PythonOps.TypeError("type '{0}' is not subscriptable", Name);
                 }
                 if (UnderlyingSystemType == typeof(Array)) {
                     if (args.Length == 1) {
@@ -714,8 +720,36 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                         UnderlyingSystemType.MakeGenericType(
                             PythonTypeOps.ConvertToTypes(typeArguments)));
                 }
-                return new GenericAlias(this, args);
+                return new GenericAlias((object)this, PythonTuple.MakeTuple(args), false);
             }
+        }
+
+        private bool IsSubscriptableGenericType() {
+            if (IsSystemType) {
+                return this != TypeCache.Object
+                    && this != TypeCache.Int32
+                    && this != TypeCache.BigInteger
+                    && this != TypeCache.Boolean
+                    && this != TypeCache.Single
+                    && this != TypeCache.Double
+                    && this != TypeCache.Complex
+                    && this != TypeCache.String
+                    && this != TypeCache.Bytes
+                    && this != TypeCache.ByteArray
+                    && this != TypeCache.Null;
+            }
+            if (_dict is not null && _dict.ContainsKey("__type_params__")) {
+                return true;
+            }
+            if (TryResolveSlot(DefaultContext.Default, "__class_getitem__", out _)) {
+                return true;
+            }
+            if (_bases is not null) {
+                foreach (PythonType baseType in _bases) {
+                    if (baseType.IsSubscriptableGenericType()) return true;
+                }
+            }
+            return false;
         }
 
         public object this[string member] {
@@ -1998,7 +2032,14 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             bases = ValidateBases(bases);
 
             Name = name;
-            QualName = name;
+            bool hasQualName = vars.TryGetValue("__qualname__", out object qualName);
+            QualName = hasQualName
+                && qualName is string qualNameString
+                    ? qualNameString
+                    : name;
+            if (hasQualName && qualName is string) {
+                vars.Remove("__qualname__");
+            }
             _bases = GetBasesAsList(bases).ToArray();
             _pythonContext = context.LanguageContext;
             _resolutionOrder = CalculateMro(this, _bases);

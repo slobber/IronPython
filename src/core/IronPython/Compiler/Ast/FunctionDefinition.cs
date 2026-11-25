@@ -129,6 +129,18 @@ namespace IronPython.Compiler.Ast {
 
         public Expression ReturnAnnotation { get; internal set; }
 
+        public Expression TypeParameters { get; internal set; }
+
+        internal IReadOnlyList<string> TypeParameterNames { get; set; } = Array.Empty<string>();
+
+        internal PythonVariable[] TypeParameterVariables { get; private set; } = Array.Empty<PythonVariable>();
+
+        internal void DefineTypeParameterVariables() {
+            TypeParameterVariables = TypeParameterNames
+                .Select(name => EnsureVariable(name))
+                .ToArray();
+        }
+
 #if FEATURE_NET_ASYNC
         // Under .NET-async, async functions are compiled directly to a Task<object?> via the DLR's AsyncExpression
         // rather than reused through the generator state machine, so IsAsync does not imply generator-shaped emission.
@@ -431,6 +443,14 @@ namespace IronPython.Compiler.Ast {
                 );
             }
 
+            if (TypeParameters is not null) {
+                ret = Ast.Call(
+                    typeof(PythonOps).GetMethod(
+                        nameof(PythonOps.SetFunctionTypeParameters))!,
+                    AstUtils.Convert(ret, typeof(PythonFunction)),
+                    AstUtils.Convert(TypeParameters, typeof(PythonTuple)));
+            }
+
             return AddDecorators(ret, Decorators);
 
             void AddAnnotation(string name, Expression annotation) {
@@ -698,6 +718,20 @@ namespace IronPython.Compiler.Ast {
             // Since tuples unpack into locals, this must be done after locals have been created.
             InitializeParameters(init, needsWrapperMethod, parameters);
 
+            for (int i = 0; i < TypeParameterVariables.Length; i++) {
+                init.Add(AssignValue(
+                    GetVariableExpression(TypeParameterVariables[i]),
+                    Ast.Property(
+                        Ast.Property(
+                            _functionParam,
+                            typeof(PythonFunction).GetProperty(
+                                nameof(PythonFunction.__type_params__))!),
+                        typeof(PythonTuple).GetProperty(
+                            "Item",
+                            new[] { typeof(int) })!,
+                        Ast.Constant(i))));
+            }
+
             List<MSAst.Expression> statements = new List<MSAst.Expression>();
 
             // Add beginning sequence point: the location of the 'call' trace event. Async functions included, since this is their body too;
@@ -961,6 +995,7 @@ namespace IronPython.Compiler.Ast {
                     }
                 }
                 ReturnAnnotation?.Walk(walker);
+                TypeParameters?.Walk(walker);
                 Body?.Walk(walker);
             }
             walker.PostWalk(this);

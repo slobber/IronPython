@@ -13,6 +13,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 
 using IronPython.Runtime;
+using IronPython.Runtime.Operations;
 
 using Microsoft.Scripting;
 using Microsoft.Scripting.Utils;
@@ -49,6 +50,8 @@ namespace IronPython.Compiler.Ast {
 
         public override string Name => _name;
 
+        public string QualName { get; set; } = string.Empty;
+
         public IReadOnlyList<Expression> Bases => _bases;
 
         public IReadOnlyList<Keyword> Keywords => _keywords;
@@ -56,6 +59,20 @@ namespace IronPython.Compiler.Ast {
         public Statement Body { get; set; }
 
         public IList<Expression>? Decorators { get; internal set; }
+
+        public Expression? TypeParameters { get; internal set; }
+
+        internal IReadOnlyList<string> TypeParameterNames { get; set; } = Array.Empty<string>();
+
+        internal PythonVariable[] TypeParameterVariables { get; private set; } = Array.Empty<PythonVariable>();
+
+        internal void DefineTypeParameterVariables() {
+            TypeParameterVariables = TypeParameterNames
+                .Select(name => TryGetVariable(name, out PythonVariable? variable)
+                    ? variable!
+                    : CreateVariable(name, VariableKind.Local))
+                .ToArray();
+        }
 
         /// <summary>
         /// Variable corresponding to the class name, set during name binding
@@ -93,8 +110,8 @@ namespace IronPython.Compiler.Ast {
         }
 
         internal override bool ExposesLocalVariable(PythonVariable variable) {
-            Debug.Assert(variable.Name == "__class__");
-            return true;
+            return variable.Name == "__class__"
+                || TypeParameterNames.Contains(variable.Name, StringComparer.Ordinal);
         }
 
 
@@ -108,6 +125,16 @@ namespace IronPython.Compiler.Ast {
                     scope.AddFreeVariable(variable, false);
                 }
 
+                AddCellVariable(variable);
+                return true;
+            }
+            if (TypeParameterNames.Contains(reference.Name, StringComparer.Ordinal)
+                && TryGetVariable(reference.Name, out variable)) {
+                variable.AccessedInNestedScope = true;
+                from.AddFreeVariable(variable, true);
+                for (ScopeStatement? scope = from.Parent; scope != this; scope = scope.Parent) {
+                    scope.AddFreeVariable(variable, false);
+                }
                 AddCellVariable(variable);
                 return true;
             }
@@ -289,6 +316,25 @@ namespace IronPython.Compiler.Ast {
 
             init.Add(Ast.Assign(LocalCodeContextVariable, createLocal));
 
+            MSAst.ParameterExpression? typeParameterValues = null;
+            if (TypeParameters is not null) {
+                typeParameterValues = Ast.Variable(typeof(PythonTuple), "$typeParameters");
+                locals.Add(typeParameterValues);
+                init.Add(Ast.Assign(
+                    typeParameterValues,
+                    AstUtils.Convert(TypeParameters, typeof(PythonTuple))));
+                for (int i = 0; i < TypeParameterVariables.Length; i++) {
+                    MSAst.Expression value = Ast.Property(
+                        typeParameterValues,
+                        typeof(PythonTuple).GetProperty(
+                            "Item",
+                            new[] { typeof(int) })!,
+                        Ast.Constant(i));
+                    init.Add(SetLocalName(TypeParameterNames[i], value));
+                    init.Add(AssignValue(GetVariableExpression(TypeParameterVariables[i]), value));
+                }
+            }
+
             // __module__ = __name__
             MSAst.Expression modStmt = SetLocalName("__module__", AstUtils.Convert(GetVariableExpression(ModuleNameVariable!), typeof(object)));
 
@@ -322,8 +368,19 @@ namespace IronPython.Compiler.Ast {
                     Ast.Block(init),
                     modStmt,
                     // __qualname__
+                    SetLocalName("__qualname__", Ast.Constant(QualName, typeof(string))),
                     docStmt is not null ? docStmt : AstUtils.Empty(),
                     bodyStmt,
+                    typeParameterValues is null
+                        ? AstUtils.Empty()
+                        : Ast.Block(
+                            SetLocalName("__type_params__", typeParameterValues),
+                            SetLocalName(
+                                "__parameters__",
+                                Ast.Call(
+                                    typeof(PythonOps).GetMethod(
+                                        nameof(PythonOps.ExpandTypeParameters))!,
+                                    typeParameterValues))),
                     assignClassCellStmt is not null ? assignClassCellStmt : AstUtils.Empty(),
                     LocalContext
                 ),
@@ -372,6 +429,7 @@ namespace IronPython.Compiler.Ast {
                 foreach (var b in _keywords) {
                     b.Walk(walker);
                 }
+                TypeParameters?.Walk(walker);
                 Body.Walk(walker);
             }
             walker.PostWalk(this);

@@ -18,6 +18,8 @@ namespace IronPython.Compiler.PublicAst {
         [ThreadStatic]
         private static string? _className;
         [ThreadStatic]
+        private static string? _classQualname;
+        [ThreadStatic]
         private static string? _functionQualname;
 
         public static CompilerAst.PythonAst LowerModule(
@@ -1305,6 +1307,7 @@ namespace IronPython.Compiler.PublicAst {
                 function.Body,
                 function.DecoratorList,
                 function.Returns,
+                function.TypeParams,
                 false,
                 function);
         }
@@ -1317,6 +1320,7 @@ namespace IronPython.Compiler.PublicAst {
                 function.Body,
                 function.DecoratorList,
                 function.Returns,
+                function.TypeParams,
                 true,
                 function);
         }
@@ -1327,6 +1331,7 @@ namespace IronPython.Compiler.PublicAst {
             System.Collections.Generic.IReadOnlyList<AstNodes.Stmt> body,
             System.Collections.Generic.IReadOnlyList<AstNodes.ExprBase> decorators,
             AstNodes.ExprBase? returns,
+            System.Collections.Generic.IReadOnlyList<AstNodes.TypeParamBase> typeParameters,
             bool isAsync,
             AstNodes.PythonAstNode source) {
             string loweredName = MangleIdentifier(name);
@@ -1334,7 +1339,7 @@ namespace IronPython.Compiler.PublicAst {
             _functionQualname = _functionQualname is null
                 ? _className is null
                     ? name
-                    : _className + "." + name
+                    : (_classQualname ?? _className) + "." + name
                 : _functionQualname + ".<locals>." + name;
             CompilerAst.SuiteStatement loweredBody;
             try {
@@ -1366,6 +1371,14 @@ namespace IronPython.Compiler.PublicAst {
             function.ReturnAnnotation = returns is null
                 ? null!
                 : LowerExpression(returns);
+            if (typeParameters.Count != 0) {
+                function.TypeParameterNames = typeParameters
+                    .Select(GetTypeParameterName)
+                    .ToArray();
+                function.TypeParameters = new CompilerAst.TupleExpression(
+                    false,
+                    typeParameters.Select(LowerTypeParameter).ToArray());
+            }
             return function;
         }
 
@@ -1442,12 +1455,19 @@ namespace IronPython.Compiler.PublicAst {
             CompilerAst.Expression[] decorators = @class.DecoratorList.Select(LowerExpression).ToArray();
 
             string? previousClass = _className;
+            string? previousClassQualname = _classQualname;
             _className = @class.Name;
+            _classQualname = _functionQualname is not null
+                ? _functionQualname + ".<locals>." + @class.Name
+                : previousClassQualname is null
+                    ? @class.Name
+                    : previousClassQualname + "." + @class.Name;
             CompilerAst.SuiteStatement body;
             try {
                 body = LowerSuite(@class.Body);
             } finally {
                 _className = previousClass;
+                _classQualname = previousClassQualname;
             }
 
             var definition = new CompilerAst.ClassDefinition(
@@ -1455,9 +1475,22 @@ namespace IronPython.Compiler.PublicAst {
                 bases,
                 keywords,
                 body) {
-                HeaderIndex = GetStartOffset(@class)
+                HeaderIndex = GetStartOffset(@class),
+                QualName = _functionQualname is not null
+                    ? _functionQualname + ".<locals>." + @class.Name
+                    : previousClassQualname is null
+                        ? @class.Name
+                        : previousClassQualname + "." + @class.Name
             };
             definition.Decorators = decorators;
+            if (@class.TypeParams.Count != 0) {
+                definition.TypeParameterNames = @class.TypeParams
+                    .Select(GetTypeParameterName)
+                    .ToArray();
+                definition.TypeParameters = new CompilerAst.TupleExpression(
+                    false,
+                    @class.TypeParams.Select(LowerTypeParameter).ToArray());
+            }
             return definition;
         }
 

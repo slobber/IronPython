@@ -39,6 +39,9 @@ namespace IronPython.Runtime.Operations {
         }
 
         internal static string GetModuleName(CodeContext/*!*/ context, Type type) {
+            if (type == typeof(TypeAliasObject)) return "typing";
+            if (type == typeof(GenericAlias) || type == typeof(UnionType)) return "types";
+
             Type curType = type;
             while (curType != null) {
                 string moduleName;

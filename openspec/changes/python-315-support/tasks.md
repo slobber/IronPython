@@ -199,13 +199,13 @@
 - [ ] 12.6 Implement `annotationlib` and `__annotate__`.
 - [ ] 12.7 Implement `inspect.get_annotations`, `inspect.signature`, and
   `typing.get_type_hints` behavior.
-- [ ] 12.8 Implement PEP 585 built-in generics and generic aliases.
-- [ ] 12.9 Implement PEP 604 union types.
+- [x] 12.8 Implement PEP 585 built-in generics and generic aliases.
+- [x] 12.9 Implement PEP 604 union types.
 - [ ] 12.10 Implement `Protocol`, `Literal`, `Final`, `TypedDict`, and related
   PEP 544/586/589/591 runtime behavior.
 - [ ] 12.11 Implement `ParamSpec`, `Concatenate`, and `TypeAlias`.
 - [ ] 12.12 Implement `TypeVarTuple`, `Unpack`, and `Self`.
-- [ ] 12.13 Implement PEP 695 type parameters and `type` statements.
+- [x] 12.13 Implement PEP 695 type parameters and `type` statements.
 - [ ] 12.14 Implement type-parameter defaults and annotation scopes.
 - [ ] 12.15 Implement `ReadOnly`, `TypeIs`, `NoDefault`, and `override`.
 - [ ] 12.16 Implement PEP 728 typed extra items.

@@ -230,6 +230,8 @@ namespace IronPython.Compiler.Ast {
                 }
             }
 
+            node.TypeParameters?.Walk(this);
+
             PushScope(node);
 
             node.ModuleNameVariable = _globalScope.EnsureGlobalVariable("__name__");
@@ -239,6 +241,8 @@ namespace IronPython.Compiler.Ast {
                 node.DocVariable = DefineName("__doc__");
             }
             node.ModVariable = DefineName("__module__");
+
+            node.DefineTypeParameterVariables();
 
             // Walk the body
             node.Body.Walk(this);
@@ -746,6 +750,7 @@ namespace IronPython.Compiler.Ast {
                 }
             }
 
+            node.TypeParameters?.Walk(this);
             node.ReturnAnnotation?.Walk(this);
 
             PushScope(node);
@@ -754,6 +759,8 @@ namespace IronPython.Compiler.Ast {
                 p.Parent = _currentScope;
                 p.PythonVariable = DefineParameter(p.Name);
             }
+
+            node.DefineTypeParameterVariables();
 
             node.Body.Walk(this);
             return false;

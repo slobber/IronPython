@@ -220,6 +220,17 @@ namespace IronPython.Runtime {
             }
         }
 
+        public PythonTuple __type_params__ {
+            get {
+                if (_dict is not null
+                    && _dict.TryGetValue("__type_params__", out object value)
+                    && value is PythonTuple typeParameters) {
+                    return typeParameters;
+                }
+                return PythonTuple.MakeTuple();
+            }
+        }
+
         public object __doc__ {
             get { return _doc; }
             set { _doc = value; }
