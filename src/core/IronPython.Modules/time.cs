@@ -429,6 +429,13 @@ namespace IronPython.Modules {
                         case 'A': newFormat.Add(new FormatInfo("dddd")); break;
                         case 'b': newFormat.Add(new FormatInfo("MMM")); break;
                         case 'B': newFormat.Add(new FormatInfo("MMMM")); break;
+                        case 'O':
+                            if (i + 1 < format.Length && (format[i + 1] == 'b' || format[i + 1] == 'B')) {
+                                newFormat.Add(new FormatInfo(format[++i] == 'b' ? "MMM" : "MMMM"));
+                            } else {
+                                throw PythonOps.ValueError("Invalid format string");
+                            }
+                            break;
                         case 'c':
                             AddDate(newFormat);
                             newFormat.Add(new FormatInfo(FormatInfoType.UserText, " "));

@@ -29,6 +29,8 @@ namespace IronPython.Modules {
         public const int QUOTE_ALL = 1;
         public const int QUOTE_NONNUMERIC = 2;
         public const int QUOTE_NONE = 3;
+        public const int QUOTE_STRINGS = 4;
+        public const int QUOTE_NOTNULL = 5;
 
         private static readonly object _fieldSizeLimitKey = new object();
         private static readonly object _dialectRegistryKey = new object();
@@ -491,7 +493,7 @@ The Dialect type records CSV parsing and generation options.")]
                 _strict = SetBool("strict", strict, foundParams["strict"], false);
 
                 // validate options
-                if (_quoting < QUOTE_MINIMAL || _quoting > QUOTE_NONE)
+                if (_quoting < QUOTE_MINIMAL || _quoting > QUOTE_NOTNULL)
                     throw PythonOps.TypeError("bad \"quoting\" value");
                 if (string.IsNullOrEmpty(_delimiter))
                     throw PythonOps.TypeError("\"delimiter\" must be a 1-character string");
@@ -917,6 +919,8 @@ elements will be converted to string.")]
                         QUOTE_NONNUMERIC => !(PythonOps.CheckingConvertToFloat(field) ||
                                                 PythonOps.CheckingConvertToInt(field)),
                         QUOTE_ALL => true,
+                        QUOTE_STRINGS => field is string,
+                        QUOTE_NOTNULL => field is not null,
                         _ => false,
                     };
 
