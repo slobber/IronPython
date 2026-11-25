@@ -238,6 +238,9 @@ namespace IronPython.Compiler.PublicAst {
                 false,
                 typeAlias.TypeParams.Select(LowerTypeParameter).ToArray());
             SetLocation(typeParameters, typeAlias);
+            bool useSource = (_inClassBody && typeAlias.TypeParams.Count == 0)
+                || (typeAlias.TypeParams.Count != 0
+                    && ContainsComprehension(typeAlias.Value));
             return new CompilerAst.AssignmentStatement(
                 new CompilerAst.Expression[] { name },
                 Call(
@@ -252,7 +255,7 @@ namespace IronPython.Compiler.PublicAst {
                             : (_classQualname ?? _className) + "." + name.Name),
                     Constant(null),
                     Constant(GetSourceText(typeAlias.Value)),
-                    Constant(_inClassBody && typeAlias.TypeParams.Count == 0)));
+                    Constant(useSource)));
         }
 
         private static CompilerAst.Expression LowerTypeParameter(
@@ -1559,6 +1562,14 @@ namespace IronPython.Compiler.PublicAst {
             string[] typeParameterNames = Array.Empty<string>();
             if (@class.TypeParams.Count != 0) {
                 ValidateTypeParameters(@class.TypeParams);
+                if (@class.Bases.Any(baseExpression => {
+                        string source = GetSourceText(baseExpression).TrimStart();
+                        return source.StartsWith("Generic[", StringComparison.Ordinal)
+                            || source.StartsWith("typing.Generic[", StringComparison.Ordinal);
+                    })) {
+                    throw PythonOps.TypeError(
+                        "Cannot inherit from Generic[...] multiple times.");
+                }
                 _className = @class.Name;
                 typeParameterNames = @class.TypeParams
                     .Select(GetTypeParameterName)
@@ -1689,6 +1700,24 @@ namespace IronPython.Compiler.PublicAst {
             var finder = new YieldFinder();
             foreach (AstNodes.Stmt statement in body) finder.Visit(statement);
             return finder.Found;
+        }
+
+        private static bool ContainsComprehension(AstNodes.ExprBase expression) {
+            var finder = new ComprehensionFinder();
+            finder.Visit(expression);
+            return finder.Found;
+        }
+
+        private sealed class ComprehensionFinder : AstNodes.PythonAstWalker {
+            public bool Found { get; private set; }
+
+            protected override void VisitNode(AstNodes.PythonAstNode node) {
+                if (node.NodeKind is "ListComp" or "SetComp" or "DictComp" or "GeneratorExp") {
+                    Found = true;
+                    return;
+                }
+                base.VisitNode(node);
+            }
         }
 
         private static bool ContainsYield(AstNodes.ExprBase expression) {
