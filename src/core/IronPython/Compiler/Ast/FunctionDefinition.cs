@@ -133,6 +133,8 @@ namespace IronPython.Compiler.Ast {
 
         public Expression TypeParameters { get; internal set; }
 
+        public Expression EnclosingTypeParameters { get; internal set; }
+
         internal IReadOnlyList<string> TypeParameterNames { get; set; } = Array.Empty<string>();
 
         internal PythonVariable[] TypeParameterVariables { get; private set; } = Array.Empty<PythonVariable>();
@@ -481,6 +483,13 @@ namespace IronPython.Compiler.Ast {
                         typeof(string),
                         TypeParameterNames.Select(name =>
                             Ast.Constant(name, typeof(string)))));
+            }
+            if (EnclosingTypeParameters is not null) {
+                ret = Ast.Call(
+                    typeof(PythonOps).GetMethod(
+                        nameof(PythonOps.SetFunctionAnnotationEnclosingTypeParameters))!,
+                    AstUtils.Convert(ret, typeof(PythonFunction)),
+                    AstUtils.Convert(EnclosingTypeParameters, typeof(PythonTuple)));
             }
             ret = Ast.Call(
                 typeof(PythonOps).GetMethod(nameof(PythonOps.SetFunctionQualName))!,

@@ -28,6 +28,7 @@ namespace IronPython.Runtime {
         private readonly CodeContext? _context;
         private string[] _typeParameterNames = Array.Empty<string>();
         private PythonTuple _typeParameters = PythonTuple.EMPTY;
+        private PythonTuple _enclosingTypeParameters = PythonTuple.EMPTY;
 
         public AnnotationFunction(
             [NotNone] string[] names,
@@ -65,6 +66,10 @@ namespace IronPython.Runtime {
         internal void SetTypeParameters(string[] names, PythonTuple typeParameters) {
             _typeParameterNames = names;
             _typeParameters = typeParameters;
+        }
+
+        internal void SetEnclosingTypeParameters(PythonTuple typeParameters) {
+            _enclosingTypeParameters = typeParameters;
         }
 
         [SpecialName]
@@ -127,8 +132,8 @@ namespace IronPython.Runtime {
                                 : Builtin.eval(
                                     _context!,
                                     _sources[i],
-                                    _context!.GlobalDict,
-                                    locals ?? _context.Dict);
+                                    BuildEvalGlobals(),
+                                    locals ?? _context!.Dict);
                         value = LightExceptions.CheckAndThrow(value);
                         annotations.Add(_names[i], value);
                     }
@@ -141,6 +146,29 @@ namespace IronPython.Runtime {
                 default:
                     throw PythonOps.NotImplementedError("unsupported annotation format: {0}", annotationFormat);
             }
+        }
+
+        private PythonDictionary BuildEvalGlobals() {
+            if (_context is null || _enclosingTypeParameters.Count == 0) {
+                return _context!.GlobalDict;
+            }
+            var globals = new PythonDictionary();
+            foreach (object key in _context.GlobalDict.Keys) {
+                if (_context.GlobalDict.TryGetValueNoMissing(key, out object? value)) {
+                    globals[key] = value;
+                }
+            }
+            foreach (object parameter in _enclosingTypeParameters) {
+                if (PythonOps.TryGetBoundAttr(
+                        _context,
+                        parameter,
+                        "__name__",
+                        out object? name)
+                    && name is string parameterName) {
+                    globals[parameterName] = parameter;
+                }
+            }
+            return globals;
         }
 
         private bool TryGetTypeParameter(string source, out object? parameter) {

@@ -274,11 +274,13 @@ namespace IronPython.Compiler.PublicAst {
                 typeAlias.TypeParams.Select(LowerTypeParameter).ToArray());
             SetLocation(typeParameters, typeAlias);
             bool containsLambda = ContainsLambda(typeAlias.Value);
+            bool containsComprehension = ContainsComprehension(typeAlias.Value);
+            bool containsNestedScope = containsLambda || containsComprehension;
             bool useSource = (_inClassBody && typeAlias.TypeParams.Count == 0)
-                || ContainsComprehension(typeAlias.Value)
+                || containsComprehension
                 || containsLambda;
             CompilerAst.Expression enclosingTypeParameters =
-                containsLambda && _classDefinition?.TypeParameters is not null
+                containsNestedScope && _classDefinition?.TypeParameters is not null
                     ? _classDefinition.TypeParameters
                     : new CompilerAst.TupleExpression(
                         false,
@@ -299,7 +301,7 @@ namespace IronPython.Compiler.PublicAst {
                     Constant(GetSourceText(typeAlias.Value)),
                     Constant(useSource),
                     enclosingTypeParameters,
-                    Constant(!containsLambda)));
+                    Constant(!containsNestedScope)));
         }
 
         private static CompilerAst.Expression LowerTypeParameter(
@@ -1539,6 +1541,9 @@ namespace IronPython.Compiler.PublicAst {
                 function.TypeParameters = new CompilerAst.TupleExpression(
                     false,
                     typeParameters.Select(LowerTypeParameter).ToArray());
+            }
+            if (_classDefinition?.TypeParameters is CompilerAst.NameExpression) {
+                function.EnclosingTypeParameters = _classDefinition.TypeParameters;
             }
             return function;
         }

@@ -3232,6 +3232,15 @@ namespace IronPython.Runtime.Operations {
             return function;
         }
 
+        public static PythonFunction SetFunctionAnnotationEnclosingTypeParameters(
+            PythonFunction function,
+            PythonTuple typeParameters) {
+            if (function.__annotate__ is AnnotationFunction annotate) {
+                annotate.SetEnclosingTypeParameters(typeParameters);
+            }
+            return function;
+        }
+
         public static PythonTuple ExpandTypeParameters(PythonTuple typeParameters) {
             var parameters = new List<object?>();
             foreach (object parameter in typeParameters) {
