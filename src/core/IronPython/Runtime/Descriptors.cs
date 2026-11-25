@@ -4,6 +4,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Dynamic;
+using System.Linq.Expressions;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
@@ -11,21 +13,118 @@ using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
 using Microsoft.Scripting.Utils;
 
+using IronPython.Runtime.Binding;
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
 namespace IronPython.Runtime {
-    [PythonType]
-    public class staticmethod : PythonTypeSlot {
-        internal object _func;
+#nullable enable
+#pragma warning disable IPY01
+    public abstract class MethodDescriptorBase : PythonTypeSlot, IDynamicMetaObjectProvider, IPythonExpandable {
+        private readonly PythonDictionary _customAttributes = new();
 
-        public staticmethod(CodeContext/*!*/ context, object func) {
-            __init__(context, func);
+        protected MethodDescriptorBase(CodeContext context, object func) {
+            Context = context;
+            _func = func;
+            InitializeMetadata();
+        }
+
+        internal object _func;
+        protected CodeContext Context { get; }
+
+        private void InitializeMetadata() {
+            CopyFunctionAttribute("__module__");
+            CopyFunctionAttribute("__name__");
+            CopyFunctionAttribute("__qualname__");
+            CopyFunctionAttribute("__doc__");
+        }
+
+        private void CopyFunctionAttribute(string name) {
+            if (PythonOps.TryGetBoundAttr(_func, name, out object? value)) {
+                EnsureCustomAttributes()[name] = value;
+            }
+        }
+
+        private object? GetFunctionAttribute(string name, bool cache) {
+            if (_customAttributes.TryGetValue(name, out object? value)) {
+                return value;
+            }
+
+            if (!PythonOps.TryGetBoundAttr(_func, name, out value)) {
+                throw PythonOps.AttributeError("'{0}' object has no attribute '{1}'",
+                    PythonOps.GetPythonTypeName(this), name);
+            }
+
+            if (cache) {
+                _customAttributes[name] = value;
+            }
+            return value;
+        }
+
+        private void SetFunctionAttribute(string name, object? value) {
+            EnsureCustomAttributes()[name] = value;
+        }
+
+        public object? __wrapped__ => _func;
+
+        public object? __module__ {
+            get => GetFunctionAttribute("__module__", cache: false);
+            set => SetFunctionAttribute("__module__", value);
+        }
+
+        public object? __name__ {
+            get => GetFunctionAttribute("__name__", cache: false);
+            set => SetFunctionAttribute("__name__", value);
+        }
+
+        public object? __qualname__ {
+            get => GetFunctionAttribute("__qualname__", cache: false);
+            set => SetFunctionAttribute("__qualname__", value);
+        }
+
+        public object? __doc__ {
+            get => GetFunctionAttribute("__doc__", cache: false);
+            set => SetFunctionAttribute("__doc__", value);
+        }
+
+        public object? __annotations__ {
+            get => GetFunctionAttribute("__annotations__", cache: true);
+            set => SetFunctionAttribute("__annotations__", value);
+        }
+
+        public object? __annotate__ {
+            get => GetFunctionAttribute("__annotate__", cache: true);
+            set => SetFunctionAttribute("__annotate__", value);
+        }
+
+        public PythonDictionary __dict__ => EnsureCustomAttributes();
+
+        private PythonDictionary EnsureCustomAttributes() {
+            return _customAttributes;
+        }
+
+        IDictionary<object, object> IPythonExpandable.EnsureCustomAttributes() => EnsureCustomAttributes();
+
+        IDictionary<object, object> IPythonExpandable.CustomAttributes => _customAttributes;
+
+        CodeContext IPythonExpandable.Context => Context;
+
+        DynamicMetaObject IDynamicMetaObjectProvider.GetMetaObject(Expression parameter) {
+            return GetMetaObjectCore(parameter);
+        }
+
+        protected abstract DynamicMetaObject GetMetaObjectCore(Expression parameter);
+    }
+
+    [PythonType]
+    public class staticmethod : MethodDescriptorBase {
+
+        public staticmethod(CodeContext/*!*/ context, object func) : base(context, func) {
         }
 
         public void __init__(CodeContext/*!*/ context, object func) {
             _func = func;
-        }            
+        }
 
         internal override bool TryGetValue(CodeContext context, object instance, PythonType owner, out object value) {
             value = __get__(instance, owner);
@@ -46,7 +145,7 @@ namespace IronPython.Runtime {
 
         public bool __isabstractmethod__ {
             get {
-                object isabstract;
+                object? isabstract;
                 if (PythonOps.TryGetBoundAttr(_func, "__isabstractmethod__", out isabstract)) {
                     return PythonOps.IsTrue(isabstract);
                 }
@@ -56,18 +155,24 @@ namespace IronPython.Runtime {
 
         #region IDescriptor Members
 
-        public object __get__(object instance) { return __get__(instance, null); }
+        public object __get__(object? instance) { return __get__(instance, null); }
 
-        public object __get__(object instance, object owner) {
+        public object __get__(object? instance, object? owner) {
             return _func;
+        }
+
+        protected override DynamicMetaObject GetMetaObjectCore(Expression parameter) {
+            return new MetaExpandable<staticmethod>(parameter, this);
         }
 
         #endregion
     }
 
     [PythonType]
-    public class classmethod : PythonTypeSlot {
-        internal object _func;
+    public class classmethod : MethodDescriptorBase {
+
+        public classmethod(CodeContext/*!*/ context, object func) : base(context, func) {
+        }
 
         public void __init__(CodeContext/*!*/ context, object func) {
             _func = func;
@@ -84,7 +189,7 @@ namespace IronPython.Runtime {
 
         public bool __isabstractmethod__ {
             get {
-                if (PythonOps.TryGetBoundAttr(_func, "__isabstractmethod__", out object isabstract)) {
+                if (PythonOps.TryGetBoundAttr(_func, "__isabstractmethod__", out object? isabstract)) {
                     return PythonOps.IsTrue(isabstract);
                 }
                 return false;
@@ -93,7 +198,7 @@ namespace IronPython.Runtime {
 
         #region IDescriptor Members
 
-        public object __get__(object instance, object owner = null) {
+        public object __get__(object? instance, object? owner = null) {
             if (owner == null) {
                 if (instance == null) throw PythonOps.TypeError("__get__(None, None) is invalid");
 
@@ -107,8 +212,14 @@ namespace IronPython.Runtime {
             return new Method(_func, owner);
         }
 
+        protected override DynamicMetaObject GetMetaObjectCore(Expression parameter) {
+            return new MetaExpandable<classmethod>(parameter, this);
+        }
+
         #endregion
     }
+#pragma warning restore IPY01
+#nullable restore
 
     [PythonType("property")]
     public class PythonProperty : PythonTypeDataSlot {
