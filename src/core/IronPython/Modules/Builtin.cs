@@ -66,6 +66,45 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 typeParameters);
         }
 
+        [Documentation("")]
+        public static object __build_type_parameter__(
+            CodeContext context,
+            [NotNone] string kind,
+            [NotNone] string name) {
+            return BuildTypeParameter(context, kind, name, false, null);
+        }
+
+        [Documentation("")]
+        public static object __build_type_parameter__(
+            CodeContext context,
+            [NotNone] string kind,
+            [NotNone] string name,
+            [NotNone] object defaultValue) {
+            return BuildTypeParameter(context, kind, name, true, defaultValue);
+        }
+
+        private static object BuildTypeParameter(
+            CodeContext context,
+            string kind,
+            string name,
+            bool hasDefault,
+            object? defaultValue) {
+            object typeParameters = Importer.ImportModule(
+                context,
+                null,
+                "_typing",
+                false,
+                0);
+            object constructor = PythonOps.GetBoundAttr(context, typeParameters, kind);
+            return hasDefault
+                ? PythonCalls.CallWithKeywordArgs(
+                    context,
+                    constructor,
+                    new object?[] { name, defaultValue },
+                    new[] { "default" })!
+                : PythonCalls.Call(context, constructor, name)!;
+        }
+
         /// <summary>
         /// Resolves the attributes consumed by a class pattern. This mirrors the
         /// CPython MATCH_CLASS operation, including its lazy failure behavior for

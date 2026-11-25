@@ -285,7 +285,7 @@
 - [ ] 16.9 Implement package startup configuration files.
 - [ ] 16.10 Implement `concurrent.interpreters` using isolated IronPython
   runtimes.
-- [ ] 16.11 Implement UTF-8 default encoding behavior.
+- [x] 16.11 Implement UTF-8 default encoding behavior.
 - [ ] 16.12 Implement 3.15 built-in and numeric behavior changes.
 - [ ] 16.13 Implement precise frame, traceback, and locals semantics required
   by public APIs.

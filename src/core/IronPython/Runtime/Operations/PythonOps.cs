@@ -2386,7 +2386,7 @@ namespace IronPython.Runtime.Operations {
 
                 // we special case several types to avoid one-off code gen of dynamic sites
                 if (newmod is PythonModule scope) {
-                    context.SetVariable(name, scope.__dict__[name]);
+                    context.SetVariable(name, Importer.ImportFrom(context, scope, name));
                 } else if (newmod is NamespaceTracker nt) {
                     object? value = NamespaceTrackerOps.GetCustomMember(context, nt, name);
                     if (value != OperationFailed.Value) {

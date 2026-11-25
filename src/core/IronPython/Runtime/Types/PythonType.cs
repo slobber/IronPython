@@ -685,6 +685,9 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
         public object this[[NotNone] params object[] args] {
             get {
+                if (args.Length == 1 && args[0] is PythonTuple tuple) {
+                    args = tuple.ToArray();
+                }
                 if (UnderlyingSystemType == typeof(Array)) {
                     if (args.Length == 1) {
                         Type elementType = args[0] is PythonType pythonType

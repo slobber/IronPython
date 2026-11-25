@@ -16,7 +16,7 @@ namespace IronPython.Runtime {
     public sealed class TypeAliasObject {
         private readonly string _name;
         private readonly string _qualname;
-        private readonly object? _module;
+        private object? _module;
         private readonly object _thunk;
         private readonly PythonTuple _typeParameters;
         private object? _value;
@@ -38,7 +38,21 @@ namespace IronPython.Runtime {
 
         public string __qualname__ => _qualname;
 
-        public object? __module__ => _module;
+        public object? __module__ {
+            get => _module;
+            set => _module = value;
+        }
+
+        public void __setattr__(
+            CodeContext context,
+            [NotNone] string name,
+            [NotNone] object value) {
+            if (name == "__module__") {
+                _module = value;
+                return;
+            }
+            throw PythonOps.TypeError("readonly attribute '{0}'", name);
+        }
 
         public PythonTuple __type_params__ => _typeParameters;
 
@@ -70,12 +84,15 @@ namespace IronPython.Runtime {
         [SpecialName]
         public object? GetCustomMember(CodeContext context, [NotNone] string name) {
             if (name == "__value__") {
-                return _value ??= PythonCalls.Call(context, _thunk);
+                return _value ??= PythonCalls.Call(
+                    context,
+                    _thunk,
+                    _typeParameters.ToArray());
             }
             return OperationFailed.Value;
         }
 
         public object __repr__(CodeContext context) =>
-            _name;
+            _qualname;
     }
 }

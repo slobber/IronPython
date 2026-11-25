@@ -17,6 +17,8 @@ namespace IronPython.Compiler.PublicAst {
         private static SourceLocationMap? _sourceLocations;
         [ThreadStatic]
         private static string? _className;
+        [ThreadStatic]
+        private static string? _functionQualname;
 
         public static CompilerAst.PythonAst LowerModule(
             AstNodes.Module module,
@@ -202,32 +204,69 @@ namespace IronPython.Compiler.PublicAst {
             if (LowerExpression(typeAlias.Name) is not CompilerAst.NameExpression name) {
                 throw new InvalidOperationException("TypeAlias name must be a simple name.");
             }
+            string[] parameterNames = typeAlias.TypeParams
+                .Select(GetTypeParameterName)
+                .ToArray();
+            if (parameterNames.Distinct(StringComparer.Ordinal).Count() != parameterNames.Length) {
+                throw PythonOps.SyntaxError("duplicate type parameter");
+            }
             var thunk = new CompilerAst.LambdaExpression(
                 new CompilerAst.FunctionDefinition(
                     null,
-                    Array.Empty<CompilerAst.Parameter>(),
+                    parameterNames.Select(parameterName => new CompilerAst.Parameter(
+                        parameterName,
+                        CompilerAst.ParameterKind.Normal)).ToArray(),
                     new CompilerAst.ReturnStatement(LowerExpression(typeAlias.Value))) {
                     GeneratorStop = true
                 });
-            var typeParameters = PythonTuple.MakeTuple(
-                typeAlias.TypeParams.Select(typeParameter => {
-                    object? value = typeParameter.GetFields()
-                        .FirstOrDefault(field => field.Name is "name" or "Name")
-                        .Value;
-                    return (object?)(value is string text
-                        ? text
-                        : value?.ToString() ?? string.Empty);
-                }).ToArray());
+            var typeParameters = new CompilerAst.TupleExpression(
+                false,
+                typeAlias.TypeParams.Select(LowerTypeParameter).ToArray());
+            SetLocation(typeParameters, typeAlias);
             return new CompilerAst.AssignmentStatement(
                 new CompilerAst.Expression[] { name },
                 Call(
                     "__build_type_alias__",
                     Constant(name.Name),
                     thunk,
-                    Constant(typeParameters),
-                    Constant(_className is null
-                        ? name.Name
-                        : _className + "." + name.Name)));
+                    typeParameters,
+                    Constant(_functionQualname is not null
+                        ? _functionQualname + ".<locals>." + name.Name
+                        : _className is null
+                            ? name.Name
+                            : _className + "." + name.Name)));
+        }
+
+        private static CompilerAst.Expression LowerTypeParameter(
+            AstNodes.TypeParamBase typeParameter) {
+            string kind = typeParameter switch {
+                AstNodes.TypeVar => "TypeVar",
+                AstNodes.TypeVarTuple => "TypeVarTuple",
+                AstNodes.ParamSpec => "ParamSpec",
+                _ => throw new InvalidOperationException(
+                    $"Unsupported type parameter '{typeParameter.NodeKind}'.")
+            };
+            string name = GetTypeParameterName(typeParameter);
+            AstNodes.ExprBase? defaultValue = typeParameter.GetFields()
+                .FirstOrDefault(field =>
+                    field.Name is "default" or "Default" or "DefaultValue" or "defaultValue")
+                .Value as AstNodes.ExprBase;
+            return defaultValue is null
+                ? Call(
+                    "__build_type_parameter__",
+                    Constant(kind),
+                    Constant(name))
+                : Call(
+                    "__build_type_parameter__",
+                    Constant(kind),
+                    Constant(name),
+                    LowerExpression(defaultValue));
+        }
+
+        private static string GetTypeParameterName(AstNodes.TypeParamBase typeParameter) {
+            return typeParameter.GetFields()
+                .FirstOrDefault(field => field.Name is "name" or "Name")
+                .Value as string ?? string.Empty;
         }
 
         public static CompilerAst.Expression LowerExpression(AstNodes.ExprBase expression) {
@@ -1287,7 +1326,18 @@ namespace IronPython.Compiler.PublicAst {
             bool isAsync,
             AstNodes.PythonAstNode source) {
             string loweredName = MangleIdentifier(name);
-            CompilerAst.SuiteStatement loweredBody = LowerSuite(body);
+            string? previousFunctionQualname = _functionQualname;
+            _functionQualname = _functionQualname is null
+                ? _className is null
+                    ? name
+                    : _className + "." + name
+                : _functionQualname + ".<locals>." + name;
+            CompilerAst.SuiteStatement loweredBody;
+            try {
+                loweredBody = LowerSuite(body);
+            } finally {
+                _functionQualname = previousFunctionQualname;
+            }
             bool hasYield = ContainsYield(body);
             if (!isAsync && !hasYield && body.Count != 0 && body[body.Count - 1] is AstNodes.Match) {
                 loweredBody = new CompilerAst.SuiteStatement(
