@@ -1636,25 +1636,6 @@ namespace IronPython.Runtime.Operations {
             if (!vars.ContainsKey("__parameters__")) {
                 vars["__parameters__"] = inferredParameters;
             }
-            if (vars.TryGetValue("__type_params__", out object? declaredTypeParams)
-                && declaredTypeParams is PythonTuple typeParameters
-                && typeParameters.Count != 0) {
-                object typing = Importer.ImportModule(parentContext, null, "typing", false, 0);
-                object generic = PythonOps.GetBoundAttr(parentContext, typing, "Generic");
-                object genericAlias = GetIndex(
-                    parentContext,
-                    generic,
-                    typeParameters.Count == 1
-                        ? typeParameters[0]!
-                        : typeParameters);
-                var originalWithGeneric = new List<object?>(declaredBases.Count + 1);
-                originalWithGeneric.AddRange(declaredBases);
-                if (!originalWithGeneric.Any(baseObject =>
-                        EqualRetBool(baseObject, genericAlias))) {
-                    originalWithGeneric.Add(genericAlias);
-                }
-                vars["__orig_bases__"] = PythonTuple.MakeTuple(originalWithGeneric.ToArray());
-            }
 
             // Fasttrack for metaclass == `type`
             if (metaclass is null) {
@@ -3200,6 +3181,15 @@ namespace IronPython.Runtime.Operations {
             return function;
         }
 
+        public static PythonFunction SetFunctionAnnotationTypeParameters(
+            PythonFunction function,
+            string[] names) {
+            if (function.__annotate__ is AnnotationFunction annotate) {
+                annotate.SetTypeParameters(names, function.__type_params__);
+            }
+            return function;
+        }
+
         public static PythonTuple ExpandTypeParameters(PythonTuple typeParameters) {
             var parameters = new List<object?>();
             foreach (object parameter in typeParameters) {
@@ -3213,6 +3203,25 @@ namespace IronPython.Runtime.Operations {
                 }
             }
             return PythonTuple.MakeTuple(parameters.ToArray());
+        }
+
+        public static object? EvalAnnotationSource(
+            CodeContext context,
+            string source,
+            PythonTuple typeParameters) {
+            var locals = new PythonDictionary();
+            foreach (object key in context.Dict.Keys) {
+                if (context.Dict.TryGetValueNoMissing(key, out object? value)) {
+                    locals[key] = value;
+                }
+            }
+            foreach (object parameter in typeParameters) {
+                if (TryGetBoundAttr(context, parameter, "__name__", out object? name)
+                    && name is string parameterName) {
+                    locals[parameterName] = parameter;
+                }
+            }
+            return Builtin.eval(context, source, context.GlobalDict, locals);
         }
 
         public static object MakeClassGetItem(CodeContext context) {
@@ -4346,7 +4355,7 @@ namespace IronPython.Runtime.Operations {
         /// </summary>
         public static object? LookupName(CodeContext/*!*/ context, string name) {
             object? value;
-            if (name is "__build_type_alias__" or "__build_type_parameter__"
+            if (name is "__build_type_alias__" or "__build_generic_base__" or "__build_type_parameter__"
                 && context.TryLookupBuiltin(name, out value)) {
                 return value;
             }
@@ -4360,7 +4369,7 @@ namespace IronPython.Runtime.Operations {
         }
 
         public static object GetCompilerIntrinsic(CodeContext context, string name) {
-            if (name is "__build_type_alias__" or "__build_type_parameter__"
+            if (name is "__build_type_alias__" or "__build_generic_base__" or "__build_type_parameter__"
                 && context.TryLookupBuiltin(name, out object? value)) {
                 return value!;
             }
@@ -4368,7 +4377,7 @@ namespace IronPython.Runtime.Operations {
         }
 
         public static object? LookupLocalName(CodeContext context, string name, object? defaultValue) {
-            if (name is "__build_type_alias__" or "__build_type_parameter__"
+            if (name is "__build_type_alias__" or "__build_generic_base__" or "__build_type_parameter__"
                 && context.TryLookupBuiltin(name, out object? intrinsic)) {
                 return intrinsic;
             }
@@ -4460,7 +4469,7 @@ namespace IronPython.Runtime.Operations {
         internal static object? GetVariable(CodeContext/*!*/ context, string name, bool isGlobal, bool lightThrow) {
             object? res;
             if (isGlobal) {
-                if (name is "__build_type_alias__" or "__build_type_parameter__") {
+                if (name is "__build_type_alias__" or "__build_generic_base__" or "__build_type_parameter__") {
                     var intrinsicBuiltins = context.GetBuiltinsDict();
                     if (intrinsicBuiltins is not null
                         && intrinsicBuiltins.TryGetValue(name, out res)) {

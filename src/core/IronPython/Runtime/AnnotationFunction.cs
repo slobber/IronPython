@@ -25,6 +25,8 @@ namespace IronPython.Runtime {
         private readonly List<Func<object?>> _evaluators = new();
         private readonly bool _stringOnly;
         private readonly CodeContext? _context;
+        private string[] _typeParameterNames = Array.Empty<string>();
+        private PythonTuple _typeParameters = PythonTuple.EMPTY;
 
         public AnnotationFunction(
             [NotNone] string[] names,
@@ -59,6 +61,11 @@ namespace IronPython.Runtime {
             _evaluators.Add(evaluator);
         }
 
+        internal void SetTypeParameters(string[] names, PythonTuple typeParameters) {
+            _typeParameterNames = names;
+            _typeParameters = typeParameters;
+        }
+
         [SpecialName]
         public object Call(CodeContext context, [NotNone] object format) {
             return Evaluate(Converter.ConvertToInt32(format));
@@ -72,6 +79,29 @@ namespace IronPython.Runtime {
                 }
                 return annotations;
             }
+            PythonDictionary? locals = null;
+            if (_context is not null && _typeParameters.Count != 0) {
+                locals = new PythonDictionary();
+                foreach (object key in _context.Dict.Keys) {
+                    if (_context.Dict.TryGetValueNoMissing(key, out object? value)) {
+                        locals[key] = value;
+                    }
+                }
+                for (int i = 0; i < _typeParameters.Count; i++) {
+                    object parameter = _typeParameters[i]!;
+                    if (PythonOps.TryGetBoundAttr(
+                            _context,
+                            parameter,
+                            "__name__",
+                            out object? name)
+                        && name is string parameterName) {
+                        locals[parameterName] = parameter;
+                    }
+                    if (i < _typeParameterNames.Length) {
+                        locals[_typeParameterNames[i]] = parameter;
+                    }
+                }
+            }
             switch (annotationFormat) {
                 case 1:
                 case 2:
@@ -84,7 +114,7 @@ namespace IronPython.Runtime {
                                 _context!,
                                 _sources[i],
                                 _context!.GlobalDict,
-                                _context.Dict);
+                                locals ?? _context.Dict);
                         annotations.Add(_names[i], value);
                     }
                     return annotations;

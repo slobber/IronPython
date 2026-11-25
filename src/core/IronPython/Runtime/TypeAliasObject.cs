@@ -21,6 +21,9 @@ namespace IronPython.Runtime {
         private object? _module;
         private readonly object _thunk;
         private readonly PythonTuple _typeParameters;
+        private readonly CodeContext? _context;
+        private readonly string? _source;
+        private readonly bool _useSource;
         private object? _value;
 
         internal TypeAliasObject(
@@ -28,12 +31,18 @@ namespace IronPython.Runtime {
             string qualname,
             object? module,
             object thunk,
-            PythonTuple typeParameters) {
+            PythonTuple typeParameters,
+            CodeContext? context = null,
+            string? source = null,
+            bool useSource = false) {
             _name = name;
             _qualname = qualname;
             _module = module;
             _thunk = thunk;
             _typeParameters = typeParameters;
+            _context = context;
+            _source = source;
+            _useSource = useSource;
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage(
@@ -116,10 +125,7 @@ namespace IronPython.Runtime {
         [SpecialName]
         public object? GetCustomMember(CodeContext context, [NotNone] string name) {
             if (name == "__value__") {
-                return _value ??= PythonCalls.Call(
-                    context,
-                    _thunk,
-                    _typeParameters.ToArray());
+                return _value ??= Evaluate(context);
             }
             return OperationFailed.Value;
         }
@@ -128,10 +134,7 @@ namespace IronPython.Runtime {
             _qualname;
 
         public object evaluate_value(CodeContext context, int format = 1) {
-            object? value = _value ??= PythonCalls.Call(
-                context,
-                _thunk,
-                _typeParameters.ToArray());
+            object? value = _value ??= Evaluate(context);
             if (format == 4) {
                 object annotationlib = Importer.ImportModule(
                     DefaultContext.Default,
@@ -147,6 +150,17 @@ namespace IronPython.Runtime {
             }
             return value!;
         }
+
+        private object? Evaluate(CodeContext context) =>
+            _useSource && _context is not null && _source is not null
+                ? LightExceptions.CheckAndThrow(PythonOps.EvalAnnotationSource(
+                    _context,
+                    _source,
+                    _typeParameters))
+                : PythonCalls.Call(
+                    context,
+                    _thunk,
+                    _typeParameters.ToArray());
 
         public object __reduce_ex__(CodeContext context, int protocol) {
             if (_module is string moduleName

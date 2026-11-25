@@ -52,7 +52,9 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             [NotNone] object thunk,
             [NotNone] PythonTuple typeParameters,
             string? qualname = null,
-            object? module = null) {
+            object? module = null,
+            string? source = null,
+            bool useSource = false) {
             string resolvedQualname = qualname ?? name;
             if (module is null
                 && context.GlobalDict.TryGetValue("__name__", out object? moduleName)) {
@@ -63,7 +65,21 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 resolvedQualname,
                 module,
                 thunk,
-                typeParameters);
+                typeParameters,
+                context,
+                source,
+                useSource);
+        }
+
+        public static object __build_generic_base__(
+            CodeContext context,
+            [NotNone] PythonTuple typeParameters) {
+            object typing = Importer.ImportModule(context, null, "typing", false, 0);
+            object generic = PythonOps.GetBoundAttr(context, typing, "Generic");
+            object item = typeParameters.Count == 1
+                ? typeParameters[0]!
+                : typeParameters;
+            return PythonOps.GetIndex(context, generic, item)!;
         }
 
         [Documentation("")]
@@ -92,7 +108,9 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             object? defaultThunk,
             bool hasConstraints,
             bool hasBound,
-            bool hasDefault) {
+            bool hasDefault,
+            string? boundSource = null,
+            string? defaultSource = null) {
             object typeParameters = Importer.ImportModule(
                 context,
                 null,
@@ -110,16 +128,30 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 args.AddRange(tuple);
             }
             if (hasBound) {
+                object? effectiveBoundThunk = boundSource is null
+                    ? boundThunk
+                    : new Func<object?>(() => LightExceptions.CheckAndThrow(
+                        PythonOps.EvalAnnotationSource(
+                            context,
+                            boundSource,
+                            PythonTuple.EMPTY)));
                 names.Add("bound");
                 args.Add(null);
                 names.Add("_bound_thunk");
-                args.Add(boundThunk);
+                args.Add(effectiveBoundThunk);
             }
             if (hasDefault) {
+                object? effectiveDefaultThunk = defaultSource is null
+                    ? defaultThunk
+                    : new Func<object?>(() => LightExceptions.CheckAndThrow(
+                        PythonOps.EvalAnnotationSource(
+                            context,
+                            defaultSource,
+                            PythonTuple.EMPTY)));
                 names.Add("default");
                 args.Add(null);
                 names.Add("_default_thunk");
-                args.Add(defaultThunk);
+                args.Add(effectiveDefaultThunk);
             }
             if (hasConstraints) {
                 names.Add("_constraints_thunk");

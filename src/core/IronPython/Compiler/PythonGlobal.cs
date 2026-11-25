@@ -44,7 +44,7 @@ namespace IronPython.Compiler {
 
         public object? CurrentValue {
             get {
-                if (_name is "__build_type_alias__" or "__build_type_parameter__"
+                if (_name is "__build_type_alias__" or "__build_generic_base__" or "__build_type_parameter__"
                     && _context.TryLookupBuiltin(_name, out object? intrinsic)) {
                     return intrinsic;
                 }
@@ -65,7 +65,7 @@ namespace IronPython.Compiler {
 
         public object? CurrentValueLightThrow {
             get {
-                if (_name is "__build_type_alias__" or "__build_type_parameter__"
+                if (_name is "__build_type_alias__" or "__build_generic_base__" or "__build_type_parameter__"
                     && _context.TryLookupBuiltin(_name, out object? intrinsic)) {
                     return intrinsic;
                 }

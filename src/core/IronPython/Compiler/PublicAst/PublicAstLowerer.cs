@@ -17,6 +17,8 @@ namespace IronPython.Compiler.PublicAst {
         [ThreadStatic]
         private static IndexSpan? _currentPatternSpan;
         [ThreadStatic]
+        private static string? _sourceText;
+        [ThreadStatic]
         private static SourceLocationMap? _sourceLocations;
         [ThreadStatic]
         private static string? _className;
@@ -24,6 +26,8 @@ namespace IronPython.Compiler.PublicAst {
         private static string? _classQualname;
         [ThreadStatic]
         private static CompilerAst.ClassDefinition? _classDefinition;
+        [ThreadStatic]
+        private static bool _inClassBody;
         [ThreadStatic]
         private static string? _functionQualname;
         [ThreadStatic]
@@ -56,7 +60,9 @@ namespace IronPython.Compiler.PublicAst {
                 ((PythonCompilerOptions)context.Options).FutureAnnotations = true;
             }
 
-            var locations = SourceLocationMap.Create(context.SourceUnit.GetCode());
+            string sourceText = context.SourceUnit.GetCode() ?? string.Empty;
+            var locations = SourceLocationMap.Create(sourceText);
+            _sourceText = sourceText;
             _sourceLocations = locations;
             try {
                 CompilerAst.Statement[] statements = module.Body
@@ -84,6 +90,7 @@ namespace IronPython.Compiler.PublicAst {
                 ast.SkipStarredExpressionCheck = true;
                 return ast;
             } finally {
+                _sourceText = null;
                 _sourceLocations = null;
             }
         }
@@ -242,7 +249,10 @@ namespace IronPython.Compiler.PublicAst {
                         ? _functionQualname + ".<locals>." + name.Name
                         : _className is null
                             ? name.Name
-                            : _className + "." + name.Name)));
+                            : (_classQualname ?? _className) + "." + name.Name),
+                    Constant(null),
+                    Constant(GetSourceText(typeAlias.Value)),
+                    Constant(_inClassBody && typeAlias.TypeParams.Count == 0)));
         }
 
         private static CompilerAst.Expression LowerTypeParameter(
@@ -283,7 +293,13 @@ namespace IronPython.Compiler.PublicAst {
                     : LowerThunk(defaultValue, typeParameter),
                 Constant(hasConstraints),
                 Constant(hasBound),
-                Constant(defaultValue is not null));
+                Constant(defaultValue is not null),
+                Constant(_inClassBody && bound is not null
+                    ? GetSourceText(bound)
+                    : null),
+                Constant(_inClassBody && defaultValue is not null
+                    ? GetSourceText(defaultValue)
+                    : null));
         }
 
         private static CompilerAst.Expression LowerThunk(
@@ -1414,11 +1430,14 @@ namespace IronPython.Compiler.PublicAst {
                     : (_classQualname ?? _className) + "." + name
                 : _functionQualname + ".<locals>." + name;
             _functionQualname = functionQualname;
+            bool previousInClassBody = _inClassBody;
+            _inClassBody = false;
             CompilerAst.SuiteStatement loweredBody;
             try {
                 loweredBody = LowerSuite(body);
             } finally {
                 _functionQualname = previousFunctionQualname;
+                _inClassBody = previousInClassBody;
             }
             bool hasYield = ContainsYield(body);
             if (!isAsync && !hasYield && body.Count != 0 && body[body.Count - 1] is AstNodes.Match) {
@@ -1516,7 +1535,7 @@ namespace IronPython.Compiler.PublicAst {
         private static CompilerAst.Parameter LowerParameter(
             AstNodes.Arg argument,
             CompilerAst.ParameterKind kind = CompilerAst.ParameterKind.Normal) {
-            return new CompilerAst.Parameter(argument.ArgName, kind) {
+            return new CompilerAst.Parameter(MangleIdentifier(argument.ArgName), kind) {
                 Annotation = argument.Annotation is null
                     ? null!
                     : LowerExpression(argument.Annotation)
@@ -1535,6 +1554,7 @@ namespace IronPython.Compiler.PublicAst {
 
             CompilerAst.AssignmentStatement? typeParameterAssignment = null;
             CompilerAst.Expression? typeParameterReference = null;
+            string? classTypeParameterTemporaryName = null;
             Dictionary<string, CompilerAst.Expression>? previousBindings = _typeParameterBindings;
             string[] typeParameterNames = Array.Empty<string>();
             if (@class.TypeParams.Count != 0) {
@@ -1548,6 +1568,7 @@ namespace IronPython.Compiler.PublicAst {
 
                 string temporaryName = "$class_type_params_" +
                     Interlocked.Increment(ref _typeParameterTemp);
+                classTypeParameterTemporaryName = temporaryName;
                 if (_classDefinition is not null) {
                     _classDefinition.ExposedLocalNames.Add(temporaryName);
                     _classDefinition.NeedsLocalsDictionary = true;
@@ -1588,6 +1609,14 @@ namespace IronPython.Compiler.PublicAst {
                 keywords = @class.Keywords.Select(keyword => new CompilerAst.Keyword(
                     keyword.ArgName,
                     LowerExpression(keyword.Value))).ToArray();
+                if (classTypeParameterTemporaryName is not null) {
+                    bases = bases.Concat(new CompilerAst.Expression[] {
+                        Call(
+                            "__build_generic_base__",
+                            new CompilerAst.NameExpression(
+                                classTypeParameterTemporaryName))
+                    }).ToArray();
+                }
             } finally {
                 _typeParameterBindings = previousBindings;
             }
@@ -1601,9 +1630,11 @@ namespace IronPython.Compiler.PublicAst {
             };
 
             CompilerAst.ClassDefinition? previousClassDefinition = _classDefinition;
+            bool previousInClassBody = _inClassBody;
             _classDefinition = definition;
             _className = @class.Name;
             _classQualname = classQualname;
+            _inClassBody = true;
             CompilerAst.SuiteStatement body;
             try {
                 body = LowerSuite(@class.Body);
@@ -1611,6 +1642,7 @@ namespace IronPython.Compiler.PublicAst {
                 _className = previousClass;
                 _classQualname = previousClassQualname;
                 _classDefinition = previousClassDefinition;
+                _inClassBody = previousInClassBody;
             }
 
             definition.Body = body;
@@ -1932,6 +1964,17 @@ namespace IronPython.Compiler.PublicAst {
 
         private static int GetStartOffset(AstNodes.PythonAstNode source) {
             return _sourceLocations?.ToOffset(source.LineNumber, source.ColumnOffset) ?? 0;
+        }
+
+        private static string GetSourceText(AstNodes.PythonAstNode source) {
+            if (_sourceText is null || _sourceLocations is null) return string.Empty;
+            int start = _sourceLocations.ToOffset(source.LineNumber, source.ColumnOffset);
+            int end = _sourceLocations.ToOffset(
+                source.EndLineNumber ?? source.LineNumber,
+                source.EndColumnOffset ?? source.ColumnOffset);
+            start = Math.Clamp(start, 0, _sourceText.Length);
+            end = Math.Clamp(end, start, _sourceText.Length);
+            return _sourceText[start..end];
         }
 
         private static IndexSpan SpanOfPattern(AstNodes.Pattern pattern) {

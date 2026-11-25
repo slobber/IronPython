@@ -41,7 +41,7 @@ namespace IronPython.Compiler.Ast {
         public override MSAst.Expression Reduce() {
             MSAst.Expression read;
 
-            if (Name is "__build_type_alias__" or "__build_type_parameter__") {
+            if (Name is "__build_type_alias__" or "__build_generic_base__" or "__build_type_parameter__") {
                 read = Ast.Call(
                     typeof(IronPython.Runtime.Operations.PythonOps).GetMethod(
                         nameof(IronPython.Runtime.Operations.PythonOps.GetCompilerIntrinsic))!,

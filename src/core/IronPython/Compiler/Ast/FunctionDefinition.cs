@@ -469,6 +469,14 @@ namespace IronPython.Compiler.Ast {
                         nameof(PythonOps.SetFunctionTypeParameters))!,
                     AstUtils.Convert(ret, typeof(PythonFunction)),
                     AstUtils.Convert(TypeParameters, typeof(PythonTuple)));
+                ret = Ast.Call(
+                    typeof(PythonOps).GetMethod(
+                        nameof(PythonOps.SetFunctionAnnotationTypeParameters))!,
+                    AstUtils.Convert(ret, typeof(PythonFunction)),
+                    Ast.NewArrayInit(
+                        typeof(string),
+                        TypeParameterNames.Select(name =>
+                            Ast.Constant(name, typeof(string)))));
             }
             ret = Ast.Call(
                 typeof(PythonOps).GetMethod(nameof(PythonOps.SetFunctionQualName))!,

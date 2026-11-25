@@ -271,6 +271,22 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         private PythonDictionary _annotations = new PythonDictionary();
         private object? _annotate;
 
+        [SpecialName, PropertyMethod, WrapperDescriptor]
+        public static PythonTuple Get__type_params__([NotNone] PythonType self) {
+            if (self._dict is not null
+                && self._dict.TryGetValue("__type_params__", out PythonTypeSlot? slot)
+                && slot is not null
+                && slot.TryGetValue(
+                    DefaultContext.Default,
+                    self,
+                    self,
+                    out object value)
+                && value is PythonTuple typeParameters) {
+                return typeParameters;
+            }
+            return PythonTuple.EMPTY;
+        }
+
         public static object? __new__(CodeContext/*!*/ context, [NotNone] PythonType cls, [NotNone] string typeName, [NotNone] PythonTuple typeBases, [NotNone] PythonDictionary typeDict) {
             RejectMroEntries(context, typeBases);
             return __new__(context, cls, typeName, typeBases, typeDict, string.Empty, null);
