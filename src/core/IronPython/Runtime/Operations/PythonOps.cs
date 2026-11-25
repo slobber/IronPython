@@ -508,6 +508,9 @@ namespace IronPython.Runtime.Operations {
         }
 
         internal static bool IsInstance(object? o, PythonType typeinfo) {
+            if (typeinfo == TypeCache.Function && o is AnnotationFunction) {
+                return true;
+            }
             var objType = DynamicHelpers.GetPythonType(o);
             if (objType == typeinfo) {
                 return true;
@@ -556,6 +559,10 @@ namespace IronPython.Runtime.Operations {
 
             if (typeinfo is PythonTuple tt) {
                 return IsInstance(context, o, tt);
+            }
+
+            if (typeinfo == TypeCache.Function && o is AnnotationFunction) {
+                return true;
             }
 
             if (typeinfo is not PythonType
@@ -2526,6 +2533,10 @@ namespace IronPython.Runtime.Operations {
                 o,
                 "__iter__",
                 out iterFunc);
+            if (hasIterator && iterFunc is null) {
+                enumerator = default;
+                return false;
+            }
             if (hasIterator && iterFunc != null) {
                 object iter = PythonCalls.Call(context, iterFunc)
                     ?? throw TypeError("iter() returned None");
@@ -3274,6 +3285,15 @@ namespace IronPython.Runtime.Operations {
             PythonTuple typeParameters) {
             if (function.__annotate__ is AnnotationFunction annotate) {
                 annotate.SetEnclosingTypeParameters(typeParameters);
+            }
+            return function;
+        }
+
+        public static PythonFunction SetFunctionAnnotationQualName(
+            PythonFunction function,
+            string qualName) {
+            if (function.__annotate__ is AnnotationFunction annotate) {
+                annotate.__qualname__ = qualName;
             }
             return function;
         }
@@ -4549,6 +4569,10 @@ namespace IronPython.Runtime.Operations {
         /// Called from generated code, helper to do name assignment
         /// </summary>
         public static object SetName(CodeContext/*!*/ context, string name, object value) {
+            if (name == "__conditional_annotations__") {
+                throw PythonOps.TypeError(
+                    "cannot rebind __conditional_annotations__");
+            }
             context.SetVariable(name, value);
             return value;
         }

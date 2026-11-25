@@ -31,6 +31,8 @@ namespace IronPython.Runtime {
         private string[] _typeParameterNames = Array.Empty<string>();
         private PythonTuple _typeParameters = PythonTuple.EMPTY;
         private PythonTuple _enclosingTypeParameters = PythonTuple.EMPTY;
+        private object? _owner;
+        private string _qualname = "__annotate__";
 
         public AnnotationFunction(
             [NotNone] string[] names,
@@ -89,10 +91,71 @@ namespace IronPython.Runtime {
             _enclosingTypeParameters = typeParameters;
         }
 
+        public object? __owner__ {
+            get => _owner;
+        }
+
+        public void SetOwner([NotNone] object value) => _owner = value;
+
+        public string __qualname__ {
+            get => _qualname;
+            internal set => _qualname = value;
+        }
+
+        public string __name__ => "__annotate__";
+
+        public object __signature__ {
+            get {
+                object inspect = Importer.ImportModule(
+                    _context!,
+                    null,
+                    "inspect",
+                    false,
+                    0);
+                object signature = PythonOps.GetBoundAttr(
+                    _context!,
+                    inspect,
+                    "Signature");
+                object parameter = PythonOps.GetBoundAttr(
+                    _context!,
+                    inspect,
+                    "Parameter");
+                object positionalOnly = PythonOps.GetBoundAttr(
+                    _context!,
+                    parameter,
+                    "POSITIONAL_ONLY");
+                object formatParameter = PythonCalls.Call(
+                    _context!,
+                    parameter,
+                    "format",
+                    positionalOnly)!;
+                return PythonCalls.Call(
+                    _context!,
+                    signature,
+                    PythonTuple.MakeTuple(formatParameter))!;
+            }
+        }
+
+        public object __code__ => new AnnotationCodeInfo();
+
+        [PythonType("annotation_code")]
+        public sealed class AnnotationCodeInfo {
+            public PythonTuple co_freevars => PythonTuple.EMPTY;
+        }
+
         [SpecialName]
         public object Call(CodeContext context, [NotNone] object format) {
-            return Evaluate(Converter.ConvertToInt32(format));
+            int annotationFormat = Converter.ConvertToInt32(format);
+            if (annotationFormat != 1) {
+                throw PythonOps.NotImplementedError(
+                    "unsupported annotation format: {0}",
+                    annotationFormat);
+            }
+            return Evaluate(annotationFormat);
         }
+
+        public PythonDictionary _evaluate_format(int annotationFormat) =>
+            Evaluate(annotationFormat);
 
         internal PythonDictionary Evaluate(int annotationFormat = 1) {
             PythonDictionary annotations = new();
@@ -159,7 +222,9 @@ namespace IronPython.Runtime {
                     return annotations;
                 case 4:
                     for (int i = 0; i < _names.Count; i++) {
-                        annotations.Add(_names[i], _sources[i]);
+                        annotations.Add(
+                            _names[i],
+                            NormalizeAnnotationSource(_sources[i]));
                     }
                     return annotations;
                 default:
@@ -204,7 +269,57 @@ namespace IronPython.Runtime {
                 _context!,
                 annotationlib,
                 "ForwardRef");
-            return PythonCalls.Call(_context!, constructor, source)!;
+            object result = PythonCalls.Call(_context!, constructor, source)!;
+            if (_owner is not null) {
+                PythonOps.SetAttr(_context!, result, "__owner__", _owner);
+            }
+            return result;
+        }
+
+        private string NormalizeAnnotationSource(string source) {
+            if (_context is null) return source;
+            string trimmed = source.Trim();
+            if (trimmed == "...") {
+                return "...";
+            }
+            if (trimmed.Length != 0
+                && (char.IsDigit(trimmed[0])
+                    || trimmed[0] is '\'' or '"' or '-' or '.'
+                    || trimmed is "True" or "False" or "None" or "..."
+                    || trimmed.StartsWith("b'", StringComparison.Ordinal)
+                    || trimmed.StartsWith("b\"", StringComparison.Ordinal))) {
+                try {
+                    object literal = LightExceptions.CheckAndThrow(
+                        Builtin.eval(
+                            _context,
+                            trimmed,
+                            _context.GlobalDict,
+                            _context.Dict))!;
+                    if (!_stringOnly && literal is string stringLiteral) {
+                        return stringLiteral;
+                    }
+                    if (literal is Ellipsis) {
+                        return "...";
+                    }
+                    return PythonOps.Repr(_context, literal);
+                } catch (Exception) {
+                    // Fall through to syntax normalization.
+                }
+            }
+            try {
+                object ast = Importer.ImportModule(
+                    _context,
+                    null,
+                    "ast",
+                    false,
+                    0);
+                object parse = PythonOps.GetBoundAttr(_context, ast, "parse");
+                object module = PythonCalls.Call(_context, parse, source)!;
+                object unparse = PythonOps.GetBoundAttr(_context, ast, "unparse");
+                return PythonCalls.Call(_context, unparse, module) as string ?? source;
+            } catch (Exception) {
+                return source;
+            }
         }
 
         private PythonDictionary BuildEvalGlobals() {

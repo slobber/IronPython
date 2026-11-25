@@ -201,7 +201,7 @@
   `typing.get_type_hints` behavior.
 - [x] 12.8 Implement PEP 585 built-in generics and generic aliases.
 - [x] 12.9 Implement PEP 604 union types.
-- [ ] 12.10 Implement `Protocol`, `Literal`, `Final`, `TypedDict`, and related
+- [x] 12.10 Implement `Protocol`, `Literal`, `Final`, `TypedDict`, and related
   PEP 544/586/589/591 runtime behavior.
 - [ ] 12.11 Implement `ParamSpec`, `Concatenate`, and `TypeAlias`.
 - [ ] 12.12 Implement `TypeVarTuple`, `Unpack`, and `Self`.

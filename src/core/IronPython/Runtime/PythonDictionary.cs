@@ -281,6 +281,10 @@ namespace IronPython.Runtime {
         }
 
         internal void SetItem(object key, object value) {
+            if (key is string name && name == "__conditional_annotations__") {
+                throw PythonOps.TypeError(
+                    "cannot rebind __conditional_annotations__");
+            }
             _storage.Add(ref _storage, key, value);
         }
 

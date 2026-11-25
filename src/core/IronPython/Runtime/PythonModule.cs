@@ -30,6 +30,7 @@ namespace IronPython.Runtime {
         private readonly PythonDictionary _dict;
         private Scope _scope;
         private object _evaluatedAnnotate;
+        private PythonDictionary _annotations = new PythonDictionary();
 
         public PythonModule() {
             _dict = new PythonDictionary();
@@ -99,19 +100,41 @@ namespace IronPython.Runtime {
                 // never look in the dict for these...
                 case "__dict__": return __dict__;
                 case "__class__": return DynamicHelpers.GetPythonType(this);
+                case "__annotate__":
+                    if (_dict.TryGetValue("__annotate__", out res)) {
+                        return res;
+                    }
+                    return null;
                 case "__annotations__":
                     if (_dict.TryGetValue("__annotate__", out object annotate)
                         && annotate is not null
-                        && !ReferenceEquals(_evaluatedAnnotate, annotate)) {
-                        res = PythonCalls.Call(
-                            context,
-                            annotate,
-                            ScriptingRuntimeHelpers.Int32ToObject(1));
-                        _dict["__annotations__"] = res;
+                        && (
+                            !ReferenceEquals(_evaluatedAnnotate, annotate)
+                            || !_dict.TryGetValue("__annotations__", out object current)
+                            || current is not PythonDictionary currentDictionary
+                            || currentDictionary.Count == 0
+                        )) {
+                        try {
+                            res = PythonCalls.Call(
+                                context,
+                                annotate,
+                                ScriptingRuntimeHelpers.Int32ToObject(1));
+                        } catch (Exception e) when (
+                            e.Message.Contains("takes no arguments", StringComparison.Ordinal)) {
+                            throw PythonOps.TypeError(
+                                "__annotate__() takes 0 positional arguments but 1 was given");
+                        }
+                        if (res is not PythonDictionary annotations) {
+                            throw PythonOps.TypeError(
+                                "__annotate__() must return a dict, not {0}",
+                                PythonOps.GetPythonTypeName(res));
+                        }
+                        _annotations = annotations;
+                        _dict["__annotations__"] = annotations;
                         _evaluatedAnnotate = annotate;
                         return res;
                     }
-                    break;
+                    return _annotations;
             }
 
             if (_dict.TryGetValue(name, out res)) {
@@ -169,9 +192,19 @@ namespace IronPython.Runtime {
 
             Debug.Assert(value != Uninitialized.Instance);
 
+            if (name == "__annotate__"
+                && value is not null
+                && !PythonOps.IsCallable(context, value)) {
+                throw PythonOps.TypeError("__annotate__ must be callable or None");
+            }
+
             _dict[name] = value;
             if (name == "__annotations__") {
+                _annotations = value as PythonDictionary ?? new PythonDictionary();
                 _evaluatedAnnotate = null;
+                _dict.Remove("__annotate__");
+            } else if (name == "__annotate__" && value is not null) {
+                _annotations = new PythonDictionary();
             }
         }
 

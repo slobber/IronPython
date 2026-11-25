@@ -6,6 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Dynamic;
+using System.Linq;
 using System.Text;
 using System.Threading;
 
@@ -56,11 +57,14 @@ namespace IronPython.Runtime {
         /// 
         /// y = func(x.__code__, globals(), 'foo', None, (a, ))
         /// </summary>
-        public PythonFunction(CodeContext context, FunctionCode code, PythonDictionary globals, string name = null, PythonTuple defaults = null, PythonTuple closure = null) {
-            if (closure != null && closure.__len__() != 0) {
-                throw new NotImplementedException("non empty closure argument is not supported");
-            }
-
+        public PythonFunction(
+            CodeContext context,
+            FunctionCode code,
+            PythonDictionary globals,
+            string name = null,
+            PythonTuple argdefs = null,
+            PythonDictionary kwdefaults = null,
+            PythonTuple closure = null) {
             if (globals == context.GlobalDict) {
                 _module = context.Module.GetName();
                 _context = context;
@@ -69,18 +73,33 @@ namespace IronPython.Runtime {
                 _context = new CodeContext(new PythonDictionary(), new ModuleContext(globals, DefaultContext.DefaultPythonContext));
             }
 
-            _defaults = defaults == null ? [] : defaults.ToArray();
+            _defaults = argdefs == null ? [] : argdefs.ToArray();
+            _kwdefaults = kwdefaults;
             _code = code;
             _doc = code._initialDoc;
             _name = name ?? code.PythonCode.Name;
             _qualname = _name;
             _annotations = new PythonDictionary();
 
-            Closure = null;
+            Closure = closure is null || closure.Count == 0
+                ? null
+                : MutableTuple.MakeTuple(
+                    MutableTuple.MakeTupleType(
+                        Enumerable.Repeat(typeof(ClosureCell), closure.Count).ToArray()),
+                    closure.ToArray());
 
             var scopeStatement = _code.PythonCode;
-            if (scopeStatement.IsClosure) {
-                throw new NotImplementedException("code containing closures is not supported");
+            if (scopeStatement.IsClosure && Closure is not null) {
+                _context = new CodeContext(
+                    new PythonDictionary(new RuntimeVariablesDictionaryStorage(
+                        Closure,
+                        Array.Empty<string>(),
+                        Closure.Capacity,
+                        0,
+                        globals._storage)),
+                    new ModuleContext(
+                        globals,
+                        DefaultContext.DefaultPythonContext));
             }
             scopeStatement.RewriteBody(FunctionDefinition.ArbitraryGlobalsVisitorInstance);
 
@@ -129,25 +148,62 @@ namespace IronPython.Runtime {
             }
         }
 
+        public object __builtins__ => _context.GetBuiltinsDict()!;
+
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Usage", "CA2227:CollectionPropertiesShouldBeReadOnly")]
         public PythonDictionary __annotations__ {
             get {
                 if (_annotate is not null && _annotations.Count == 0) {
-                    _annotations = (PythonDictionary)PythonCalls.Call(
-                        _context,
-                        _annotate,
-                        ScriptingRuntimeHelpers.Int32ToObject(1));
+                    object result;
+                    try {
+                        result = PythonCalls.Call(
+                            _context,
+                            _annotate,
+                            ScriptingRuntimeHelpers.Int32ToObject(1))!;
+                    } catch (Exception e) when (
+                        e.Message.Contains("takes no arguments", StringComparison.Ordinal)) {
+                        throw PythonOps.TypeError(
+                            "__annotate__() takes 0 positional arguments but 1 was given");
+                    }
+                    if (result is not PythonDictionary annotations) {
+                        throw PythonOps.TypeError(
+                            "__annotate__() must return a dict, not {0}",
+                            PythonOps.GetPythonTypeName(result));
+                    }
+                    _annotations = annotations;
                 }
                 return _annotations;
             }
             set {
                 _annotations = value ?? new PythonDictionary();
+                _annotate = null;
             }
         }
 
         public object __annotate__ {
             get => _annotate;
-            set => _annotate = value;
+            set {
+                if (value is not null
+                    && !PythonOps.IsCallable(_context, value)) {
+                    throw PythonOps.TypeError(
+                        "__annotate__ must be callable or None");
+                }
+                _annotate = value;
+                if (value is not null) {
+                    _annotations = new PythonDictionary();
+                }
+            }
+        }
+
+        [SpecialName, PropertyMethod]
+        public void Delete__annotations__() {
+            _annotations = new PythonDictionary();
+            _annotate = null;
+        }
+
+        [SpecialName, PropertyMethod]
+        public void Delete__annotate__() {
+            _annotate = null;
         }
 
         [PropertyMethod, SpecialName, System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1822:MarkMembersAsStatic")]
@@ -561,7 +617,11 @@ namespace IronPython.Runtime {
         [PythonHidden]
         public object Value;
 
-        internal ClosureCell(object value) {
+        public ClosureCell() {
+            Value = Uninitialized.Instance;
+        }
+
+        public ClosureCell([NotNone] object value) {
             Value = value;
         }
 

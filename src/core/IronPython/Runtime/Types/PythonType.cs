@@ -252,30 +252,95 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             Justification = "The descriptor setter accepts a Python dictionary value.")]
         public PythonDictionary __annotations__ {
             get {
+                if (IsSystemType
+                    && _annotate is null
+                    && !_annotationsInitialized) {
+                    throw PythonOps.AttributeError(
+                        "type object '{0}' has no attribute '__annotations__'",
+                        Name);
+                }
                 if (_annotate is not null) {
-                    _annotations = PythonCalls.Call(
-                        DefaultContext.Default,
-                        _annotate,
-                        ScriptingRuntimeHelpers.Int32ToObject(1)) as PythonDictionary
-                        ?? new PythonDictionary();
+                    object result;
+                    try {
+                        result = PythonCalls.Call(
+                            DefaultContext.Default,
+                            _annotate,
+                            ScriptingRuntimeHelpers.Int32ToObject(1))!;
+                    } catch (Exception e) when (
+                        e.Message.Contains("takes no arguments", StringComparison.Ordinal)) {
+                        throw PythonOps.TypeError(
+                            "__annotate__() takes 0 positional arguments but 1 was given");
+                    }
+                    if (result is not PythonDictionary annotations) {
+                        throw PythonOps.TypeError(
+                            "__annotate__() must return a dict, not {0}",
+                            PythonOps.GetPythonTypeName(result));
+                    }
+                    _annotations = annotations;
+                }
+                _annotationsInitialized = true;
+                if (_dict is not null) {
+                    _dict["__annotations_cache__"] = ToTypeSlot(_annotations);
                 }
                 return _annotations;
             }
             set {
+                if (IsSystemType) {
+                    throw PythonOps.TypeError(
+                        "cannot set '__annotations__' attribute of immutable type '{0}'",
+                        Name);
+                }
                 _annotations = value ?? new PythonDictionary();
+                _annotationsInitialized = true;
                 _annotate = null;
+                if (_dict is not null) {
+                    _dict["__annotations_cache__"] = ToTypeSlot(_annotations);
+                }
             }
         }
 
         public object? __annotate__ {
             get => _annotate;
             set {
+                if (value is not null
+                    && !PythonOps.IsCallable(DefaultContext.Default, value)) {
+                    throw PythonOps.TypeError(
+                        "__annotate__ must be callable or None");
+                }
                 _annotate = value;
-                _annotations = new PythonDictionary();
+                if (value is not null) {
+                    _annotations = new PythonDictionary();
+                }
             }
         }
 
+        [SpecialName, PropertyMethod]
+        public void Delete__annotations__() {
+            if (IsSystemType) {
+                throw PythonOps.TypeError(
+                    "cannot delete '__annotations__' attribute of immutable type '{0}'",
+                    Name);
+            }
+            if (!_annotationsInitialized
+                && (_dict is null
+                    || !_dict.ContainsKey("__annotations_cache__"))) {
+                throw PythonOps.AttributeError(
+                    "type object '{0}' has no attribute '__annotations__'",
+                    Name);
+            }
+            _annotations = new PythonDictionary();
+            _annotationsInitialized = false;
+            _annotate = null;
+            _dict?.Remove("__annotations_cache__");
+        }
+
+        [SpecialName, PropertyMethod]
+        public void Delete__annotate__() {
+            _annotate = null;
+        }
+
         private PythonDictionary _annotations = new PythonDictionary();
+        private bool _annotationsInitialized;
         private object? _annotate;
 
         [SpecialName, PropertyMethod, WrapperDescriptor]
@@ -372,10 +437,15 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             if (type is PythonType createdType) {
                 if (dict.TryGetValue("__annotate__", out object? annotate)) {
                     createdType._annotate = annotate;
+                    if (annotate is AnnotationFunction annotationFunction) {
+                        annotationFunction.__qualname__ =
+                            createdType.QualName + ".__annotate__";
+                    }
                 }
                 if (dict.TryGetValue("__annotations__", out object? annotations)
                     && annotations is PythonDictionary annotationDictionary) {
                     createdType._annotations = annotationDictionary;
+                    createdType._annotationsInitialized = true;
                 }
                 NotifySetNames(context, createdType, dict);
                 CallInitSubclass(context, createdType, bases, keywordArguments);
@@ -1603,6 +1673,17 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
         internal bool DeleteCustomMember(CodeContext/*!*/ context, string name) {
             Debug.Assert(context != null);
+
+            if (name == "__annotations__") {
+                Delete__annotations__();
+                UpdateVersion();
+                return true;
+            }
+            if (name == "__annotate__") {
+                Delete__annotate__();
+                UpdateVersion();
+                return true;
+            }
 
             PythonTypeSlot dts;
             if (TryResolveSlot(context, name, out dts)) {

@@ -590,6 +590,20 @@ namespace IronPython.Runtime.Types {
 
     [PythonType("UnionType")]
     public sealed class UnionType : ICodeFormattable {
+        public static object __class_getitem__([NotNone] PythonTuple parameters) {
+            if (parameters.Count == 2) {
+                return new UnionType(parameters[0], parameters[1]);
+            }
+            if (parameters.Count == 0) {
+                throw PythonOps.TypeError("UnionType requires at least two arguments");
+            }
+            object result = parameters[0]!;
+            for (int i = 1; i < parameters.Count; i++) {
+                result = new UnionType(result, parameters[i]);
+            }
+            return result;
+        }
+
         public UnionType(object? left, object? right) {
             var members = new List<object>();
             AddMembers(members, left);

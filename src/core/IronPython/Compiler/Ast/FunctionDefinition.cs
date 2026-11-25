@@ -500,13 +500,21 @@ namespace IronPython.Compiler.Ast {
                     AstUtils.Convert(ret, typeof(PythonFunction)),
                     AstUtils.Convert(EnclosingTypeParameters, typeof(PythonTuple)));
             }
+            string functionQualName = PythonVariable?.Kind is VariableKind.Global
+                ? Name
+                : string.IsNullOrEmpty(QualName) ? Name : QualName;
             ret = Ast.Call(
                 typeof(PythonOps).GetMethod(nameof(PythonOps.SetFunctionQualName))!,
                 AstUtils.Convert(ret, typeof(PythonFunction)),
                 Ast.Constant(
-                    PythonVariable?.Kind is VariableKind.Global
-                        ? Name
-                        : string.IsNullOrEmpty(QualName) ? Name : QualName,
+                    functionQualName,
+                    typeof(string)));
+            ret = Ast.Call(
+                typeof(PythonOps).GetMethod(
+                    nameof(PythonOps.SetFunctionAnnotationQualName))!,
+                AstUtils.Convert(ret, typeof(PythonFunction)),
+                Ast.Constant(
+                    functionQualName + ".__annotate__",
                     typeof(string)));
 
             return AddDecorators(ret, Decorators);
