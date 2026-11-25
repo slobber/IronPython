@@ -376,6 +376,7 @@ namespace IronPython.Compiler.Ast {
             var kwdefaults = new List<MSAst.Expression>();
             var annotationNames = new List<MSAst.Expression>();
             var annotationSources = new List<MSAst.Expression>();
+            var annotationEvaluators = new List<MSAst.Expression>();
 
             foreach (var param in _parameters) {
                 if ((param.Kind == ParameterKind.Normal || param.Kind == ParameterKind.PositionalOnly)
@@ -389,11 +390,17 @@ namespace IronPython.Compiler.Ast {
                 }
 
                 if (param.Annotation != null) {
-                    AddAnnotation(param.Name, param.Annotation);
+                    AddAnnotation(
+                        param.Name,
+                        param.Annotation,
+                        TypeParameters is null);
                 }
             }
             if (ReturnAnnotation != null) {
-                AddAnnotation("return", ReturnAnnotation);
+                AddAnnotation(
+                    "return",
+                    ReturnAnnotation,
+                    TypeParameters is null);
             }
 
             MSAst.Expression annotationFunction = annotationNames.Count == 0
@@ -401,8 +408,10 @@ namespace IronPython.Compiler.Ast {
                 : Ast.Call(
                     AstMethods.MakeLazyAnnotationFunction,
                     Parent.LocalContext,
+                    Ast.Call(AstMethods.GetLocalSnapshot, Parent.LocalContext),
                     Ast.NewArrayInit(typeof(string), annotationNames),
                     Ast.NewArrayInit(typeof(string), annotationSources),
+                    Ast.NewArrayInit(typeof(Func<object>), annotationEvaluators),
                     Ast.Constant(GlobalParent.FutureAnnotations, typeof(bool)));
 
             MSAst.Expression funcCode = GlobalParent.Constant(GetOrMakeFunctionCode());
@@ -502,11 +511,23 @@ namespace IronPython.Compiler.Ast {
 
             return AddDecorators(ret, Decorators);
 
-            void AddAnnotation(string name, Expression annotation) {
+            void AddAnnotation(
+                string name,
+                Expression annotation,
+                bool usesEvaluator) {
                 annotationNames.Add(Ast.Constant(name, typeof(string)));
                 annotationSources.Add(Ast.Constant(
                     GlobalParent.GetSourceText(annotation.IndexSpan),
                     typeof(string)));
+                annotationEvaluators.Add(
+                    usesEvaluator
+                        ? Ast.Lambda<Func<object>>(
+                            AstUtils.Convert(
+                                annotation,
+                                typeof(object)))
+                        : AstUtils.Constant(
+                            null,
+                            typeof(Func<object>)));
             }
         }
 

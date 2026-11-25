@@ -27,6 +27,7 @@ namespace IronPython.Runtime {
         private readonly List<Func<object?>> _evaluators = new();
         private readonly bool _stringOnly;
         private readonly CodeContext? _context;
+        private readonly PythonDictionary? _capturedLocals;
         private string[] _typeParameterNames = Array.Empty<string>();
         private PythonTuple _typeParameters = PythonTuple.EMPTY;
         private PythonTuple _enclosingTypeParameters = PythonTuple.EMPTY;
@@ -51,6 +52,21 @@ namespace IronPython.Runtime {
             _names.AddRange(names);
             _sources.AddRange(sources);
             _evaluators.AddRange(new Func<object?>[names.Length]);
+            _stringOnly = stringOnly;
+        }
+
+        public AnnotationFunction(
+            CodeContext context,
+            [NotNone] PythonDictionary locals,
+            [NotNone] string[] names,
+            [NotNone] string[] sources,
+            [NotNone] Func<object?>[] evaluators,
+            bool stringOnly = false) {
+            _context = context;
+            _capturedLocals = locals;
+            _names.AddRange(names);
+            _sources.AddRange(sources);
+            _evaluators.AddRange(evaluators);
             _stringOnly = stringOnly;
         }
 
@@ -89,8 +105,9 @@ namespace IronPython.Runtime {
             PythonDictionary? locals = null;
             if (_context is not null && _typeParameters.Count != 0) {
                 locals = new PythonDictionary();
-                foreach (object key in _context.Dict.Keys) {
-                    if (_context.Dict.TryGetValueNoMissing(key, out object? value)) {
+                PythonDictionary scopeLocals = _capturedLocals ?? _context.Dict;
+                foreach (object key in scopeLocals.Keys) {
+                    if (scopeLocals.TryGetValueNoMissing(key, out object? value)) {
                         locals[key] = value;
                         if (value is not null
                             && (DynamicHelpers.GetPythonType(value).Name is
@@ -151,16 +168,28 @@ namespace IronPython.Runtime {
         }
 
         private object? EvaluateAnnotation(int index, PythonDictionary? locals) {
+            string source = _sources[index];
             Func<object?>? evaluator = _evaluators[index];
-            object? value = TryGetTypeParameter(_sources[index], out object? typeParameter)
+            if (evaluator is not null) {
+                return LightExceptions.CheckAndThrow(evaluator());
+            }
+            if (source.StartsWith('*')) {
+                string unpackedSource = "(*(" + source.Substring(1) + "),)[0]";
+                return LightExceptions.CheckAndThrow(Builtin.eval(
+                    _context!,
+                    unpackedSource,
+                    BuildEvalGlobals(),
+                    locals ?? _capturedLocals ?? _context!.Dict));
+            }
+            object? value = TryGetTypeParameter(source, out object? typeParameter)
                 ? typeParameter
                 : evaluator is not null
                     ? evaluator()
                     : Builtin.eval(
                         _context!,
-                        _sources[index],
+                        source,
                         BuildEvalGlobals(),
-                        locals ?? _context!.Dict);
+                        locals ?? _capturedLocals ?? _context!.Dict);
             return LightExceptions.CheckAndThrow(value);
         }
 

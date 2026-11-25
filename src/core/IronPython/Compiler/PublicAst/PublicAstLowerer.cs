@@ -1606,10 +1606,24 @@ namespace IronPython.Compiler.PublicAst {
         private static CompilerAst.Parameter LowerParameter(
             AstNodes.Arg argument,
             CompilerAst.ParameterKind kind = CompilerAst.ParameterKind.Normal) {
+            bool annotateStarredExpression = argument.Annotation is AstNodes.Starred;
+            CompilerAst.Expression? annotation = argument.Annotation is null
+                ? null
+                : LowerParameterAnnotation(argument.Annotation);
+            if (annotateStarredExpression) {
+                var tuple = new CompilerAst.TupleExpression(false, annotation!);
+                SetLocation(tuple, argument.Annotation!);
+                var indexed = new CompilerAst.IndexExpression(
+                    tuple,
+                    new CompilerAst.ConstantExpression(0));
+                SetLocation(indexed, argument.Annotation!);
+                annotation = indexed;
+            }
             return new CompilerAst.Parameter(MangleIdentifier(argument.ArgName), kind) {
                 Annotation = argument.Annotation is null
                     ? null!
-                    : LowerParameterAnnotation(argument.Annotation)
+                    : annotation,
+                AnnotationUsesEvaluator = annotateStarredExpression
             };
         }
 

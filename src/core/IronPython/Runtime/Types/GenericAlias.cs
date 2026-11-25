@@ -49,6 +49,16 @@ namespace IronPython.Runtime.Types {
             _unpacked = unpacked;
         }
 
+        private GenericAlias(
+            [NotNone] object origin,
+            [NotNone] PythonTuple arguments,
+            bool unpacked,
+            bool normalized) {
+            __origin__ = origin;
+            __args__ = arguments;
+            _unpacked = unpacked;
+        }
+
         public object __origin__ { get; }
 
         public PythonTuple __args__ { get; }
@@ -74,16 +84,44 @@ namespace IronPython.Runtime.Types {
                     "There are no type variables left in {0}",
                     PythonOps.Repr(DefaultContext.Default, this));
             }
-            if (normalized.Count != parameters.Count) {
+            if (parameters.Any(parameter =>
+                    IsTypeVarTuple(parameter)
+                    && __args__.Any(argument =>
+                        PythonOps.EqualRetBool(argument, parameter)))) {
                 throw PythonOps.TypeError(
-                    $"Too {(normalized.Count > parameters.Count ? "many" : "few")} arguments " +
-                    $"for {PythonOps.Repr(DefaultContext.Default, this)}; " +
-                    $"actual {normalized.Count}, expected {parameters.Count}");
+                    "TypeVarTuple must be unpacked in a generic alias");
             }
-            object?[] specialized = __args__
-                .Select(argument => Substitute(argument, parameters, normalized))
-                .ToArray();
-            return new GenericAlias(__origin__, PythonTuple.MakeTuple(specialized), false);
+            PythonTuple replacements = normalized;
+            if (parameters.Any(IsTypeVarTuple) || normalized.Count != parameters.Count) {
+                replacements = BindReplacements(parameters, normalized);
+            }
+            var specialized = new List<object?>();
+            foreach (object? argument in __args__) {
+                int parameterIndex = FindParameterIndex(argument, parameters);
+                if (parameterIndex < 0
+                    && argument is not null
+                    && PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        argument,
+                        "__args__",
+                        out object? unpackedArguments)
+                    && unpackedArguments is PythonTuple unpackedTuple
+                    && unpackedTuple.Count == 1) {
+                    parameterIndex = FindParameterIndex(unpackedTuple[0], parameters);
+                }
+                if (parameterIndex >= 0
+                    && IsTypeVarTuple(parameters[parameterIndex])
+                    && replacements[parameterIndex] is PythonTuple expansion) {
+                    specialized.AddRange(expansion);
+                } else {
+                    specialized.Add(Substitute(argument, parameters, replacements));
+                }
+            }
+            return new GenericAlias(
+                __origin__,
+                PythonTuple.MakeTuple(specialized.ToArray()),
+                false,
+                true);
         }
 
         public object __getitem__(
@@ -227,7 +265,7 @@ namespace IronPython.Runtime.Types {
         void IWeakReferenceable.SetFinalizer(WeakRefTracker value) =>
             ((IWeakReferenceable)this).SetWeakRef(value);
 
-        private static void AddParameters(List<object> parameters, object? value) {
+        internal static void AddParameters(List<object> parameters, object? value) {
             if (value is PythonTuple tuple) {
                 foreach (object? item in tuple) AddParameters(parameters, item);
                 return;
@@ -401,6 +439,17 @@ namespace IronPython.Runtime.Types {
             PythonTuple replacements) {
             for (int i = 0; i < parameters.Count; i++) {
                 if (PythonOps.EqualRetBool(value, parameters[i])) {
+                    if (PythonOps.TryGetBoundAttr(
+                            DefaultContext.Default,
+                            parameters[i],
+                            "__typing_subst__",
+                            out object? substitute)
+                        && substitute is not null) {
+                        return PythonCalls.Call(
+                            DefaultContext.Default,
+                            substitute,
+                            replacements[i]);
+                    }
                     return replacements[i];
                 }
             }
@@ -452,6 +501,54 @@ namespace IronPython.Runtime.Types {
             }
             return value;
         }
+
+        private static PythonTuple BindReplacements(
+            PythonTuple parameters,
+            PythonTuple arguments) {
+            var replacements = new List<object?>(parameters.Count);
+            int argumentIndex = 0;
+            for (int i = 0; i < parameters.Count; i++) {
+                object parameter = parameters[i]!;
+                if (IsTypeVarTuple(parameter)) {
+                    int fixedAfter = 0;
+                    for (int j = i + 1; j < parameters.Count; j++) {
+                        if (!IsTypeVarTuple(parameters[j]!)) fixedAfter++;
+                    }
+                    int count = arguments.Count - argumentIndex - fixedAfter;
+                    if (count < 0) {
+                        throw PythonOps.TypeError(
+                            $"Too few arguments for {PythonOps.Repr(DefaultContext.Default, parameters)}");
+                    }
+                    var expanded = new object?[count];
+                    for (int j = 0; j < count; j++) {
+                        expanded[j] = arguments[argumentIndex++];
+                    }
+                    replacements.Add(PythonTuple.MakeTuple(expanded));
+                } else {
+                    if (argumentIndex >= arguments.Count) {
+                        throw PythonOps.TypeError(
+                            $"Too few arguments for {PythonOps.Repr(DefaultContext.Default, parameters)}");
+                    }
+                    replacements.Add(arguments[argumentIndex++]);
+                }
+            }
+            if (argumentIndex != arguments.Count) {
+                throw PythonOps.TypeError(
+                    $"Too many arguments for {PythonOps.Repr(DefaultContext.Default, parameters)}");
+            }
+            return PythonTuple.MakeTuple(replacements.ToArray());
+        }
+
+        private static int FindParameterIndex(object? value, PythonTuple parameters) {
+            for (int i = 0; i < parameters.Count; i++) {
+                if (PythonOps.EqualRetBool(value, parameters[i])) return i;
+            }
+            return -1;
+        }
+
+        private static bool IsTypeVarTuple(object? value) =>
+            value is not null
+            && DynamicHelpers.GetPythonType(value).Name == "TypeVarTuple";
     }
 
     [PythonType("generic_alias_iterator")]
@@ -502,6 +599,41 @@ namespace IronPython.Runtime.Types {
 
         public PythonTuple __args__ { get; }
 
+        public PythonTuple __parameters__ {
+            get {
+                var parameters = new List<object>();
+                GenericAlias.AddParameters(parameters, __args__);
+                return PythonTuple.MakeTuple(parameters.ToArray());
+            }
+        }
+
+        public object __getitem__(CodeContext context, [NotNone] object item) {
+            object? result = null;
+            foreach (object? member in __args__) {
+                object specialized = member!;
+                if (member is not null
+                    && PythonOps.TryGetBoundAttr(
+                        context,
+                        member,
+                        "__parameters__",
+                        out object? parameters)
+                    && parameters is PythonTuple parameterTuple
+                    && parameterTuple.Count != 0
+                    && PythonOps.TryGetBoundAttr(
+                        context,
+                        member,
+                        "__getitem__",
+                        out object? getItem)
+                    && getItem is not null) {
+                    specialized = PythonCalls.Call(context, getItem, item)!;
+                }
+                result = result is null
+                    ? specialized
+                    : new UnionType(result, specialized);
+            }
+            return result!;
+        }
+
         public object __or__(object? other) {
             return new UnionType(this, other);
         }
@@ -513,7 +645,7 @@ namespace IronPython.Runtime.Types {
         public string __repr__(CodeContext context) {
             return string.Join(
                 " | ",
-                __args__.Select(item => PythonOps.Repr(context, item)));
+                __args__.Select(item => FormatUnionMember(context, item)));
         }
 
         public int __hash__() {
@@ -525,25 +657,73 @@ namespace IronPython.Runtime.Types {
         }
 
         public object __eq__([NotNone] object other) {
-            return other is UnionType union
-                && __args__.Count == union.__args__.Count
-                && __args__.All(argument =>
-                    union.__args__.Any(candidate => PythonOps.EqualRetBool(argument, candidate)));
+            var members = new List<object>();
+            foreach (object? member in __args__) AddMembers(members, member);
+            IReadOnlyList<object?> otherMembers = GetUnionMembers(other);
+            return otherMembers.Count != 0
+                && members.Count == otherMembers.Count
+                && members.All(argument =>
+                    otherMembers.Any(candidate => PythonOps.EqualRetBool(argument, candidate)));
         }
 
         public object __ne__([NotNone] object other) {
-            return !(other is UnionType union
-                && __args__.Count == union.__args__.Count
-                && __args__.All(argument =>
-                    union.__args__.Any(candidate => PythonOps.EqualRetBool(argument, candidate))));
+            var members = new List<object>();
+            foreach (object? member in __args__) AddMembers(members, member);
+            IReadOnlyList<object?> otherMembers = GetUnionMembers(other);
+            return !(otherMembers.Count != 0
+                && members.Count == otherMembers.Count
+                && members.All(argument =>
+                    otherMembers.Any(candidate => PythonOps.EqualRetBool(argument, candidate))));
         }
 
         private static void AddMembers(List<object> members, object? value) {
-            if (value is UnionType union) {
-                foreach (object? member in union.__args__) AddMembers(members, member);
+            IReadOnlyList<object?> nestedMembers = GetUnionMembers(value);
+            if (nestedMembers.Count != 0) {
+                foreach (object? member in nestedMembers) AddMembers(members, member);
             } else if (!members.Any(member => PythonOps.EqualRetBool(member, value))) {
                 members.Add(value!);
             }
+        }
+
+        private static IReadOnlyList<object?> GetUnionMembers(object? value) {
+            if (value is UnionType union) return union.__args__;
+            if (value is not null
+                && PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    value,
+                    "__origin__",
+                    out object? origin)
+                && origin is PythonType originType
+                && originType.Name == "Union"
+                && PythonType.Get__module__(DefaultContext.Default, originType) as string
+                    is ("typing" or "_typing")
+                && PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    value,
+                    "__args__",
+                    out object? arguments)
+                && arguments is PythonTuple tuple) {
+                return tuple;
+            }
+            return Array.Empty<object?>();
+        }
+
+        private static string FormatUnionMember(CodeContext context, object? item) {
+            if (item is PythonType type) {
+                string? module = PythonType.Get__module__(context, type) as string;
+                if (module == "builtins") {
+                    return type.Name == "NoneType" ? "None" : type.Name;
+                }
+                return module + "." + type.QualName;
+            }
+            if (item is PythonFunction
+                && PythonOps.TryGetBoundAttr(context, item, "__module__", out object? moduleValue)
+                && moduleValue is string moduleName
+                && PythonOps.TryGetBoundAttr(context, item, "__qualname__", out object? qualNameValue)
+                && qualNameValue is string qualName) {
+                return moduleName == "builtins" ? qualName : moduleName + "." + qualName;
+            }
+            return PythonOps.Repr(context, item);
         }
     }
 }

@@ -62,7 +62,8 @@ namespace IronPython.Compiler.Ast {
         public static readonly MethodInfo GetGlobalContext = GetMethod((Func<CodeContext, CodeContext>)PythonOps.GetGlobalContext);
         public static readonly MethodInfo GetParentContextFromFunction = GetMethod((Func<PythonFunction, CodeContext>)PythonOps.GetParentContextFromFunction);
         public static readonly MethodInfo MakeAnnotationFunction = GetMethod((Func<string[], string[], Func<object>[], bool, AnnotationFunction>)PythonOps.MakeAnnotationFunction);
-        public static readonly MethodInfo MakeLazyAnnotationFunction = GetMethod((Func<CodeContext, string[], string[], bool, AnnotationFunction>)PythonOps.MakeLazyAnnotationFunction);
+        public static readonly MethodInfo MakeLazyAnnotationFunction = GetMethod((Func<CodeContext, PythonDictionary, string[], string[], Func<object>[], bool, AnnotationFunction>)PythonOps.MakeLazyAnnotationFunction);
+        public static readonly MethodInfo GetLocalSnapshot = GetMethod((Func<CodeContext, PythonDictionary>)PythonOps.GetLocalSnapshot);
         public static readonly MethodInfo MakeFunction = GetMethod((Func<CodeContext, FunctionCode, object, object[], PythonDictionary, PythonDictionary, object, object>)PythonOps.MakeFunction);
         public static readonly MethodInfo MakeFunctionDebug = GetMethod((Func<CodeContext/*!*/, FunctionCode, object, object[], PythonDictionary, PythonDictionary, Delegate, object, object>)PythonOps.MakeFunctionDebug);
         public static readonly MethodInfo MakeClosureCell = GetMethod((Func<ClosureCell>)PythonOps.MakeClosureCell);

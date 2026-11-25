@@ -558,6 +558,17 @@ namespace IronPython.Runtime.Operations {
                 return IsInstance(context, o, tt);
             }
 
+            if (typeinfo is not PythonType
+                && PythonOps.TryGetBoundAttr(typeinfo, "__instancecheck__", out object? instanceCheck)
+                && PythonOps.IsCallable(context, instanceCheck)) {
+                object? result = PythonCalls.Call(context, instanceCheck, o);
+                if (result is bool isInstance) {
+                    return isInstance;
+                }
+                throw PythonOps.TypeError(
+                    "__instancecheck__() must return a bool");
+            }
+
             PythonType odt = DynamicHelpers.GetPythonType(o);
             if (IsSubClass(context, odt, typeinfo)) {
                 return true;
@@ -3968,6 +3979,26 @@ namespace IronPython.Runtime.Operations {
             string[] sources,
             bool stringOnly) {
             return new AnnotationFunction(context, names, sources, stringOnly);
+        }
+
+        public static AnnotationFunction MakeLazyAnnotationFunction(
+            CodeContext context,
+            PythonDictionary locals,
+            string[] names,
+            string[] sources,
+            Func<object>[] evaluators,
+            bool stringOnly) {
+            return new AnnotationFunction(
+                context,
+                locals,
+                names,
+                sources,
+                evaluators,
+                stringOnly);
+        }
+
+        public static PythonDictionary GetLocalSnapshot(CodeContext context) {
+            return Builtin.locals(context) as PythonDictionary ?? context.Dict;
         }
 
         [NoSideEffects]

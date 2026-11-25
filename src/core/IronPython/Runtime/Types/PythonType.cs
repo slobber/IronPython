@@ -258,13 +258,20 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                         _annotate,
                         ScriptingRuntimeHelpers.Int32ToObject(1)) as PythonDictionary
                         ?? new PythonDictionary();
-                    _annotate = null;
                 }
                 return _annotations;
             }
             set {
                 _annotations = value ?? new PythonDictionary();
                 _annotate = null;
+            }
+        }
+
+        public object? __annotate__ {
+            get => _annotate;
+            set {
+                _annotate = value;
+                _annotations = new PythonDictionary();
             }
         }
 
