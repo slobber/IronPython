@@ -135,7 +135,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             if (hasBound) {
                 object? effectiveBoundThunk = boundSource is null
                     ? boundThunk
-                    : new TypeParameterExpression(context, boundSource);
+                    : new TypeParameterExpression(context, boundSource, boundThunk);
                 names.Add("bound");
                 args.Add(null);
                 names.Add("_bound_thunk");
@@ -144,15 +144,21 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             if (hasDefault) {
                 object? effectiveDefaultThunk = defaultSource is null
                     ? defaultThunk
-                    : new TypeParameterExpression(context, defaultSource);
+                    : new TypeParameterExpression(context, defaultSource, defaultThunk);
                 names.Add("default");
                 args.Add(null);
                 names.Add("_default_thunk");
                 args.Add(effectiveDefaultThunk);
             }
             if (hasConstraints) {
+                object? effectiveConstraintsThunk = boundSource is null
+                    ? constraintsThunk
+                    : new TypeParameterExpression(
+                        context,
+                        boundSource,
+                        constraintsThunk);
                 names.Add("_constraints_thunk");
-                args.Add(constraintsThunk);
+                args.Add(effectiveConstraintsThunk);
             }
             if (kind is "TypeVar" or "ParamSpec") {
                 names.Add("infer_variance");

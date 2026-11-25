@@ -13,18 +13,29 @@ namespace IronPython.Runtime {
     public sealed class TypeParameterExpression {
         private readonly CodeContext _context;
         private readonly string _source;
+        private readonly object? _fallback;
         private PythonTuple _typeParameters = PythonTuple.EMPTY;
 
-        internal TypeParameterExpression(CodeContext context, string source) {
+        internal TypeParameterExpression(
+            CodeContext context,
+            string source,
+            object? fallback = null) {
             _context = context;
             _source = source;
+            _fallback = fallback;
         }
 
-        public object? __call__() =>
-            LightExceptions.CheckAndThrow(PythonOps.EvalAnnotationSource(
-                _context,
-                _source,
-                _typeParameters));
+        public object? __call__() {
+            try {
+                return LightExceptions.CheckAndThrow(PythonOps.EvalAnnotationSource(
+                    _context,
+                    _source,
+                    _typeParameters));
+            } catch (System.Exception) when (_fallback is not null) {
+                return LightExceptions.CheckAndThrow(
+                    PythonCalls.Call(_context, _fallback));
+            }
+        }
 
         public void _set_type_parameters([NotNone] PythonTuple typeParameters) {
             _typeParameters = typeParameters;
