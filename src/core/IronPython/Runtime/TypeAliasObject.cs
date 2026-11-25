@@ -5,6 +5,7 @@
 #nullable enable
 
 using System.Runtime.CompilerServices;
+using System.Linq;
 
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
@@ -34,9 +35,23 @@ namespace IronPython.Runtime {
             _typeParameters = typeParameters;
         }
 
-        public string __name__ => _name;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "Usage",
+            "IPY01",
+            Justification = "The setter deliberately raises a Python-facing read-only error.")]
+        public string __name__ {
+            get => _name;
+            set => throw PythonOps.AttributeError("readonly attribute '__name__'");
+        }
 
-        public string __qualname__ => _qualname;
+        [System.Diagnostics.CodeAnalysis.SuppressMessage(
+            "Usage",
+            "IPY01",
+            Justification = "The setter deliberately raises a Python-facing read-only error.")]
+        public string __qualname__ {
+            get => _qualname;
+            set => throw PythonOps.AttributeError("readonly attribute '__qualname__'");
+        }
 
         public object? __module__ {
             get => _module;
@@ -56,7 +71,22 @@ namespace IronPython.Runtime {
 
         public PythonTuple __type_params__ => _typeParameters;
 
-        public PythonTuple __parameters__ => _typeParameters;
+        public PythonTuple __parameters__ {
+            get {
+                var parameters = new System.Collections.Generic.List<object?>();
+                foreach (object parameter in _typeParameters) {
+                    if (DynamicHelpers.GetPythonType(parameter).Name == "TypeVarTuple") {
+                        var enumerator = PythonOps.GetEnumerator(parameter);
+                        while (enumerator.MoveNext()) {
+                            parameters.Add(enumerator.Current);
+                        }
+                    } else {
+                        parameters.Add(parameter);
+                    }
+                }
+                return PythonTuple.MakeTuple(parameters.ToArray());
+            }
+        }
 
         public object __getitem__([NotNone] object parameters) {
             object?[] arguments = parameters is PythonTuple tuple
@@ -65,11 +95,13 @@ namespace IronPython.Runtime {
             if (_typeParameters.Count == 0) {
                 throw PythonOps.TypeError("Only generic type aliases are subscriptable");
             }
-            if (_typeParameters.Count == 1 && arguments.Length != 1) {
+            bool variadic = _typeParameters.Any(parameter =>
+                DynamicHelpers.GetPythonType(parameter).Name == "TypeVarTuple");
+            if (!variadic && _typeParameters.Count == 1 && arguments.Length != 1) {
                 throw PythonOps.TypeError(
                     $"Too many arguments for {_name}; actual {arguments.Length}, expected 1");
             }
-            if (_typeParameters.Count > 1 && arguments.Length != _typeParameters.Count) {
+            if (!variadic && _typeParameters.Count > 1 && arguments.Length != _typeParameters.Count) {
                 throw PythonOps.TypeError(
                     $"Too {(arguments.Length > _typeParameters.Count ? "many" : "few")} arguments " +
                     $"for {_name}; actual {arguments.Length}, expected {_typeParameters.Count}");

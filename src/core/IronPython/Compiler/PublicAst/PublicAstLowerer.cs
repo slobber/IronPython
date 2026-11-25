@@ -208,7 +208,11 @@ namespace IronPython.Compiler.PublicAst {
                 .Select(GetTypeParameterName)
                 .ToArray();
             if (parameterNames.Distinct(StringComparer.Ordinal).Count() != parameterNames.Length) {
-                throw PythonOps.SyntaxError("duplicate type parameter");
+                string duplicate = parameterNames
+                    .GroupBy(name => name, StringComparer.Ordinal)
+                    .First(group => group.Count() > 1)
+                    .Key;
+                throw PythonOps.SyntaxError("duplicate type parameter '{0}'", duplicate);
             }
             var thunk = new CompilerAst.LambdaExpression(
                 new CompilerAst.FunctionDefinition(

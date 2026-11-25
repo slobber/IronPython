@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 
+using IronPython.Runtime;
 using IronPython.Runtime.Operations;
 
 using Microsoft.Scripting;
@@ -59,13 +60,28 @@ namespace IronPython.Runtime.Types {
         public string __repr__(CodeContext context) {
             string arguments = string.Join(
                 ", ",
-                __args__.Select(item => item is PythonType type
-                    ? type.Name
-                    : PythonOps.Repr(context, item)));
+                __args__.Select(item => FormatAliasArgument(context, item)));
             string origin = __origin__ is PythonType type
                 ? type.Name
-                : PythonOps.Repr(context, __origin__);
+                : __origin__ is TypeAliasObject alias && alias.__module__ is not null
+                    ? $"{alias.__module__}.{alias.__qualname__}"
+                    : PythonOps.Repr(context, __origin__);
             return $"{origin}[{arguments}]";
+        }
+
+        private static string FormatAliasArgument(CodeContext context, object? item) {
+            if (item is PythonType type) return type.Name;
+            if (item is PythonList list) {
+                return "[" + string.Join(
+                    ", ",
+                    list.Select(element => FormatAliasArgument(context, element))) + "]";
+            }
+            if (item is PythonTuple tuple) {
+                return "(" + string.Join(
+                    ", ",
+                    tuple.Select(element => FormatAliasArgument(context, element))) + ")";
+            }
+            return PythonOps.Repr(context, item);
         }
 
         public int __hash__() {
