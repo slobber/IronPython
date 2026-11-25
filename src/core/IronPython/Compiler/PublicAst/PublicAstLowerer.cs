@@ -98,6 +98,12 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         public static CompilerAst.Statement LowerStatement(AstNodes.Stmt statement) {
+            if (statement is AstNodes.Assign assignStatement
+                && assignStatement.Targets.Any(
+                    target => target is AstNodes.Name { Id: "__conditional_annotations__" })) {
+                throw PythonOps.TypeError(
+                    "cannot rebind __conditional_annotations__");
+            }
             RemoveAssignedTypeParameters(statement);
             CompilerAst.Statement lowered = statement switch {
                 AstNodes.Assign assign => new CompilerAst.AssignmentStatement(

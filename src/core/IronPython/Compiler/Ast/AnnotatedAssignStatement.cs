@@ -29,7 +29,7 @@ namespace IronPython.Compiler.Ast {
         public bool Simple { get; }
 
         public override MSAst.Expression Reduce() {
-            if (Parent is PythonAst || Parent is ClassDefinition) {
+            if (Simple && (Parent is PythonAst || Parent is ClassDefinition)) {
                 if (Target is NameExpression name) {
                     MSAst.Expression annotation = MSAst.Expression.Call(
                         AstMethods.SetAnnotation,
