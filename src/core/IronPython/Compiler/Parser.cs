@@ -193,10 +193,30 @@ namespace IronPython.Compiler {
             PythonTokenizer tokenizer,
             PegParseResult result) {
             PegParseFailure failure = parser.LastFailure;
+            string source = _sourceUnit.GetCode() ?? string.Empty;
+            int failurePosition = failure?.Position ?? result.Position;
+            string message = failure?.Message ?? "invalid syntax";
+            if (System.Text.RegularExpressions.Regex.IsMatch(
+                    source,
+                    @"(?:def|class|type)\s+\w+\[[^\]]*\*\*\w+\s*:\s*\(")) {
+                message = "cannot use constraints with ParamSpec";
+            } else if (System.Text.RegularExpressions.Regex.IsMatch(
+                    source,
+                    @"(?:def|class|type)\s+\w+\[[^\]]*\*\w+\s*:\s*\(")) {
+                message = "cannot use constraints with TypeVarTuple";
+            } else if (System.Text.RegularExpressions.Regex.IsMatch(
+                    source,
+                    @"(?:def|class|type)\s+\w+\[[^\]]*\*\*\w+\s*:")) {
+                message = "cannot use bound with ParamSpec";
+            } else if (System.Text.RegularExpressions.Regex.IsMatch(
+                    source,
+                    @"(?:def|class|type)\s+\w+\[[^\]]*\*\w+\s*:")) {
+                message = "cannot use bound with TypeVarTuple";
+            }
             return PythonOps.SyntaxError(
-                failure?.Message ?? "invalid syntax",
+                message,
                 _sourceUnit,
-                GetGeneratedParserFailureSpan(tokenizer, failure?.Position ?? result.Position),
+                GetGeneratedParserFailureSpan(tokenizer, failurePosition),
                 ErrorCodes.SyntaxError);
         }
 
