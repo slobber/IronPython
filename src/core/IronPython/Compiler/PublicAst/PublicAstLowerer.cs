@@ -30,6 +30,7 @@ namespace IronPython.Compiler.PublicAst {
         private static bool _inClassBody;
         [ThreadStatic]
         private static HashSet<string>? _activeTypeParameterNames;
+        private static bool _moduleHasDirectAnnotations;
         [ThreadStatic]
         private static string? _functionQualname;
         [ThreadStatic]
@@ -66,6 +67,7 @@ namespace IronPython.Compiler.PublicAst {
             var locations = SourceLocationMap.Create(sourceText);
             _sourceText = sourceText;
             _sourceLocations = locations;
+            _moduleHasDirectAnnotations = false;
             try {
                 CompilerAst.Statement[] statements = module.Body
                     .Select(LowerStatement)
@@ -84,9 +86,11 @@ namespace IronPython.Compiler.PublicAst {
                     languageFeatures,
                     false,
                     context);
+                var loweredBody = new CompilerAst.SuiteStatement(statements);
+                ast.HasDirectAnnotations = _moduleHasDirectAnnotations;
                 ast.ParsingFinished(
                     locations.LineStarts,
-                    new CompilerAst.SuiteStatement(statements),
+                    loweredBody,
                     languageFeatures);
                 ast.SkipNamedExpressionCheck = true;
                 ast.SkipStarredExpressionCheck = true;
@@ -114,11 +118,7 @@ namespace IronPython.Compiler.PublicAst {
                     LowerOperator(assign.Op),
                     LowerExpression(assign.Target),
                     LowerExpression(assign.Value)),
-                AstNodes.AnnAssign assign => new CompilerAst.AnnotatedAssignStatement(
-                    LowerExpression(assign.Target),
-                    LowerExpression(assign.Annotation),
-                    assign.Value is null ? null : LowerExpression(assign.Value),
-                    assign.Simple != 0),
+                AstNodes.AnnAssign assign => LowerAnnotatedAssign(assign),
                 AstNodes.Import import => new CompilerAst.ImportStatement(
                     import.Names.Select(alias => new CompilerAst.ModuleName(alias.Name.Split('.'))).ToArray(),
                     import.Names.Select(alias => alias.Asname).ToArray(),
@@ -578,9 +578,11 @@ namespace IronPython.Compiler.PublicAst {
                     continue;
                 }
                 if (value is AstNodes.Interpolation interpolation) {
+                    string? expression = GetReplacementFieldExpression(
+                        GetSourceText(interpolation));
                     interpolations.Add(new CompilerAst.TemplateInterpolation(
                         LowerExpression(interpolation.Value),
-                        interpolation.Str as string ?? string.Empty,
+                        expression ?? (interpolation.Str as string) ?? string.Empty,
                         interpolation.Conversion < 0
                             ? null
                             : ((char)interpolation.Conversion).ToString(),
@@ -596,6 +598,37 @@ namespace IronPython.Compiler.PublicAst {
             return new CompilerAst.TemplateStringExpression(
                 strings.ToArray(),
                 interpolations.ToArray());
+        }
+
+        private static string? GetReplacementFieldExpression(string source) {
+            if (!source.StartsWith('{') || !source.EndsWith('}')) return null;
+            string content = source.Substring(1, source.Length - 2);
+            int depth = 0;
+            char quote = '\0';
+            bool escaped = false;
+            for (int i = 0; i < content.Length; i++) {
+                char current = content[i];
+                if (quote != '\0') {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (current == '\\') {
+                        escaped = true;
+                    } else if (current == quote) {
+                        quote = '\0';
+                    }
+                    continue;
+                }
+                if (current is '\'' or '"') {
+                    quote = current;
+                } else if (current is '(' or '[' or '{') {
+                    depth++;
+                } else if (current is ')' or ']' or '}') {
+                    depth--;
+                } else if (depth == 0 && current is '!' or ':') {
+                    return content.Substring(0, i);
+                }
+            }
+            return content;
         }
 
         private static CompilerAst.Expression LowerTemplateFormatSpec(
@@ -1533,11 +1566,14 @@ namespace IronPython.Compiler.PublicAst {
             function.GeneratorStop = function.IsGenerator;
             function.Decorators = decorators.Select(LowerExpression).ToArray();
             if (returns is not null) {
-                EnsureNoDisallowedTypeExpression(returns, returns);
+                ValidateAnnotationExpression(returns);
             }
             function.ReturnAnnotation = returns is null
                 ? null!
                 : LowerExpression(returns);
+            function.ReturnAnnotationSource = returns is null
+                ? null!
+                : GetSourceText(returns);
             if (typeParameters.Count != 0) {
                 ValidateTypeParameters(typeParameters);
                 function.TypeParameterNames = typeParameters
@@ -1629,13 +1665,30 @@ namespace IronPython.Compiler.PublicAst {
                 Annotation = argument.Annotation is null
                     ? null!
                     : annotation,
+                AnnotationSource = argument.Annotation is null
+                    ? null!
+                    : GetSourceText(argument.Annotation),
                 AnnotationUsesEvaluator = annotateStarredExpression
             };
         }
 
         private static CompilerAst.Expression LowerParameterAnnotation(AstNodes.ExprBase annotation) {
-            EnsureNoDisallowedTypeExpression(annotation, annotation);
+            ValidateAnnotationExpression(annotation);
             return LowerExpression(annotation);
+        }
+
+        private static CompilerAst.AnnotatedAssignStatement LowerAnnotatedAssign(
+            AstNodes.AnnAssign assign) {
+            ValidateAnnotationExpression(assign.Annotation);
+            if (_classDefinition is null && _functionQualname is null) {
+                _moduleHasDirectAnnotations = true;
+            }
+            return new CompilerAst.AnnotatedAssignStatement(
+                LowerExpression(assign.Target),
+                LowerExpression(assign.Annotation),
+                assign.Value is null ? null : LowerExpression(assign.Value),
+                assign.Simple != 0,
+                GetSourceText(assign.Annotation));
         }
 
         private static CompilerAst.Statement LowerClass(AstNodes.ClassDef @class) {
@@ -1759,6 +1812,7 @@ namespace IronPython.Compiler.PublicAst {
             _classQualname = classQualname;
             _inClassBody = true;
             CompilerAst.SuiteStatement body;
+            bool hasDirectAnnotations = HasDirectAnnotations(@class.Body);
             try {
                 body = LowerSuite(@class.Body);
             } finally {
@@ -1769,6 +1823,7 @@ namespace IronPython.Compiler.PublicAst {
             }
 
             definition.Body = body;
+            definition.HasDirectAnnotations = hasDirectAnnotations;
             definition.Decorators = decorators;
 
             return typeParameterAssignment is null
@@ -1810,6 +1865,33 @@ namespace IronPython.Compiler.PublicAst {
             return finder.Found;
         }
 
+        private static bool HasDirectAnnotations(
+            System.Collections.Generic.IReadOnlyList<AstNodes.Stmt> body) {
+            var finder = new DirectAnnotationFinder();
+            foreach (AstNodes.Stmt statement in body) {
+                finder.Visit(statement);
+            }
+            return finder.Found;
+        }
+
+        private sealed class DirectAnnotationFinder : AstNodes.PythonAstWalker {
+            public bool Found { get; private set; }
+
+            protected override void VisitNode(AstNodes.PythonAstNode node) {
+                if (node is AstNodes.AnnAssign) {
+                    Found = true;
+                    return;
+                }
+                if (node is AstNodes.FunctionDef
+                    or AstNodes.AsyncFunctionDef
+                    or AstNodes.ClassDef
+                    or AstNodes.Lambda) {
+                    return;
+                }
+                base.VisitNode(node);
+            }
+        }
+
         private static bool ContainsComprehension(AstNodes.ExprBase expression) {
             var finder = new ComprehensionFinder();
             finder.Visit(expression);
@@ -1843,6 +1925,50 @@ namespace IronPython.Compiler.PublicAst {
                 throw PythonOps.SyntaxError(
                     "{0} expression cannot be used within a type parameter list",
                     finder.Found.ToLowerInvariant());
+            }
+        }
+
+        private static void ValidateAnnotationExpression(AstNodes.ExprBase expression) {
+            var finder = new AnnotationExpressionValidator();
+            finder.Visit(expression);
+            if (finder.Message is not null) {
+                throw PythonOps.SyntaxError(finder.Message);
+            }
+        }
+
+        private sealed class AnnotationExpressionValidator : AstNodes.PythonAstWalker {
+            public string? Message { get; private set; }
+
+            protected override void VisitNode(AstNodes.PythonAstNode node) {
+                switch (node.NodeKind) {
+                    case "Yield":
+                    case "YieldFrom":
+                        Message = "yield expression cannot be used within an annotation";
+                        return;
+                    case "NamedExpr":
+                        Message = "named expression cannot be used within an annotation";
+                        return;
+                    case "Await":
+                        Message = "await expression cannot be used within an annotation";
+                        return;
+                }
+                if (node is AstNodes.ListComp or AstNodes.SetComp
+                    or AstNodes.DictComp or AstNodes.GeneratorExp) {
+                    var comprehensions = node.GetFields()
+                        .Where(field => field.Name is "generators" or "Generators")
+                        .SelectMany(field => field.Value as IEnumerable<AstNodes.Comprehension>
+                            ?? Array.Empty<AstNodes.Comprehension>());
+                    if (comprehensions.Any(generator => generator.IsAsync != 0)) {
+                        Message =
+                            "asynchronous comprehension outside of an asynchronous function";
+                        return;
+                    }
+                }
+                if (node is AstNodes.FunctionDef or AstNodes.AsyncFunctionDef
+                    or AstNodes.ClassDef or AstNodes.Lambda) {
+                    return;
+                }
+                base.VisitNode(node);
             }
         }
 

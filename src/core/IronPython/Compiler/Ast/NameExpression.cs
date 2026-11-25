@@ -2,6 +2,8 @@
 // The .NET Foundation licenses this file to you under the Apache 2.0 License.
 // See the LICENSE file in the project root for more information.
 
+using System.Linq;
+
 using MSAst = System.Linq.Expressions;
 
 using Microsoft.Scripting;
@@ -101,6 +103,16 @@ namespace IronPython.Compiler.Ast {
                             Parent.LocalContext,
                             Ast.Constant(Name),
                             AstUtils.Convert(right, typeof(object))));
+                    if (classDefinition.TypeParameterNames.Contains(Name)) {
+                        assignment = Ast.Block(
+                            assignment,
+                            Ast.Call(
+                                typeof(IronPython.Runtime.Operations.PythonOps).GetMethod(
+                                    nameof(IronPython.Runtime.Operations.PythonOps.SetShadowedTypeParameter))!,
+                                Parent.LocalContext,
+                                Ast.Constant(Name),
+                                AstUtils.Convert(right, typeof(object))));
+                    }
                 }
             } else {
                 assignment = Ast.Call(

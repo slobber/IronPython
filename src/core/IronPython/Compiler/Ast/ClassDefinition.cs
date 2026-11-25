@@ -63,6 +63,7 @@ namespace IronPython.Compiler.Ast {
         public Expression? TypeParameters { get; internal set; }
 
         internal IReadOnlyList<string> TypeParameterNames { get; set; } = Array.Empty<string>();
+        internal bool HasDirectAnnotations { get; set; }
 
         internal PythonVariable[] TypeParameterVariables { get; private set; } = Array.Empty<PythonVariable>();
 
@@ -327,6 +328,13 @@ namespace IronPython.Compiler.Ast {
             var createLocal = CreateLocalContext(_outerContextParam, newNamespace: false);
 
             init.Add(Ast.Assign(LocalCodeContextVariable, createLocal));
+            if (HasDirectAnnotations) {
+                init.Add(Ast.Call(
+                    typeof(PythonOps).GetMethod(
+                        nameof(PythonOps.EnsureAnnotationFunction))!,
+                    LocalContext,
+                    Ast.Constant(GlobalParent.FutureAnnotations)));
+            }
 
             MSAst.ParameterExpression? typeParameterValues = null;
             if (TypeParameters is not null) {
@@ -350,6 +358,9 @@ namespace IronPython.Compiler.Ast {
                         nameof(PythonOps.ConfigureTypeParameterExpressions))!,
                     LocalContext,
                     typeParameterValues));
+                init.Add(SetLocalName(
+                    "__shadowed_type_params__",
+                    Ast.Call(AstMethods.MakeEmptyDict)));
             }
 
             // __module__ = __name__
@@ -394,6 +405,13 @@ namespace IronPython.Compiler.Ast {
                             typeof(string))),
                     docStmt is not null ? docStmt : AstUtils.Empty(),
                     bodyStmt,
+                    typeParameterValues is null
+                        ? AstUtils.Empty()
+                        : Ast.Block(
+                            TypeParameterVariables.Select((variable, index) =>
+                                (MSAst.Expression)SetLocalName(
+                                    TypeParameterNames[index],
+                                    GetVariableExpression(variable)))),
                     typeParameterValues is null
                         ? AstUtils.Empty()
                         : Ast.Block(

@@ -195,8 +195,8 @@
 - [ ] 12.2 Implement annotation scopes and name resolution.
 - [x] 12.3 Implement module and class `__annotations__`.
 - [x] 12.4 Implement `from __future__ import annotations`.
-- [ ] 12.5 Implement PEP 649/749 deferred annotation evaluation.
-- [ ] 12.6 Implement `annotationlib` and `__annotate__`.
+- [x] 12.5 Implement PEP 649/749 deferred annotation evaluation.
+- [x] 12.6 Implement `annotationlib` and `__annotate__`.
 - [ ] 12.7 Implement `inspect.get_annotations`, `inspect.signature`, and
   `typing.get_type_hints` behavior.
 - [x] 12.8 Implement PEP 585 built-in generics and generic aliases.

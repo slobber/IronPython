@@ -795,10 +795,25 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 if (args.Length == 1 && args[0] is PythonTuple tuple && tuple.Count != 0) {
                     args = tuple.ToArray();
                 }
-                if (TryResolveSlot(
+                PythonTypeSlot classGetItemSlot = null;
+                bool hasClassGetItem = false;
+                if (!IsSystemType) {
+                    for (int i = 0; i < _resolutionOrder.Count; i++) {
+                        if (_resolutionOrder[i].TryLookupSlot(
+                                DefaultContext.Default,
+                                "__class_getitem__",
+                                out classGetItemSlot)) {
+                            hasClassGetItem = true;
+                            break;
+                        }
+                    }
+                } else {
+                    hasClassGetItem = TryResolveSlot(
                         DefaultContext.Default,
                         "__class_getitem__",
-                        out PythonTypeSlot classGetItemSlot)) {
+                        out classGetItemSlot);
+                }
+                if (hasClassGetItem) {
                     if (!classGetItemSlot.TryGetValue(
                             DefaultContext.Default,
                             this,
@@ -856,6 +871,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         private bool IsSubscriptableGenericType() {
             if (IsSystemType) {
                 return this != TypeCache.Object
+                    && Name != "range"
                     && this != TypeCache.Int32
                     && this != TypeCache.BigInteger
                     && this != TypeCache.Boolean

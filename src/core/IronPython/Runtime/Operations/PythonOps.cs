@@ -1144,6 +1144,19 @@ namespace IronPython.Runtime.Operations {
             annotationFunction.Add(name, source, evaluator);
         }
 
+        public static void EnsureAnnotationFunction(
+            CodeContext context,
+            bool stringOnly) {
+            PythonDictionary target = context.Dict;
+            if (!target.ContainsKey("__annotate__")) {
+                target["__annotate__"] = new AnnotationFunction(
+                    context,
+                    Array.Empty<string>(),
+                    Array.Empty<string>(),
+                    stringOnly);
+            }
+        }
+
         public static void FinalizeModuleAnnotations(CodeContext context) {
             PythonDictionary target = context.GlobalDict;
             if (target.TryGetValue("__annotate__", out object? annotate)
@@ -1669,6 +1682,19 @@ namespace IronPython.Runtime.Operations {
             // Call class body lambda
             CodeContext localContext = func(classContext);
             PythonDictionary vars = localContext.Dict;
+            if (vars.TryGetValue("__shadowed_type_params__", out object? shadowedStorage)
+                && shadowedStorage is PythonDictionary shadowedTypeParameters) {
+                foreach (var pair in shadowedTypeParameters) {
+                    vars[pair.Key] = pair.Value;
+                    if (classdict is PythonDictionary classDictionary) {
+                        classDictionary[pair.Key] = pair.Value;
+                    }
+                }
+                vars.Remove("__shadowed_type_params__");
+                if (classdict is PythonDictionary preparedClassDictionary) {
+                    preparedClassDictionary.Remove("__shadowed_type_params__");
+                }
+            }
             if (!PythonOps.EqualRetBool(originalBases, bases)) {
                 vars["__orig_bases__"] = originalBases;
             }
@@ -4019,6 +4045,27 @@ namespace IronPython.Runtime.Operations {
 
         public static PythonDictionary GetLocalSnapshot(CodeContext context) {
             return Builtin.locals(context) as PythonDictionary ?? context.Dict;
+        }
+
+        public static PythonDictionary MakeAnnotationLocals(
+            CodeContext context,
+            string[] names,
+            ClosureCell[] cells) {
+            var locals = new PythonDictionary(GetLocalSnapshot(context));
+            for (int i = 0; i < names.Length; i++) {
+                locals[names[i]] = cells[i];
+            }
+            return locals;
+        }
+
+        public static void SetShadowedTypeParameter(
+            CodeContext context,
+            string name,
+            object? value) {
+            if (context.TryGetVariable("__shadowed_type_params__", out object? storage)
+                && storage is PythonDictionary dictionary) {
+                dictionary[name] = value;
+            }
         }
 
         [NoSideEffects]

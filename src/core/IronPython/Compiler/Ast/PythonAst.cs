@@ -47,6 +47,7 @@ namespace IronPython.Compiler.Ast {
         private Dictionary<PythonVariable, MSAst.Expression> _globalVariables = new Dictionary<PythonVariable, MSAst.Expression>();
         internal readonly Profiler _profiler;                            // captures timing data if profiling
         private bool? _adaptiveCompilationDisabled;                      // whether -X NoAdaptiveCompilation applies to this source, once known
+        internal bool HasDirectAnnotations { get; set; }
 
         internal const string GlobalContextName = "$globalContext";
         internal static MSAst.ParameterExpression _functionCode = Ast.Variable(typeof(FunctionCode), "$functionCode");
@@ -413,6 +414,13 @@ namespace IronPython.Compiler.Ast {
             // Without it, the first statement would take that role, and fire no 'line' event of its own.
             block.Add(MakeEntrySequencePoint());
             AddInitialization(block);
+            if (HasDirectAnnotations) {
+                block.Add(Ast.Call(
+                    typeof(PythonOps).GetMethod(
+                        nameof(PythonOps.EnsureAnnotationFunction))!,
+                    LocalContext,
+                    Ast.Constant(FutureAnnotations)));
+            }
 
             string doc = GetDocumentation(_body);
             bool isExecOrEvalModule = IsModule &&

@@ -29,6 +29,9 @@ namespace IronPython.Compiler.Ast {
             }
         }
 
+        internal string[] Strings => _strings;
+        internal TemplateInterpolation[] Interpolations => _interpolations;
+
         public override MSAst.Expression Reduce() {
             MSAst.Expression strings = Ast.NewArrayInit(
                 typeof(string),

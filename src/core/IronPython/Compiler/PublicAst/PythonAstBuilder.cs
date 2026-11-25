@@ -2467,11 +2467,11 @@ namespace IronPython.Compiler.PublicAst {
                 : null;
             bool hasDebugExpression = arguments.TryGetValue("debug_expr", out object? rawDebug)
                 && rawDebug is not null;
+            AstSpan span = SpanOf(arguments);
             string expression = GetInterpolationExpressionText(value, rawDebug);
             if (hasDebugExpression && conversion < 0 && formatSpec is null) {
                 conversion = 'r';
             }
-            AstSpan span = SpanOf(arguments);
             var interpolation = new AstNodes.Interpolation(
                 value,
                 expression,
@@ -4049,6 +4049,9 @@ namespace IronPython.Compiler.PublicAst {
                     token.StartByteColumn,
                     token.EndLine,
                     token.EndByteColumn);
+            }
+            if (value is CompareEntry comparison) {
+                return TryGetSpan(comparison.Value);
             }
             if (value is IReadOnlyList<object?> sequence && sequence.Count > 0) {
                 return SpanOf(sequence[0], sequence[sequence.Count - 1]);

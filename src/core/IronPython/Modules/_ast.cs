@@ -355,8 +355,16 @@ namespace IronPython.Modules {
             internal static slice TrySliceConvert(AstExpression expr) {
                 if (expr is SliceExpression)
                     return new Slice((SliceExpression)expr);
-                if (expr is TupleExpression && ((TupleExpression)expr).IsExpandable)
-                    return new ExtSlice(((Tuple)Convert(expr)).elts);
+                if (expr is TupleExpression tuple
+                    && (tuple.IsExpandable || tuple.Items.Any(item => item is SliceExpression))) {
+                    var dimensions = new PythonList(tuple.Items.Count);
+                    foreach (AstExpression item in tuple.Items) {
+                        dimensions.Add(
+                            (object)TrySliceConvert(item)
+                            ?? new Index(Convert(item))!);
+                    }
+                    return new ExtSlice(dimensions);
+                }
                 return null;
             }
 
@@ -392,6 +400,7 @@ namespace IronPython.Modules {
                     StarredExpression x => new Starred(x, ctx),
                     JoinedStringExpression x => new JoinedStr(x),
                     FormattedValueExpression x => new FormattedValue(x),
+                    TemplateStringExpression x => new TemplateStr(x),
                     NamedExpression x => new NamedExpr(x),
                     _ => throw new ArgumentTypeException("Unexpected expression type: " + expr.GetType()),
                 };
@@ -781,7 +790,7 @@ namespace IronPython.Modules {
         }
 
         [PythonType]
-        public abstract class slice : AST {
+        public abstract class slice : expr {
         }
 
         [PythonType]
@@ -954,6 +963,9 @@ namespace IronPython.Modules {
             public Attribute() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(value), nameof(attr), nameof(ctx) });
             }
+
+            public Attribute(expr value, string attr)
+                : this(value, attr, Load.Instance, null, null) { }
 
             public Attribute(expr value, string attr, expr_context ctx,
                 [Optional] int? lineno, [Optional] int? col_offset)
@@ -1356,7 +1368,7 @@ namespace IronPython.Modules {
         [PythonType]
         public class Constant : expr {
             public Constant() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(value), });
+                _fields = PythonTuple.MakeTuple(new[] { nameof(value), nameof(kind) });
             }
 
             internal Constant(object value)
@@ -1369,11 +1381,17 @@ namespace IronPython.Modules {
                 _col_offset = col_offset;
             }
 
+            public Constant(object value, string kind, [Optional] int? lineno, [Optional] int? col_offset)
+                : this(value, lineno, col_offset) {
+                this.kind = kind;
+            }
+
             internal override AstExpression Revert() {
                 return new ConstantExpression(value);
             }
 
             public object value { get; set; }
+            public string kind { get; set; }
         }
 
         [PythonType]
@@ -1620,7 +1638,7 @@ namespace IronPython.Modules {
                 this.dims = dims;
             }
 
-            internal AstExpression[] Revert() {
+            internal new AstExpression[] Revert() {
                 List<AstExpression> ret = new List<AstExpression>(dims.Count);
                 foreach (expr ex in dims)
                     ret.Add(expr.Revert(ex));
@@ -2201,6 +2219,64 @@ namespace IronPython.Modules {
         }
 
         [PythonType]
+        public class Interpolation : expr {
+            public Interpolation() {
+                _fields = PythonTuple.MakeTuple(
+                    new[] { nameof(str), nameof(value), nameof(conversion), nameof(format_spec) });
+            }
+
+            public Interpolation(string str, expr value, int conversion, expr format_spec)
+                : this() {
+                this.str = str;
+                this.value = value;
+                this.conversion = conversion;
+                this.format_spec = format_spec;
+            }
+
+            internal Interpolation(TemplateInterpolation interpolation)
+                : this() {
+                str = interpolation.Expression;
+                value = Convert(interpolation.Value);
+                conversion = interpolation.Conversion is { Length: 1 }
+                    ? interpolation.Conversion[0]
+                    : -1;
+                format_spec = interpolation.FormatSpec is null
+                    ? null
+                    : Convert(interpolation.FormatSpec);
+            }
+
+            public string str { get; set; }
+            public expr value { get; set; }
+            public int conversion { get; set; }
+            public expr format_spec { get; set; }
+        }
+
+        [PythonType]
+        public class TemplateStr : expr {
+            public TemplateStr() {
+                _fields = PythonTuple.MakeTuple(new[] { nameof(values) });
+            }
+
+            public TemplateStr(PythonList values)
+                : this() {
+                this.values = values;
+            }
+
+            internal TemplateStr(TemplateStringExpression template)
+                : this() {
+                values = new PythonList();
+                for (int i = 0; i < template.Strings.Length; i++) {
+                    values.Add(new Constant(template.Strings[i]));
+                    if (i < template.Interpolations.Length) {
+                        values.Add(new Interpolation(template.Interpolations[i]));
+                    }
+                }
+            }
+
+            public PythonList values { get; set; }
+        }
+
+        [PythonType]
         public class Lambda : expr {
             public Lambda() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(args), nameof(body) });
@@ -2267,6 +2343,9 @@ namespace IronPython.Modules {
             public List() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(elts), nameof(ctx) });
             }
+
+            public List(PythonList elts)
+                : this(elts, Load.Instance, null, null) { }
 
             public List(PythonList elts, expr_context ctx, [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
@@ -2367,7 +2446,8 @@ namespace IronPython.Modules {
         [PythonType]
         public class Module : mod {
             public Module() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(body), });
+                _fields = PythonTuple.MakeTuple(new[] { nameof(body), nameof(type_ignores) });
+                type_ignores = new PythonList();
             }
 
             public Module(PythonList body)
@@ -2381,6 +2461,7 @@ namespace IronPython.Modules {
             }
 
             public PythonList body { get; set; }
+            public PythonList type_ignores { get; set; }
 
             internal override PythonList GetStatements() {
                 return body;
@@ -2398,6 +2479,9 @@ namespace IronPython.Modules {
             public Name() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(id), nameof(ctx) });
             }
+
+            public Name(string id)
+                : this(id, Load.Instance, null, null) { }
 
             public Name(string id, expr_context ctx, [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
@@ -2819,7 +2903,10 @@ namespace IronPython.Modules {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(value), nameof(slice), nameof(ctx) });
             }
 
-            public Subscript(expr value, slice slice, expr_context ctx,
+            public Subscript(expr value, expr slice)
+                : this(value, slice, Load.Instance, null, null) { }
+
+            public Subscript(expr value, expr slice, expr_context ctx,
                 [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.value = value;
@@ -2864,7 +2951,7 @@ namespace IronPython.Modules {
 
             public expr value { get; set; }
 
-            public slice slice { get; set; }
+            public expr slice { get; set; }
 
             public expr_context ctx { get; set; }
         }
@@ -2941,6 +3028,9 @@ namespace IronPython.Modules {
             public Tuple() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(elts), nameof(ctx) });
             }
+
+            public Tuple(PythonList elts)
+                : this(elts, Load.Instance, null, null) { }
 
             public Tuple(PythonList elts, expr_context ctx, [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {

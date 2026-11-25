@@ -129,6 +129,12 @@ namespace IronPython.Modules {
             return false;
         }
 
+        public static void _override_frozen_modules_for_tests(int @override) {
+            // IronPython does not load CPython frozen modules. Keep the CPython
+            // test-support API available while treating both override modes as
+            // no-ops.
+        }
+
         public static void _set_lazy_attributes(object module, string name) {
             // Lazy values are installed directly by the compiler today. The import
             // system still calls this hook for every loaded module, so it must be

@@ -24,8 +24,8 @@ namespace IronPython.Compiler.Ast {
         public override MSAst.Expression Reduce() {
             return Ast.Call(
                 AstMethods.MakeGeneratorExpression,
-                Function.MakeFunctionExpression(),
-                Iterable
+                Ast.Convert(Function.MakeFunctionExpression(), typeof(object)),
+                Ast.Convert(Iterable, typeof(object))
             );
         }
 

@@ -8,11 +8,13 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Text;
 
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
+using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
 
 namespace IronPython.Runtime {
@@ -32,17 +34,52 @@ namespace IronPython.Runtime {
         public static InterpolationObject __new__(
             CodeContext context,
             [NotNone] PythonType cls,
+            object? value) {
+            return new InterpolationObject(value, string.Empty, null, string.Empty);
+        }
+
+        public static InterpolationObject __new__(
+            CodeContext context,
+            [NotNone] PythonType cls,
+            object? value,
+            [NotNone] string expression) {
+            return new InterpolationObject(value, expression, null, string.Empty);
+        }
+
+        public static InterpolationObject __new__(
+            CodeContext context,
+            [NotNone] PythonType cls,
+            object? value,
+            [NotNone] string expression,
+            object? conversion) {
+            return new InterpolationObject(
+                value,
+                expression,
+                ConversionName(conversion),
+                string.Empty);
+        }
+
+        public static InterpolationObject __new__(
+            CodeContext context,
+            [NotNone] PythonType cls,
             object? value,
             [NotNone] string expression,
             object? conversion,
             [NotNone] string formatSpec) {
-            string? conversionName = conversion switch {
+            return new InterpolationObject(
+                value,
+                expression,
+                ConversionName(conversion),
+                formatSpec);
+        }
+
+        private static string? ConversionName(object? conversion) {
+            return conversion switch {
                 null => null,
                 string name => name,
                 _ => throw PythonOps.TypeError(
                     "Interpolation() argument 'conversion' must be str or None")
             };
-            return new InterpolationObject(value, expression, conversionName, formatSpec);
         }
 
         public object? value => Value;

@@ -33,6 +33,7 @@ namespace IronPython.Runtime {
         private PythonTuple _enclosingTypeParameters = PythonTuple.EMPTY;
         private object? _owner;
         private string _qualname = "__annotate__";
+        private int _version;
 
         public AnnotationFunction(
             [NotNone] string[] names,
@@ -80,6 +81,7 @@ namespace IronPython.Runtime {
             _names.Add(name);
             _sources.Add(source);
             _evaluators.Add(evaluator);
+            _version++;
         }
 
         internal void SetTypeParameters(string[] names, PythonTuple typeParameters) {
@@ -94,6 +96,14 @@ namespace IronPython.Runtime {
         public object? __owner__ {
             get => _owner;
         }
+
+        public PythonDictionary? __captured_locals__ {
+            get => _capturedLocals;
+        }
+
+        public bool __string_only__ => _stringOnly;
+
+        public int __version__ => _version;
 
         public void SetOwner([NotNone] object value) => _owner = value;
 
@@ -157,20 +167,32 @@ namespace IronPython.Runtime {
         public PythonDictionary _evaluate_format(int annotationFormat) =>
             Evaluate(annotationFormat);
 
-        internal PythonDictionary Evaluate(int annotationFormat = 1) {
+        public PythonDictionary _evaluate_values() =>
+            Evaluate(1, forceValues: true);
+
+        internal PythonDictionary Evaluate(int annotationFormat = 1, bool forceValues = false) {
             PythonDictionary annotations = new();
-            if (_stringOnly) {
+            if (_stringOnly && !forceValues) {
                 for (int i = 0; i < _names.Count; i++) {
-                    annotations.Add(_names[i], _sources[i]);
+                    annotations.Add(
+                        _names[i],
+                        NormalizeAnnotationSource(_sources[i]));
                 }
                 return annotations;
             }
             PythonDictionary? locals = null;
-            if (_context is not null && _typeParameters.Count != 0) {
+            if (_context is not null
+                && (_capturedLocals is not null || _typeParameters.Count != 0)) {
                 locals = new PythonDictionary();
                 PythonDictionary scopeLocals = _capturedLocals ?? _context.Dict;
                 foreach (object key in scopeLocals.Keys) {
                     if (scopeLocals.TryGetValueNoMissing(key, out object? value)) {
+                        if (value is ClosureCell cell) {
+                            if (cell.Value == Uninitialized.Instance) {
+                                continue;
+                            }
+                            value = cell.Value;
+                        }
                         locals[key] = value;
                         if (value is not null
                             && (DynamicHelpers.GetPythonType(value).Name is
@@ -204,19 +226,29 @@ namespace IronPython.Runtime {
                 case 1:
                 case 2:
                     for (int i = 0; i < _names.Count; i++) {
+                        object? value = EvaluateAnnotation(i, locals);
+                        if (value is LazyImport lazyImport && _context is not null) {
+                            value = lazyImport.resolve(_context);
+                        }
                         annotations.Add(
                             _names[i],
-                            EvaluateAnnotation(i, locals));
+                            value);
                     }
                     return annotations;
                 case 3:
                     for (int i = 0; i < _names.Count; i++) {
                         try {
+                            object? value = EvaluateAnnotation(i, locals);
+                            if (value is LazyImport lazyImport && _context is not null) {
+                                value = lazyImport.resolve(_context);
+                            }
                             annotations.Add(
                                 _names[i],
-                                EvaluateAnnotation(i, locals));
-                        } catch (UnboundNameException) {
-                            annotations.Add(_names[i], MakeForwardRef(_sources[i]));
+                                value);
+                        } catch (Exception) {
+                            annotations.Add(
+                                _names[i],
+                                MakeForwardRef(_sources[i], _evaluators[i]));
                         }
                     }
                     return annotations;
@@ -236,7 +268,20 @@ namespace IronPython.Runtime {
             string source = _sources[index];
             Func<object?>? evaluator = _evaluators[index];
             if (evaluator is not null) {
-                return LightExceptions.CheckAndThrow(evaluator());
+                try {
+                    return LightExceptions.CheckAndThrow(evaluator());
+                } catch (UnboundLocalException error) {
+                    string message = error.Message;
+                    int start = message.IndexOf('\'');
+                    int end = start >= 0 ? message.IndexOf('\'', start + 1) : -1;
+                    if (start >= 0 && end > start + 1) {
+                        string name = message.Substring(start + 1, end - start - 1);
+                        throw new UnboundNameException(
+                            $"cannot access free variable '{name}' where it is not associated with a value in enclosing scope",
+                            error);
+                    }
+                    throw;
+                }
             }
             if (source.StartsWith('*')) {
                 string unpackedSource = "(*(" + source.Substring(1) + "),)[0]";
@@ -244,7 +289,7 @@ namespace IronPython.Runtime {
                     _context!,
                     unpackedSource,
                     BuildEvalGlobals(),
-                    locals ?? _capturedLocals ?? _context!.Dict));
+                    locals ?? _context!.Dict));
             }
             object? value = TryGetTypeParameter(source, out object? typeParameter)
                 ? typeParameter
@@ -254,11 +299,11 @@ namespace IronPython.Runtime {
                         _context!,
                         source,
                         BuildEvalGlobals(),
-                        locals ?? _capturedLocals ?? _context!.Dict);
+                        locals ?? _context!.Dict);
             return LightExceptions.CheckAndThrow(value);
         }
 
-        private object MakeForwardRef(string source) {
+        private object MakeForwardRef(string source, Func<object?>? evaluator) {
             object annotationlib = Importer.ImportModule(
                 _context!,
                 null,
@@ -272,6 +317,12 @@ namespace IronPython.Runtime {
             object result = PythonCalls.Call(_context!, constructor, source)!;
             if (_owner is not null) {
                 PythonOps.SetAttr(_context!, result, "__owner__", _owner);
+                if (_owner is PythonType) {
+                    PythonOps.SetAttr(_context!, result, "__forward_is_class__", true);
+                }
+            }
+            if (evaluator is not null) {
+                PythonOps.SetAttr(_context!, result, "__evaluator__", evaluator);
             }
             return result;
         }

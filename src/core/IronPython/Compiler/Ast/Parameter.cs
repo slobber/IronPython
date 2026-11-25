@@ -46,6 +46,8 @@ namespace IronPython.Compiler.Ast {
 
         public Expression Annotation { get; set; }
 
+        internal string AnnotationSource { get; set; }
+
         internal bool AnnotationUsesEvaluator { get; set; }
 
         public Expression DefaultValue {

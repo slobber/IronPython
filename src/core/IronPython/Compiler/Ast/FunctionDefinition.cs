@@ -130,6 +130,8 @@ namespace IronPython.Compiler.Ast {
         public IList<Expression> Decorators { get; internal set; }
 
         public Expression ReturnAnnotation { get; internal set; }
+        internal string ReturnAnnotationSource { get; set; }
+        internal HashSet<PythonVariable> AnnotationCaptureVariables { get; } = new();
 
         public Expression TypeParameters { get; internal set; }
 
@@ -393,6 +395,7 @@ namespace IronPython.Compiler.Ast {
                     AddAnnotation(
                         param.Name,
                         param.Annotation,
+                        param.AnnotationSource,
                         TypeParameters is null);
                 }
             }
@@ -400,6 +403,7 @@ namespace IronPython.Compiler.Ast {
                 AddAnnotation(
                     "return",
                     ReturnAnnotation,
+                    ReturnAnnotationSource,
                     TypeParameters is null);
             }
 
@@ -408,7 +412,23 @@ namespace IronPython.Compiler.Ast {
                 : Ast.Call(
                     AstMethods.MakeLazyAnnotationFunction,
                     Parent.LocalContext,
-                    Ast.Call(AstMethods.GetLocalSnapshot, Parent.LocalContext),
+                    Ast.Call(
+                        AstMethods.MakeAnnotationLocals,
+                        Parent.LocalContext,
+                        Ast.NewArrayInit(
+                            typeof(string),
+                            AnnotationCaptureVariables.Select(variable =>
+                                Ast.Constant(variable.Name, typeof(string)))),
+                        Ast.NewArrayInit(
+                            typeof(ClosureCell),
+                            AnnotationCaptureVariables.Select(variable => {
+                                if (Parent.GetVariableExpression(variable)
+                                    is not ClosureExpression closure) {
+                                    throw new InvalidOperationException(
+                                        $"Annotation capture variable '{variable.Name}' is not stored in a closure cell.");
+                                }
+                                return (MSAst.Expression)closure.ClosureCell;
+                            }))),
                     Ast.NewArrayInit(typeof(string), annotationNames),
                     Ast.NewArrayInit(typeof(string), annotationSources),
                     Ast.NewArrayInit(typeof(Func<object>), annotationEvaluators),
@@ -522,10 +542,11 @@ namespace IronPython.Compiler.Ast {
             void AddAnnotation(
                 string name,
                 Expression annotation,
+                string source,
                 bool usesEvaluator) {
                 annotationNames.Add(Ast.Constant(name, typeof(string)));
                 annotationSources.Add(Ast.Constant(
-                    GlobalParent.GetSourceText(annotation.IndexSpan),
+                    source ?? GlobalParent.GetSourceText(annotation.IndexSpan),
                     typeof(string)));
                 annotationEvaluators.Add(
                     usesEvaluator

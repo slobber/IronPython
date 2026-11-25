@@ -694,7 +694,11 @@ namespace IronPython.Runtime.Types {
             IReadOnlyList<object?> nestedMembers = GetUnionMembers(value);
             if (nestedMembers.Count != 0) {
                 foreach (object? member in nestedMembers) AddMembers(members, member);
-            } else if (!members.Any(member => PythonOps.EqualRetBool(member, value))) {
+            } else if (
+                DynamicHelpers.GetPythonType(value).Name == "_Stringifier"
+                || !members.Any(member =>
+                    DynamicHelpers.GetPythonType(member).Name != "_Stringifier"
+                    && PythonOps.EqualRetBool(member, value))) {
                 members.Add(value!);
             }
         }

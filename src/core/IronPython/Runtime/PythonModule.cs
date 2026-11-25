@@ -31,6 +31,7 @@ namespace IronPython.Runtime {
         private Scope _scope;
         private object _evaluatedAnnotate;
         private PythonDictionary _annotations = new PythonDictionary();
+        private int _evaluatedAnnotationVersion;
 
         public PythonModule() {
             _dict = new PythonDictionary();
@@ -110,6 +111,8 @@ namespace IronPython.Runtime {
                         && annotate is not null
                         && (
                             !ReferenceEquals(_evaluatedAnnotate, annotate)
+                            || annotate is AnnotationFunction annotationFunction
+                                && annotationFunction.__version__ != _evaluatedAnnotationVersion
                             || !_dict.TryGetValue("__annotations__", out object current)
                             || current is not PythonDictionary currentDictionary
                             || currentDictionary.Count == 0
@@ -132,6 +135,10 @@ namespace IronPython.Runtime {
                         _annotations = annotations;
                         _dict["__annotations__"] = annotations;
                         _evaluatedAnnotate = annotate;
+                        if (annotate is AnnotationFunction currentAnnotationFunction) {
+                            _evaluatedAnnotationVersion =
+                                currentAnnotationFunction.__version__;
+                        }
                         return res;
                     }
                     return _annotations;

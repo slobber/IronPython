@@ -87,6 +87,10 @@ namespace IronPython.Compiler.Ast {
         private List<ILoopStatement> _loops = new List<ILoopStatement>();
         private List<int> _finallyCount = new List<int>();
         private readonly Dictionary<ScopeStatement, HashSet<string>> _namedExpressionTargets = new();
+        private readonly List<PythonReference> _annotationReferences = new();
+        private readonly Dictionary<FunctionDefinition, List<PythonReference>> _functionAnnotationReferences = new();
+        private bool _walkingAnnotation;
+        private FunctionDefinition _annotationTarget;
 
         #region Recursive binders
 
@@ -130,6 +134,23 @@ namespace IronPython.Compiler.Ast {
 
             // Bind globals
             unboundAst.Bind(this);
+
+            foreach (PythonReference reference in _annotationReferences) {
+                if (reference.PythonVariable is { Kind: VariableKind.Local or VariableKind.Parameter } variable
+                    && variable.Scope is FunctionDefinition) {
+                    variable.AccessedInNestedScope = true;
+                }
+            }
+            foreach (var pair in _functionAnnotationReferences) {
+                foreach (PythonReference reference in pair.Value) {
+                    if (reference.PythonVariable is not { Kind: VariableKind.Local or VariableKind.Parameter } variable
+                        || variable.Scope is not FunctionDefinition owner
+                        || owner == pair.Key) {
+                        continue;
+                    }
+                    pair.Key.AnnotationCaptureVariables.Add(variable);
+                }
+            }
 
             // Finish binding w/ outer most scopes first.
             for (int i = _scopes.Count - 1; i >= 0; i--) {
@@ -198,6 +219,7 @@ namespace IronPython.Compiler.Ast {
         public override bool Walk(AnnotatedAssignStatement node) {
             node.Parent = _currentScope;
             node.Target.Walk(_define);
+            node.Annotation.Walk(new AnnotationReferenceCollector(this, _currentScope));
             return true;
         }
 
@@ -743,7 +765,7 @@ namespace IronPython.Compiler.Ast {
             foreach (Parameter p in node.Parameters) {
                 p.DefaultValue?.Walk(this);
                 if (!hasTypeParameters) {
-                    p.Annotation?.Walk(this);
+                    WalkAnnotation(p.Annotation, node);
                 }
             }
             // process the decorators in the outer context
@@ -755,7 +777,7 @@ namespace IronPython.Compiler.Ast {
 
             node.TypeParameters?.Walk(this);
             if (!hasTypeParameters) {
-                node.ReturnAnnotation?.Walk(this);
+                WalkAnnotation(node.ReturnAnnotation, node);
             }
 
             PushScope(node);
@@ -769,9 +791,9 @@ namespace IronPython.Compiler.Ast {
 
             if (hasTypeParameters) {
                 foreach (Parameter p in node.Parameters) {
-                    p.Annotation?.Walk(this);
+                    WalkAnnotation(p.Annotation, node);
                 }
-                node.ReturnAnnotation?.Walk(this);
+                WalkAnnotation(node.ReturnAnnotation, node);
             }
 
             node.Body.Walk(this);
@@ -862,7 +884,52 @@ namespace IronPython.Compiler.Ast {
         public override bool Walk(NameExpression node) {
             node.Parent = _currentScope;
             node.Reference = Reference(node.Name);
+            if (_walkingAnnotation) {
+                _annotationReferences.Add(node.Reference);
+                if (_annotationTarget is not null) {
+                    if (!_functionAnnotationReferences.TryGetValue(
+                            _annotationTarget,
+                            out List<PythonReference> references)) {
+                        references = new List<PythonReference>();
+                        _functionAnnotationReferences.Add(_annotationTarget, references);
+                    }
+                    references.Add(node.Reference);
+                }
+            }
             return true;
+        }
+
+        private void WalkAnnotation(Expression annotation, FunctionDefinition target) {
+            if (annotation is null) return;
+            bool previous = _walkingAnnotation;
+            FunctionDefinition previousTarget = _annotationTarget;
+            _walkingAnnotation = true;
+            _annotationTarget = target;
+            try {
+                annotation.Walk(this);
+            } finally {
+                _walkingAnnotation = previous;
+                _annotationTarget = previousTarget;
+            }
+        }
+
+        private sealed class AnnotationReferenceCollector : PythonWalker {
+            private readonly PythonNameBinder _binder;
+            private readonly ScopeStatement _scope;
+
+            public AnnotationReferenceCollector(
+                PythonNameBinder binder,
+                ScopeStatement scope) {
+                _binder = binder;
+                _scope = scope;
+            }
+
+            public override bool Walk(NameExpression node) {
+                node.Parent = _scope;
+                node.Reference = _binder.Reference(node.Name);
+                _binder._annotationReferences.Add(node.Reference);
+                return false;
+            }
         }
 
         // NonlocalStatement

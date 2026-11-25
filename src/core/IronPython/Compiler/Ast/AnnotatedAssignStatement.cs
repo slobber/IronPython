@@ -13,16 +13,23 @@ using MSAst = System.Linq.Expressions;
 namespace IronPython.Compiler.Ast {
 
     public class AnnotatedAssignStatement : Statement {
-        public AnnotatedAssignStatement(Expression target, Expression annotation, Expression? value, bool simple) {
+        public AnnotatedAssignStatement(
+            Expression target,
+            Expression annotation,
+            Expression? value,
+            bool simple,
+            string? annotationSource = null) {
             Target = target;
             Annotation = annotation;
             Value = value;
             Simple = simple;
+            AnnotationSource = annotationSource;
         }
 
         public Expression Target { get; }
 
         public Expression Annotation { get; }
+        public string? AnnotationSource { get; }
 
         public Expression? Value { get; }
 
@@ -36,7 +43,8 @@ namespace IronPython.Compiler.Ast {
                         Parent.LocalContext,
                         MSAst.Expression.Constant(Parent is PythonAst),
                         MSAst.Expression.Constant(name.Name),
-                        MSAst.Expression.Constant(GlobalParent.GetSourceText(Annotation.IndexSpan)),
+                        MSAst.Expression.Constant(
+                            AnnotationSource ?? GlobalParent.GetSourceText(Annotation.IndexSpan)),
                         MSAst.Expression.Lambda<Func<object>>(
                             MSAst.Expression.Convert(Annotation, typeof(object))),
                         MSAst.Expression.Constant(GlobalParent.FutureAnnotations));
