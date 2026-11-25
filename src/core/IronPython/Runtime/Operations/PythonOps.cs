@@ -1569,6 +1569,16 @@ namespace IronPython.Runtime.Operations {
 
             // Check and normalize bases
             foreach (object? dt in bases) {
+                if (dt is not null
+                    && TryGetBoundAttr(parentContext, dt, "__origin__", out object? origin)
+                    && TryGetBoundAttr(parentContext, origin, "_name", out object? originName)
+                    && originName is string specialName
+                    && specialName is "Final" or "Required" or "NotRequired"
+                        or "TypeForm" or "TypeIs") {
+                    throw PythonOps.TypeError(
+                        "Cannot subclass {0}",
+                        Repr(parentContext, dt));
+                }
                 if (dt is TypeGroup) {
                     object?[] newBases = new object[bases.Count];
                     for (int i = 0; i < bases.Count; i++) {

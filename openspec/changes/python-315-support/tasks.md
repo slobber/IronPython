@@ -209,8 +209,8 @@
 - [ ] 12.14 Implement type-parameter defaults and annotation scopes.
 - [ ] 12.15 Implement `ReadOnly`, `TypeIs`, `NoDefault`, and `override`.
 - [ ] 12.16 Implement PEP 728 typed extra items.
-- [ ] 12.17 Implement PEP 747 `TypeForm`.
-- [ ] 12.18 Implement PEP 800 disjoint bases.
+- [x] 12.17 Implement PEP 747 `TypeForm`.
+- [x] 12.18 Implement PEP 800 disjoint bases.
 - [ ] 12.19 Pass the complete CPython 3.15.2 typing and annotation test suites.
 
 ## 13. P0: asynchronous programming
