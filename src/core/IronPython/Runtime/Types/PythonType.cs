@@ -272,6 +272,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         private object? _annotate;
 
         public static object? __new__(CodeContext/*!*/ context, [NotNone] PythonType cls, [NotNone] string typeName, [NotNone] PythonTuple typeBases, [NotNone] PythonDictionary typeDict) {
+            RejectMroEntries(context, typeBases);
             return __new__(context, cls, typeName, typeBases, typeDict, string.Empty, null);
         }
 
@@ -282,7 +283,21 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             [NotNone] PythonTuple typeBases,
             [NotNone] PythonDictionary typeDict,
             [ParamDictionary] IDictionary<object, object> keywordArguments) {
+            RejectMroEntries(context, typeBases);
             return __new__(context, cls, typeName, typeBases, typeDict, string.Empty, keywordArguments);
+        }
+
+        private static void RejectMroEntries(CodeContext context, PythonTuple bases) {
+            foreach (object? baseObject in bases) {
+                if (PythonOps.TryGetBoundAttr(
+                        context,
+                        baseObject,
+                        "__mro_entries__",
+                        out _)) {
+                    throw PythonOps.TypeError(
+                        "type() doesn't support MRO entry resolution; use types.new_class()");
+                }
+            }
         }
 
         internal static object? __new__(
@@ -687,6 +702,28 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             get {
                 if (args.Length == 1 && args[0] is PythonTuple tuple && tuple.Count != 0) {
                     args = tuple.ToArray();
+                }
+                if (TryResolveSlot(
+                        DefaultContext.Default,
+                        "__class_getitem__",
+                        out PythonTypeSlot classGetItemSlot)) {
+                    if (!classGetItemSlot.TryGetValue(
+                            DefaultContext.Default,
+                            this,
+                            this,
+                            out object classGetItem)
+                        || !PythonOps.IsCallable(DefaultContext.Default, classGetItem)) {
+                        throw PythonOps.TypeError(
+                            "type '{0}' is not subscriptable",
+                            Name);
+                    }
+                    object item = args.Length == 1
+                        ? args[0]
+                        : PythonTuple.MakeTuple(args);
+                    return PythonCalls.Call(
+                        DefaultContext.Default,
+                        classGetItem,
+                        item)!;
                 }
                 if (this != TypeCache.PythonType && IsSubclassOf(TypeCache.PythonType)) {
                     throw PythonOps.TypeError("type '{0}' is not subscriptable", Name);
@@ -2039,6 +2076,11 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                     : name;
             if (hasQualName && qualName is string) {
                 vars.Remove("__qualname__");
+            }
+            if (!vars.ContainsKey("__parameters__")
+                && vars.TryGetValue("__orig_bases__", out object originalBases)
+                && originalBases is PythonTuple originalBasesTuple) {
+                vars["__parameters__"] = PythonOps.InferTypeParameters(originalBasesTuple);
             }
             _bases = GetBasesAsList(bases).ToArray();
             _pythonContext = context.LanguageContext;

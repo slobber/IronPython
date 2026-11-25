@@ -14,7 +14,8 @@ using Microsoft.Scripting.Runtime;
 
 namespace IronPython.Runtime {
     [PythonType("TypeAliasType")]
-    public sealed class TypeAliasObject {
+    public sealed class TypeAliasObject : IWeakReferenceable {
+        private WeakRefTracker? _weakref;
         private readonly string _name;
         private readonly string _qualname;
         private object? _module;
@@ -126,6 +127,27 @@ namespace IronPython.Runtime {
         public object __repr__(CodeContext context) =>
             _qualname;
 
+        public object evaluate_value(CodeContext context, int format = 1) {
+            object? value = _value ??= PythonCalls.Call(
+                context,
+                _thunk,
+                _typeParameters.ToArray());
+            if (format == 4) {
+                object annotationlib = Importer.ImportModule(
+                    DefaultContext.Default,
+                    null,
+                    "annotationlib",
+                    false,
+                    0);
+                object typeRepr = PythonOps.GetBoundAttr(
+                    DefaultContext.Default,
+                    annotationlib,
+                    "type_repr");
+                return PythonCalls.Call(DefaultContext.Default, typeRepr, value)!;
+            }
+            return value!;
+        }
+
         public object __reduce_ex__(CodeContext context, int protocol) {
             if (_module is string moduleName
                 && moduleName.Length != 0
@@ -143,5 +165,15 @@ namespace IronPython.Runtime {
         }
 
         public object __reduce__(CodeContext context) => __reduce_ex__(context, 0);
+
+        WeakRefTracker? IWeakReferenceable.GetWeakRef() => _weakref;
+
+        bool IWeakReferenceable.SetWeakRef(WeakRefTracker value) {
+            _weakref = value;
+            return true;
+        }
+
+        void IWeakReferenceable.SetFinalizer(WeakRefTracker value) =>
+            ((IWeakReferenceable)this).SetWeakRef(value);
     }
 }

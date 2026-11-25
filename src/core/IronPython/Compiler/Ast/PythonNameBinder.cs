@@ -732,6 +732,7 @@ namespace IronPython.Compiler.Ast {
         // FunctionDefinition
         public override bool Walk(FunctionDefinition node) {
             node._nameVariable = _globalScope.EnsureGlobalVariable("__name__");
+            bool hasTypeParameters = node.TypeParameterNames.Count != 0;
 
             // Name is defined in the enclosing context
             if (!node.IsLambda) {
@@ -741,7 +742,9 @@ namespace IronPython.Compiler.Ast {
             // process the default arg values in the outer context
             foreach (Parameter p in node.Parameters) {
                 p.DefaultValue?.Walk(this);
-                p.Annotation?.Walk(this);
+                if (!hasTypeParameters) {
+                    p.Annotation?.Walk(this);
+                }
             }
             // process the decorators in the outer context
             if (node.Decorators != null) {
@@ -751,7 +754,9 @@ namespace IronPython.Compiler.Ast {
             }
 
             node.TypeParameters?.Walk(this);
-            node.ReturnAnnotation?.Walk(this);
+            if (!hasTypeParameters) {
+                node.ReturnAnnotation?.Walk(this);
+            }
 
             PushScope(node);
 
@@ -761,6 +766,13 @@ namespace IronPython.Compiler.Ast {
             }
 
             node.DefineTypeParameterVariables();
+
+            if (hasTypeParameters) {
+                foreach (Parameter p in node.Parameters) {
+                    p.Annotation?.Walk(this);
+                }
+                node.ReturnAnnotation?.Walk(this);
+            }
 
             node.Body.Walk(this);
             return false;

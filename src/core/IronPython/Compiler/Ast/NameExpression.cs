@@ -91,6 +91,17 @@ namespace IronPython.Compiler.Ast {
                     Parent.GetVariableExpression(Reference.PythonVariable),
                     ConvertIfNeeded(right, typeof(object))
                 );
+                if (Parent is ClassDefinition classDefinition
+                    && classDefinition.IsExposedLocal(Reference.PythonVariable)) {
+                    assignment = Ast.Block(
+                        assignment,
+                        Ast.Call(
+                            null,
+                            AstMethods.SetName,
+                            Parent.LocalContext,
+                            Ast.Constant(Name),
+                            AstUtils.Convert(right, typeof(object))));
+                }
             } else {
                 assignment = Ast.Call(
                     null,

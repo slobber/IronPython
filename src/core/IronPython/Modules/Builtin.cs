@@ -83,6 +83,59 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             return BuildTypeParameter(context, kind, name, true, defaultValue);
         }
 
+        public static object __build_type_parameter__(
+            CodeContext context,
+            [NotNone] string kind,
+            [NotNone] string name,
+            object? constraintsThunk,
+            object? boundThunk,
+            object? defaultThunk,
+            bool hasConstraints,
+            bool hasBound,
+            bool hasDefault) {
+            object typeParameters = Importer.ImportModule(
+                context,
+                null,
+                "_typing",
+                false,
+                0);
+            object constructor = PythonOps.GetBoundAttr(context, typeParameters, kind);
+            var args = new List<object?> { name };
+            var names = new List<string>();
+            if (hasConstraints && kind == "TypeVar" && constraintsThunk is not null) {
+                object constraints = PythonCalls.Call(context, constraintsThunk)!;
+                if (constraints is not PythonTuple tuple) {
+                    throw PythonOps.TypeError("type parameter constraints must be a tuple");
+                }
+                args.AddRange(tuple);
+            }
+            if (hasBound) {
+                names.Add("bound");
+                args.Add(null);
+                names.Add("_bound_thunk");
+                args.Add(boundThunk);
+            }
+            if (hasDefault) {
+                names.Add("default");
+                args.Add(null);
+                names.Add("_default_thunk");
+                args.Add(defaultThunk);
+            }
+            if (hasConstraints) {
+                names.Add("_constraints_thunk");
+                args.Add(constraintsThunk);
+            }
+            if (kind is "TypeVar" or "ParamSpec") {
+                names.Add("infer_variance");
+                args.Add(true);
+            }
+            return PythonCalls.CallWithKeywordArgs(
+                context,
+                constructor,
+                args.ToArray(),
+                names.ToArray())!;
+        }
+
         private static object BuildTypeParameter(
             CodeContext context,
             string kind,

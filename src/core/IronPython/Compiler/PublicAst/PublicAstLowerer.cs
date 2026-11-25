@@ -1,6 +1,8 @@
 #nullable enable
 using System;
+using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using IronPython.Runtime;
 using IronPython.Runtime.Operations;
 using Microsoft.Scripting;
@@ -11,6 +13,7 @@ using AstNodes = IronPython.Compiler.Syntax.Ast;
 namespace IronPython.Compiler.PublicAst {
     public static class PublicAstLowerer {
         private static int _matchTemp;
+        private static int _typeParameterTemp;
         [ThreadStatic]
         private static IndexSpan? _currentPatternSpan;
         [ThreadStatic]
@@ -20,7 +23,11 @@ namespace IronPython.Compiler.PublicAst {
         [ThreadStatic]
         private static string? _classQualname;
         [ThreadStatic]
+        private static CompilerAst.ClassDefinition? _classDefinition;
+        [ThreadStatic]
         private static string? _functionQualname;
+        [ThreadStatic]
+        private static Dictionary<string, CompilerAst.Expression>? _typeParameterBindings;
 
         public static CompilerAst.PythonAst LowerModule(
             AstNodes.Module module,
@@ -206,16 +213,11 @@ namespace IronPython.Compiler.PublicAst {
             if (LowerExpression(typeAlias.Name) is not CompilerAst.NameExpression name) {
                 throw new InvalidOperationException("TypeAlias name must be a simple name.");
             }
+            ValidateTypeParameters(typeAlias.TypeParams);
             string[] parameterNames = typeAlias.TypeParams
                 .Select(GetTypeParameterName)
+                .Select(MangleIdentifier)
                 .ToArray();
-            if (parameterNames.Distinct(StringComparer.Ordinal).Count() != parameterNames.Length) {
-                string duplicate = parameterNames
-                    .GroupBy(name => name, StringComparer.Ordinal)
-                    .First(group => group.Count() > 1)
-                    .Key;
-                throw PythonOps.SyntaxError("duplicate type parameter '{0}'", duplicate);
-            }
             var thunk = new CompilerAst.LambdaExpression(
                 new CompilerAst.FunctionDefinition(
                     null,
@@ -255,18 +257,47 @@ namespace IronPython.Compiler.PublicAst {
             string name = GetTypeParameterName(typeParameter);
             AstNodes.ExprBase? defaultValue = typeParameter.GetFields()
                 .FirstOrDefault(field =>
-                    field.Name is "default" or "Default" or "DefaultValue" or "defaultValue")
+                    field.Name is "default" or "Default" or "default_value"
+                        or "DefaultValue" or "defaultValue")
                 .Value as AstNodes.ExprBase;
-            return defaultValue is null
-                ? Call(
-                    "__build_type_parameter__",
-                    Constant(kind),
-                    Constant(name))
-                : Call(
-                    "__build_type_parameter__",
-                    Constant(kind),
-                    Constant(name),
-                    LowerExpression(defaultValue));
+            if (defaultValue is AstNodes.Starred starredDefault) {
+                defaultValue = starredDefault.Value;
+            }
+            AstNodes.ExprBase? bound = typeParameter.GetFields()
+                .FirstOrDefault(field => field.Name is "bound" or "Bound")
+                .Value as AstNodes.ExprBase;
+            bool hasConstraints = bound is AstNodes.Tuple;
+            bool hasBound = bound is not null && !hasConstraints;
+            return Call(
+                "__build_type_parameter__",
+                Constant(kind),
+                Constant(name),
+                hasConstraints
+                    ? LowerThunk(bound!, typeParameter)
+                    : Constant(null),
+                hasBound
+                    ? LowerThunk(bound!, typeParameter)
+                    : Constant(null),
+                defaultValue is null
+                    ? Constant(null)
+                    : LowerThunk(defaultValue, typeParameter),
+                Constant(hasConstraints),
+                Constant(hasBound),
+                Constant(defaultValue is not null));
+        }
+
+        private static CompilerAst.Expression LowerThunk(
+            AstNodes.ExprBase expression,
+            AstNodes.PythonAstNode source) {
+            var thunk = new CompilerAst.LambdaExpression(
+                new CompilerAst.FunctionDefinition(
+                    null,
+                    Array.Empty<CompilerAst.Parameter>(),
+                    new CompilerAst.ReturnStatement(LowerExpression(expression))) {
+                    GeneratorStop = true
+                });
+            SetLocation(thunk, source);
+            return thunk;
         }
 
         private static string GetTypeParameterName(AstNodes.TypeParamBase typeParameter) {
@@ -275,8 +306,49 @@ namespace IronPython.Compiler.PublicAst {
                 .Value as string ?? string.Empty;
         }
 
+        private static bool TryGetTypeParameterBinding(
+            string name,
+            out CompilerAst.Expression binding) {
+            if (_typeParameterBindings is not null
+                && _typeParameterBindings.TryGetValue(name, out CompilerAst.Expression? found)) {
+                binding = found;
+                return true;
+            }
+            binding = null!;
+            return false;
+        }
+
+        private static void ValidateTypeParameters(
+            System.Collections.Generic.IReadOnlyList<AstNodes.TypeParamBase> typeParameters) {
+            string[] names = typeParameters.Select(GetTypeParameterName).ToArray();
+            if (names.Distinct(StringComparer.Ordinal).Count() != names.Length) {
+                string duplicate = names
+                    .GroupBy(name => name, StringComparer.Ordinal)
+                    .First(group => group.Count() > 1)
+                    .Key;
+                throw PythonOps.SyntaxError("duplicate type parameter '{0}'", duplicate);
+            }
+
+            bool seenDefault = false;
+            foreach (AstNodes.TypeParamBase typeParameter in typeParameters) {
+                bool hasDefault = typeParameter.GetFields().Any(field =>
+                    (field.Name is "default" or "Default" or "default_value"
+                        or "DefaultValue" or "defaultValue")
+                    && field.Value is AstNodes.ExprBase);
+                if (hasDefault) {
+                    seenDefault = true;
+                } else if (seenDefault) {
+                    throw PythonOps.SyntaxError(
+                        "non-default type parameter '{0}' follows default type parameter",
+                        GetTypeParameterName(typeParameter));
+                }
+            }
+        }
+
         public static CompilerAst.Expression LowerExpression(AstNodes.ExprBase expression) {
             CompilerAst.Expression lowered = expression switch {
+                AstNodes.Name name when TryGetTypeParameterBinding(name.Id, out CompilerAst.Expression binding)
+                    => binding,
                 AstNodes.Name name => new CompilerAst.NameExpression(MangleIdentifier(name.Id)),
                 AstNodes.Constant constant => new CompilerAst.ConstantExpression(constant.Value),
                 AstNodes.List list => new CompilerAst.ListExpression(
@@ -1336,11 +1408,12 @@ namespace IronPython.Compiler.PublicAst {
             AstNodes.PythonAstNode source) {
             string loweredName = MangleIdentifier(name);
             string? previousFunctionQualname = _functionQualname;
-            _functionQualname = _functionQualname is null
+            string functionQualname = _functionQualname is null
                 ? _className is null
                     ? name
                     : (_classQualname ?? _className) + "." + name
                 : _functionQualname + ".<locals>." + name;
+            _functionQualname = functionQualname;
             CompilerAst.SuiteStatement loweredBody;
             try {
                 loweredBody = LowerSuite(body);
@@ -1363,7 +1436,8 @@ namespace IronPython.Compiler.PublicAst {
                 LowerParameters(arguments, name),
                 loweredBody,
                 isAsync) {
-                HeaderIndex = GetStartOffset(source)
+                HeaderIndex = GetStartOffset(source),
+                QualName = functionQualname
             };
             function.IsGenerator = hasYield;
             function.GeneratorStop = function.IsGenerator;
@@ -1372,8 +1446,10 @@ namespace IronPython.Compiler.PublicAst {
                 ? null!
                 : LowerExpression(returns);
             if (typeParameters.Count != 0) {
+                ValidateTypeParameters(typeParameters);
                 function.TypeParameterNames = typeParameters
                     .Select(GetTypeParameterName)
+                    .Select(MangleIdentifier)
                     .ToArray();
                 function.TypeParameters = new CompilerAst.TupleExpression(
                     false,
@@ -1447,51 +1523,107 @@ namespace IronPython.Compiler.PublicAst {
             };
         }
 
-        private static CompilerAst.ClassDefinition LowerClass(AstNodes.ClassDef @class) {
-            CompilerAst.Expression[] bases = @class.Bases.Select(LowerExpression).ToArray();
-            CompilerAst.Keyword[] keywords = @class.Keywords.Select(keyword => new CompilerAst.Keyword(
-                keyword.ArgName,
-                LowerExpression(keyword.Value))).ToArray();
+        private static CompilerAst.Statement LowerClass(AstNodes.ClassDef @class) {
             CompilerAst.Expression[] decorators = @class.DecoratorList.Select(LowerExpression).ToArray();
-
             string? previousClass = _className;
             string? previousClassQualname = _classQualname;
-            _className = @class.Name;
-            _classQualname = _functionQualname is not null
+            string classQualname = _functionQualname is not null
                 ? _functionQualname + ".<locals>." + @class.Name
                 : previousClassQualname is null
                     ? @class.Name
                     : previousClassQualname + "." + @class.Name;
+
+            CompilerAst.AssignmentStatement? typeParameterAssignment = null;
+            CompilerAst.Expression? typeParameterReference = null;
+            Dictionary<string, CompilerAst.Expression>? previousBindings = _typeParameterBindings;
+            string[] typeParameterNames = Array.Empty<string>();
+            if (@class.TypeParams.Count != 0) {
+                ValidateTypeParameters(@class.TypeParams);
+                _className = @class.Name;
+                typeParameterNames = @class.TypeParams
+                    .Select(GetTypeParameterName)
+                    .Select(MangleIdentifier)
+                    .ToArray();
+                _className = previousClass;
+
+                string temporaryName = "$class_type_params_" +
+                    Interlocked.Increment(ref _typeParameterTemp);
+                if (_classDefinition is not null) {
+                    _classDefinition.ExposedLocalNames.Add(temporaryName);
+                    _classDefinition.NeedsLocalsDictionary = true;
+                }
+                var bindings = previousBindings is null
+                    ? new Dictionary<string, CompilerAst.Expression>(StringComparer.Ordinal)
+                    : new Dictionary<string, CompilerAst.Expression>(
+                        previousBindings,
+                        StringComparer.Ordinal);
+                _typeParameterBindings = bindings;
+                var typeParameterExpressions = new List<CompilerAst.Expression>();
+                for (int i = 0; i < @class.TypeParams.Count; i++) {
+                    typeParameterExpressions.Add(LowerTypeParameter(@class.TypeParams[i]));
+                    bindings[GetTypeParameterName(@class.TypeParams[i])] =
+                        new CompilerAst.IndexExpression(
+                            new CompilerAst.NameExpression(temporaryName),
+                            new CompilerAst.ConstantExpression(i));
+                }
+                var typeParameterTuple = new CompilerAst.TupleExpression(
+                    false,
+                    typeParameterExpressions.ToArray());
+                SetLocation(typeParameterTuple, @class);
+                typeParameterReference = _classDefinition is null
+                    && _functionQualname is null
+                    ? new CompilerAst.NameExpression(temporaryName)
+                    : typeParameterTuple;
+                typeParameterAssignment = new CompilerAst.AssignmentStatement(
+                    new CompilerAst.Expression[] {
+                        new CompilerAst.NameExpression(temporaryName)
+                    },
+                    typeParameterTuple);
+            }
+
+            CompilerAst.Expression[] bases;
+            CompilerAst.Keyword[] keywords;
+            try {
+                bases = @class.Bases.Select(LowerExpression).ToArray();
+                keywords = @class.Keywords.Select(keyword => new CompilerAst.Keyword(
+                    keyword.ArgName,
+                    LowerExpression(keyword.Value))).ToArray();
+            } finally {
+                _typeParameterBindings = previousBindings;
+            }
+
+            var definition = new CompilerAst.ClassDefinition(
+                MangleIdentifier(@class.Name),
+                bases,
+                keywords) {
+                HeaderIndex = GetStartOffset(@class),
+                QualName = classQualname
+            };
+
+            CompilerAst.ClassDefinition? previousClassDefinition = _classDefinition;
+            _classDefinition = definition;
+            _className = @class.Name;
+            _classQualname = classQualname;
             CompilerAst.SuiteStatement body;
             try {
                 body = LowerSuite(@class.Body);
             } finally {
                 _className = previousClass;
                 _classQualname = previousClassQualname;
+                _classDefinition = previousClassDefinition;
             }
 
-            var definition = new CompilerAst.ClassDefinition(
-                MangleIdentifier(@class.Name),
-                bases,
-                keywords,
-                body) {
-                HeaderIndex = GetStartOffset(@class),
-                QualName = _functionQualname is not null
-                    ? _functionQualname + ".<locals>." + @class.Name
-                    : previousClassQualname is null
-                        ? @class.Name
-                        : previousClassQualname + "." + @class.Name
-            };
+            definition.Body = body;
             definition.Decorators = decorators;
             if (@class.TypeParams.Count != 0) {
-                definition.TypeParameterNames = @class.TypeParams
-                    .Select(GetTypeParameterName)
-                    .ToArray();
-                definition.TypeParameters = new CompilerAst.TupleExpression(
-                    false,
-                    @class.TypeParams.Select(LowerTypeParameter).ToArray());
+                definition.TypeParameterNames = typeParameterNames;
+                definition.TypeParameters = typeParameterReference;
             }
-            return definition;
+
+            return typeParameterAssignment is null
+                ? definition
+                : new CompilerAst.SuiteStatement(
+                    new CompilerAst.Statement[] { typeParameterAssignment, definition });
         }
 
         private static string MangleIdentifier(string name) {

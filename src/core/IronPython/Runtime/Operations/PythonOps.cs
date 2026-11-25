@@ -1565,6 +1565,7 @@ namespace IronPython.Runtime.Operations {
 
         public static object? MakeClass(FunctionCode funcCode, Func<CodeContext, CodeContext> body, CodeContext/*!*/ parentContext, string name, PythonTuple bases, PythonDictionary? keywords, string selfNames) {
             Func<CodeContext, CodeContext> func = GetClassCode(parentContext, funcCode, body);
+            PythonTuple originalBases = bases;
 
             // Check and normalize bases
             foreach (object? dt in bases) {
@@ -1624,6 +1625,36 @@ namespace IronPython.Runtime.Operations {
             // Call class body lambda
             CodeContext localContext = func(classContext);
             PythonDictionary vars = localContext.Dict;
+            if (!PythonOps.EqualRetBool(originalBases, bases)) {
+                vars["__orig_bases__"] = originalBases;
+            }
+            PythonTuple declaredBases = vars.TryGetValue("__orig_bases__", out object? declared)
+                && declared is PythonTuple declaredTuple
+                    ? declaredTuple
+                    : originalBases;
+            PythonTuple inferredParameters = InferTypeParameters(declaredBases);
+            if (!vars.ContainsKey("__parameters__")) {
+                vars["__parameters__"] = inferredParameters;
+            }
+            if (vars.TryGetValue("__type_params__", out object? declaredTypeParams)
+                && declaredTypeParams is PythonTuple typeParameters
+                && typeParameters.Count != 0) {
+                object typing = Importer.ImportModule(parentContext, null, "typing", false, 0);
+                object generic = PythonOps.GetBoundAttr(parentContext, typing, "Generic");
+                object genericAlias = GetIndex(
+                    parentContext,
+                    generic,
+                    typeParameters.Count == 1
+                        ? typeParameters[0]!
+                        : typeParameters);
+                var originalWithGeneric = new List<object?>(declaredBases.Count + 1);
+                originalWithGeneric.AddRange(declaredBases);
+                if (!originalWithGeneric.Any(baseObject =>
+                        EqualRetBool(baseObject, genericAlias))) {
+                    originalWithGeneric.Add(genericAlias);
+                }
+                vars["__orig_bases__"] = PythonTuple.MakeTuple(originalWithGeneric.ToArray());
+            }
 
             // Fasttrack for metaclass == `type`
             if (metaclass is null) {
@@ -3162,6 +3193,13 @@ namespace IronPython.Runtime.Operations {
             return function;
         }
 
+        public static PythonFunction SetFunctionQualName(
+            PythonFunction function,
+            string qualName) {
+            function.__qualname__ = qualName;
+            return function;
+        }
+
         public static PythonTuple ExpandTypeParameters(PythonTuple typeParameters) {
             var parameters = new List<object?>();
             foreach (object parameter in typeParameters) {
@@ -3172,6 +3210,32 @@ namespace IronPython.Runtime.Operations {
                     }
                 } else {
                     parameters.Add(parameter);
+                }
+            }
+            return PythonTuple.MakeTuple(parameters.ToArray());
+        }
+
+        public static object MakeClassGetItem(CodeContext context) {
+            object types = Importer.ImportModule(context, null, "types", false, 0);
+            object genericAlias = PythonOps.GetBoundAttr(context, types, "GenericAlias");
+            object classMethod = context.TryLookupBuiltin("classmethod", out object? value)
+                ? value!
+                : throw PythonOps.NameError("classmethod");
+            return PythonCalls.Call(context, classMethod, genericAlias)!;
+        }
+
+        public static PythonTuple InferTypeParameters(PythonTuple bases) {
+            var parameters = new List<object?>();
+            foreach (object? baseObject in bases) {
+                if (baseObject is not null
+                    && TryGetBoundAttr(DefaultContext.Default, baseObject, "__parameters__", out object? nested)
+                    && nested is PythonTuple typeParameters) {
+                    foreach (object? parameter in typeParameters) {
+                        if (!parameters.Any(existing =>
+                                EqualRetBool(existing, parameter))) {
+                            parameters.Add(parameter);
+                        }
+                    }
                 }
             }
             return PythonTuple.MakeTuple(parameters.ToArray());

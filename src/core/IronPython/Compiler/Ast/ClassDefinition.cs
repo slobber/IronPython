@@ -66,6 +66,13 @@ namespace IronPython.Compiler.Ast {
 
         internal PythonVariable[] TypeParameterVariables { get; private set; } = Array.Empty<PythonVariable>();
 
+        internal HashSet<string> ExposedLocalNames { get; } = new(StringComparer.Ordinal);
+
+        internal bool IsExposedLocal(PythonVariable variable) =>
+            ExposedLocalNames.Contains(variable.Name)
+            || (variable.Kind is VariableKind.Local or VariableKind.Parameter
+                && TypeParameterNames.Contains(variable.Name, StringComparer.Ordinal));
+
         internal void DefineTypeParameterVariables() {
             TypeParameterVariables = TypeParameterNames
                 .Select(name => TryGetVariable(name, out PythonVariable? variable)
@@ -111,7 +118,8 @@ namespace IronPython.Compiler.Ast {
 
         internal override bool ExposesLocalVariable(PythonVariable variable) {
             return variable.Name == "__class__"
-                || TypeParameterNames.Contains(variable.Name, StringComparer.Ordinal);
+                || TypeParameterNames.Contains(variable.Name, StringComparer.Ordinal)
+                || ExposedLocalNames.Contains(variable.Name);
         }
 
 
@@ -128,7 +136,8 @@ namespace IronPython.Compiler.Ast {
                 AddCellVariable(variable);
                 return true;
             }
-            if (TypeParameterNames.Contains(reference.Name, StringComparer.Ordinal)
+            if ((TypeParameterNames.Contains(reference.Name, StringComparer.Ordinal)
+                    || ExposedLocalNames.Contains(reference.Name))
                 && TryGetVariable(reference.Name, out variable)) {
                 variable.AccessedInNestedScope = true;
                 from.AddFreeVariable(variable, true);
@@ -152,6 +161,9 @@ namespace IronPython.Compiler.Ast {
                     AddReferencedGlobal(reference.Name);
                     return variable;
                 } else if (variable.Kind is not VariableKind.Nonlocal) {
+                    if (IsExposedLocal(variable)) {
+                        return variable;
+                    }
                     // Fall back on LookupName/SetName in local context dict,
                     // which is slightly faster than LookupGlobalVariable expression used by variables of Attribute kind.
                     return null;
@@ -380,7 +392,13 @@ namespace IronPython.Compiler.Ast {
                                 Ast.Call(
                                     typeof(PythonOps).GetMethod(
                                         nameof(PythonOps.ExpandTypeParameters))!,
-                                    typeParameterValues))),
+                                    typeParameterValues)),
+                            SetLocalName(
+                                "__class_getitem__",
+                                Ast.Call(
+                                    typeof(PythonOps).GetMethod(
+                                        nameof(PythonOps.MakeClassGetItem))!,
+                                    LocalContext))),
                     assignClassCellStmt is not null ? assignClassCellStmt : AstUtils.Empty(),
                     LocalContext
                 ),

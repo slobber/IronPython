@@ -125,6 +125,8 @@ namespace IronPython.Compiler.Ast {
 
         public override string Name => _name;
 
+        public string QualName { get; set; } = string.Empty;
+
         public IList<Expression> Decorators { get; internal set; }
 
         public Expression ReturnAnnotation { get; internal set; }
@@ -136,9 +138,27 @@ namespace IronPython.Compiler.Ast {
         internal PythonVariable[] TypeParameterVariables { get; private set; } = Array.Empty<PythonVariable>();
 
         internal void DefineTypeParameterVariables() {
+            var globalNames = new GlobalNameFinder();
+            Body?.Walk(globalNames);
             TypeParameterVariables = TypeParameterNames
-                .Select(name => EnsureVariable(name))
+                .Select(name => globalNames.Names.Contains(name)
+                    || TryGetVariable(name, out PythonVariable variable)
+                    ? null
+                    : EnsureVariable(name))
                 .ToArray();
+        }
+
+        private sealed class GlobalNameFinder : PythonWalker {
+            public HashSet<string> Names { get; } = new(StringComparer.Ordinal);
+
+            public override bool Walk(GlobalStatement node) {
+                Names.UnionWith(node.Names);
+                return false;
+            }
+
+            public override bool Walk(FunctionDefinition node) => false;
+
+            public override bool Walk(ClassDefinition node) => false;
         }
 
 #if FEATURE_NET_ASYNC
@@ -450,6 +470,12 @@ namespace IronPython.Compiler.Ast {
                     AstUtils.Convert(ret, typeof(PythonFunction)),
                     AstUtils.Convert(TypeParameters, typeof(PythonTuple)));
             }
+            ret = Ast.Call(
+                typeof(PythonOps).GetMethod(nameof(PythonOps.SetFunctionQualName))!,
+                AstUtils.Convert(ret, typeof(PythonFunction)),
+                Ast.Constant(
+                    string.IsNullOrEmpty(QualName) ? Name : QualName,
+                    typeof(string)));
 
             return AddDecorators(ret, Decorators);
 
@@ -714,11 +740,8 @@ namespace IronPython.Compiler.Ast {
 
             CreateFunctionVariables(locals, init);
 
-            // Initialize parameters - unpack tuples.
-            // Since tuples unpack into locals, this must be done after locals have been created.
-            InitializeParameters(init, needsWrapperMethod, parameters);
-
             for (int i = 0; i < TypeParameterVariables.Length; i++) {
+                if (TypeParameterVariables[i] is null) continue;
                 init.Add(AssignValue(
                     GetVariableExpression(TypeParameterVariables[i]),
                     Ast.Property(
@@ -731,6 +754,10 @@ namespace IronPython.Compiler.Ast {
                             new[] { typeof(int) })!,
                         Ast.Constant(i))));
             }
+
+            // Initialize parameters - unpack tuples.
+            // Since tuples unpack into locals, this must be done after locals have been created.
+            InitializeParameters(init, needsWrapperMethod, parameters);
 
             List<MSAst.Expression> statements = new List<MSAst.Expression>();
 

@@ -239,6 +239,14 @@ namespace IronPython.Runtime.Types {
                 AddParameters(parameters, alias.__args__);
                 return;
             }
+
+            string typeName = DynamicHelpers.GetPythonType(value).Name;
+            if (typeName is "TypeVar" or "TypeVarTuple" or "ParamSpec"
+                && !parameters.Any(parameter => PythonOps.EqualRetBool(parameter, value))) {
+                parameters.Add(value!);
+                return;
+            }
+
             if (value is not null
                 && value is not PythonType
                 && PythonOps.TryGetBoundAttr(
@@ -263,12 +271,6 @@ namespace IronPython.Runtime.Types {
                     }
                 }
                 return;
-            }
-
-            string typeName = DynamicHelpers.GetPythonType(value).Name;
-            if (typeName is "TypeVar" or "TypeVarTuple" or "ParamSpec"
-                && !parameters.Any(parameter => PythonOps.EqualRetBool(parameter, value))) {
-                parameters.Add(value!);
             }
         }
 
