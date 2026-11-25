@@ -790,6 +790,36 @@ namespace IronPython.Compiler.Ast {
 
             foreach (string n in node.Names) {
                 PythonVariable conflict;
+                bool typeParameterBinding = false;
+                for (ScopeStatement scope = _currentScope.Parent;
+                    scope is not null && !scope.IsGlobal;
+                    scope = scope.Parent) {
+                    if (scope is FunctionDefinition function) {
+                        foreach (string typeParameterName in function.TypeParameterNames) {
+                            if (string.Equals(typeParameterName, n, StringComparison.Ordinal)) {
+                                typeParameterBinding = true;
+                                break;
+                            }
+                        }
+                        if (typeParameterBinding) break;
+                    }
+                }
+                if (!typeParameterBinding) {
+                    foreach (ScopeStatement scope in _scopes) {
+                        if (scope is FunctionDefinition function) {
+                            foreach (string typeParameterName in function.TypeParameterNames) {
+                                if (string.Equals(typeParameterName, n, StringComparison.Ordinal)) {
+                                    typeParameterBinding = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if (typeParameterBinding) break;
+                    }
+                }
+                if (typeParameterBinding) {
+                    ReportSyntaxError($"no binding for nonlocal '{n}' found", node);
+                }
                 // Check current scope for conflicting variable
                 bool assignedGlobal = false;
                 if (_currentScope.TryGetVariable(n, out conflict)) {

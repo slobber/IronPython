@@ -10,6 +10,7 @@ using System.Runtime.CompilerServices;
 
 using IronPython.Modules;
 using IronPython.Runtime.Operations;
+using IronPython.Runtime.Types;
 
 using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
@@ -85,6 +86,17 @@ namespace IronPython.Runtime {
                 foreach (object key in _context.Dict.Keys) {
                     if (_context.Dict.TryGetValueNoMissing(key, out object? value)) {
                         locals[key] = value;
+                        if (value is not null
+                            && (DynamicHelpers.GetPythonType(value).Name is
+                                "TypeVar" or "TypeVarTuple" or "ParamSpec")
+                            && PythonOps.TryGetBoundAttr(
+                                _context,
+                                value,
+                                "__name__",
+                                out object? parameterName)
+                            && parameterName is string name) {
+                            locals[name] = value;
+                        }
                     }
                 }
                 for (int i = 0; i < _typeParameters.Count; i++) {
@@ -108,13 +120,16 @@ namespace IronPython.Runtime {
                 case 3:
                     for (int i = 0; i < _names.Count; i++) {
                         Func<object?>? evaluator = _evaluators[i];
-                        object? value = evaluator is not null
-                            ? evaluator()
-                            : Builtin.eval(
-                                _context!,
-                                _sources[i],
-                                _context!.GlobalDict,
-                                locals ?? _context.Dict);
+                        object? value = TryGetTypeParameter(_sources[i], out object? typeParameter)
+                            ? typeParameter
+                            : evaluator is not null
+                                ? evaluator()
+                                : Builtin.eval(
+                                    _context!,
+                                    _sources[i],
+                                    _context!.GlobalDict,
+                                    locals ?? _context.Dict);
+                        value = LightExceptions.CheckAndThrow(value);
                         annotations.Add(_names[i], value);
                     }
                     return annotations;
@@ -126,6 +141,30 @@ namespace IronPython.Runtime {
                 default:
                     throw PythonOps.NotImplementedError("unsupported annotation format: {0}", annotationFormat);
             }
+        }
+
+        private bool TryGetTypeParameter(string source, out object? parameter) {
+            string name = source.Trim();
+            for (int i = 0; i < _typeParameters.Count; i++) {
+                object current = _typeParameters[i]!;
+                if (i < _typeParameterNames.Length
+                    && string.Equals(_typeParameterNames[i], name, StringComparison.Ordinal)) {
+                    parameter = current;
+                    return true;
+                }
+                if (PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        current,
+                        "__name__",
+                        out object? parameterName)
+                    && parameterName is string typeParameterName
+                    && string.Equals(typeParameterName, name, StringComparison.Ordinal)) {
+                    parameter = current;
+                    return true;
+                }
+            }
+            parameter = null;
+            return false;
         }
     }
 }

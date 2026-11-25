@@ -24,6 +24,8 @@ namespace IronPython.Runtime {
         private readonly CodeContext? _context;
         private readonly string? _source;
         private readonly bool _useSource;
+        private readonly PythonTuple _enclosingTypeParameters;
+        private readonly bool _includeClassScope;
         private object? _value;
 
         internal TypeAliasObject(
@@ -34,7 +36,9 @@ namespace IronPython.Runtime {
             PythonTuple typeParameters,
             CodeContext? context = null,
             string? source = null,
-            bool useSource = false) {
+            bool useSource = false,
+            PythonTuple? enclosingTypeParameters = null,
+            bool includeClassScope = true) {
             _name = name;
             _qualname = qualname;
             _module = module;
@@ -43,6 +47,11 @@ namespace IronPython.Runtime {
             _context = context;
             _source = source;
             _useSource = useSource;
+            _enclosingTypeParameters = enclosingTypeParameters ?? PythonTuple.EMPTY;
+            _includeClassScope = includeClassScope;
+            if (context is not null) {
+                PythonOps.ConfigureTypeParameterExpressions(context, typeParameters);
+            }
         }
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage(
@@ -127,13 +136,17 @@ namespace IronPython.Runtime {
             if (name == "__value__") {
                 return _value ??= Evaluate(context);
             }
+            if (name == "evaluate_value") {
+                return new TypeAliasEvaluator(this, context);
+            }
             return OperationFailed.Value;
         }
 
         public object __repr__(CodeContext context) =>
             _qualname;
 
-        public object evaluate_value(CodeContext context, int format = 1) {
+        internal object EvaluateValue(int format = 1) {
+            CodeContext context = _context ?? DefaultContext.Default;
             object? value = _value ??= Evaluate(context);
             if (format == 4) {
                 object annotationlib = Importer.ImportModule(
@@ -156,7 +169,9 @@ namespace IronPython.Runtime {
                 ? LightExceptions.CheckAndThrow(PythonOps.EvalAnnotationSource(
                     _context,
                     _source,
-                    _typeParameters))
+                    _typeParameters,
+                    _enclosingTypeParameters,
+                    _includeClassScope))
                 : PythonCalls.Call(
                     context,
                     _thunk,
@@ -189,5 +204,39 @@ namespace IronPython.Runtime {
 
         void IWeakReferenceable.SetFinalizer(WeakRefTracker value) =>
             ((IWeakReferenceable)this).SetWeakRef(value);
+    }
+
+    [PythonType("_TypeAliasEvaluator")]
+    public sealed class TypeAliasEvaluator {
+        private readonly TypeAliasObject _alias;
+        private readonly CodeContext _context;
+
+        internal TypeAliasEvaluator(TypeAliasObject alias, CodeContext context) {
+            _alias = alias;
+            _context = context;
+        }
+
+        public object __call__(int format = 1) => _alias.EvaluateValue(format);
+
+        public object __signature__ {
+            get {
+                object inspect = Importer.ImportModule(_context, null, "inspect", false, 0);
+                object parameterType = PythonOps.GetBoundAttr(_context, inspect, "Parameter");
+                object positionalOnly = PythonOps.GetBoundAttr(
+                    _context,
+                    parameterType,
+                    "POSITIONAL_ONLY");
+                object parameter = PythonCalls.CallWithKeywordArgs(
+                    _context,
+                    parameterType,
+                    new object?[] { "format", positionalOnly, 1 },
+                    new[] { "default" })!;
+                object signatureType = PythonOps.GetBoundAttr(_context, inspect, "Signature");
+                return PythonCalls.Call(
+                    _context,
+                    signatureType,
+                    PythonTuple.MakeTuple(parameter))!;
+            }
+        }
     }
 }

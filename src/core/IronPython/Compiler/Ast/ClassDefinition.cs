@@ -345,6 +345,11 @@ namespace IronPython.Compiler.Ast {
                     init.Add(SetLocalName(TypeParameterNames[i], value));
                     init.Add(AssignValue(GetVariableExpression(TypeParameterVariables[i]), value));
                 }
+                init.Add(Ast.Call(
+                    typeof(PythonOps).GetMethod(
+                        nameof(PythonOps.ConfigureTypeParameterExpressions))!,
+                    LocalContext,
+                    typeParameterValues));
             }
 
             // __module__ = __name__

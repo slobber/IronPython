@@ -1632,9 +1632,30 @@ namespace IronPython.Runtime.Operations {
                 && declared is PythonTuple declaredTuple
                     ? declaredTuple
                     : originalBases;
+            if (vars.TryGetValue("__type_params__", out object? typeParameterObject)
+                && typeParameterObject is PythonTuple declaredTypeParameters
+                && declaredTypeParameters.Count != 0) {
+                declaredBases = PythonTuple.MakeTuple(declaredBases
+                    .Select(item => GenericAlias.RemapTypeParameters(
+                        item,
+                        declaredTypeParameters))
+                    .ToArray());
+                vars["__orig_bases__"] = declaredBases;
+            }
             PythonTuple inferredParameters = InferTypeParameters(declaredBases);
             if (!vars.ContainsKey("__parameters__")) {
                 vars["__parameters__"] = inferredParameters;
+            }
+            if (vars.TryGetValue("__type_params__", out typeParameterObject)
+                && typeParameterObject is PythonTuple actualTypeParameters
+                && actualTypeParameters.Count != 0) {
+                foreach (object? parameter in inferredParameters) {
+                    if (!actualTypeParameters.Any(declared =>
+                            TypeParametersMatch(declared, parameter))) {
+                        throw PythonOps.TypeError(
+                            "Cannot use traditional type variables together with type parameters");
+                    }
+                }
             }
 
             // Fasttrack for metaclass == `type`
@@ -3190,6 +3211,27 @@ namespace IronPython.Runtime.Operations {
             return function;
         }
 
+        public static PythonTuple ConfigureTypeParameterExpressions(
+            CodeContext context,
+            PythonTuple typeParameters) {
+            foreach (object parameter in typeParameters) {
+                if (TryGetBoundAttr(
+                        context,
+                        parameter,
+                        "_set_type_parameters",
+                        out object? setter)) {
+                    PythonCalls.Call(context, setter, typeParameters);
+                }
+            }
+            return typeParameters;
+        }
+
+        public static PythonFunction ConfigureFunctionTypeParameters(
+            PythonFunction function) {
+            ConfigureTypeParameterExpressions(function.Context, function.__type_params__);
+            return function;
+        }
+
         public static PythonTuple ExpandTypeParameters(PythonTuple typeParameters) {
             var parameters = new List<object?>();
             foreach (object parameter in typeParameters) {
@@ -3208,11 +3250,30 @@ namespace IronPython.Runtime.Operations {
         public static object? EvalAnnotationSource(
             CodeContext context,
             string source,
-            PythonTuple typeParameters) {
+            PythonTuple typeParameters,
+            PythonTuple? enclosingTypeParameters = null,
+            bool includeClassScope = true) {
             var locals = new PythonDictionary();
-            foreach (object key in context.Dict.Keys) {
-                if (context.Dict.TryGetValueNoMissing(key, out object? value)) {
-                    locals[key] = value;
+            if (!includeClassScope) {
+                foreach (object key in context.GlobalDict.Keys) {
+                    if (context.GlobalDict.TryGetValueNoMissing(key, out object? value)) {
+                        locals[key] = value;
+                    }
+                }
+            }
+            if (includeClassScope) {
+                foreach (object key in context.Dict.Keys) {
+                    if (context.Dict.TryGetValueNoMissing(key, out object? value)) {
+                        locals[key] = value;
+                    }
+                }
+            }
+            if (enclosingTypeParameters is not null) {
+                foreach (object parameter in enclosingTypeParameters) {
+                    if (TryGetBoundAttr(context, parameter, "__name__", out object? name)
+                        && name is string parameterName) {
+                        locals[parameterName] = parameter;
+                    }
                 }
             }
             foreach (object parameter in typeParameters) {
@@ -3221,7 +3282,9 @@ namespace IronPython.Runtime.Operations {
                     locals[parameterName] = parameter;
                 }
             }
-            return Builtin.eval(context, source, context.GlobalDict, locals);
+            return includeClassScope
+                ? Builtin.eval(context, source, context.GlobalDict, locals)
+                : Builtin.eval(context, source, locals, locals);
         }
 
         public static object MakeClassGetItem(CodeContext context) {
@@ -3248,6 +3311,35 @@ namespace IronPython.Runtime.Operations {
                 }
             }
             return PythonTuple.MakeTuple(parameters.ToArray());
+        }
+
+        private static bool TypeParametersMatch(object? left, object? right) {
+            if (EqualRetBool(left, right)) return true;
+            if (right is not null
+                && DynamicHelpers.GetPythonType(right).Name == "_UnpackGenericAlias"
+                && TryGetBoundAttr(
+                    DefaultContext.Default,
+                    right,
+                    "__args__",
+                    out object? unpackedArgs)
+                && unpackedArgs is PythonTuple args
+                && args.Count == 1) {
+                right = args[0];
+            }
+            if (left is null || right is null) return false;
+            return TryGetBoundAttr(
+                    DefaultContext.Default,
+                    left,
+                    "__name__",
+                    out object? leftName)
+                && TryGetBoundAttr(
+                    DefaultContext.Default,
+                    right,
+                    "__name__",
+                    out object? rightName)
+                && leftName is string leftString
+                && rightName is string rightString
+                && string.Equals(leftString, rightString, StringComparison.Ordinal);
         }
 
         public static void PythonFunctionDeleteDict() {

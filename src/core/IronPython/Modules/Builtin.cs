@@ -54,7 +54,10 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             string? qualname = null,
             object? module = null,
             string? source = null,
-            bool useSource = false) {
+            bool useSource = false,
+            PythonTuple? enclosingTypeParameters = null,
+            bool includeClassScope = true) {
+            PythonTuple enclosingParameters = enclosingTypeParameters ?? PythonTuple.EMPTY;
             string resolvedQualname = qualname ?? name;
             if (module is null
                 && context.GlobalDict.TryGetValue("__name__", out object? moduleName)) {
@@ -68,7 +71,9 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 typeParameters,
                 context,
                 source,
-                useSource);
+                useSource,
+                enclosingParameters,
+                includeClassScope);
         }
 
         public static object __build_generic_base__(
@@ -130,11 +135,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             if (hasBound) {
                 object? effectiveBoundThunk = boundSource is null
                     ? boundThunk
-                    : new Func<object?>(() => LightExceptions.CheckAndThrow(
-                        PythonOps.EvalAnnotationSource(
-                            context,
-                            boundSource,
-                            PythonTuple.EMPTY)));
+                    : new TypeParameterExpression(context, boundSource);
                 names.Add("bound");
                 args.Add(null);
                 names.Add("_bound_thunk");
@@ -143,11 +144,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             if (hasDefault) {
                 object? effectiveDefaultThunk = defaultSource is null
                     ? defaultThunk
-                    : new Func<object?>(() => LightExceptions.CheckAndThrow(
-                        PythonOps.EvalAnnotationSource(
-                            context,
-                            defaultSource,
-                            PythonTuple.EMPTY)));
+                    : new TypeParameterExpression(context, defaultSource);
                 names.Add("default");
                 args.Add(null);
                 names.Add("_default_thunk");

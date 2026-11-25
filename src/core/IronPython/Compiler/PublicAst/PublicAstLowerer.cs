@@ -29,6 +29,8 @@ namespace IronPython.Compiler.PublicAst {
         [ThreadStatic]
         private static bool _inClassBody;
         [ThreadStatic]
+        private static HashSet<string>? _activeTypeParameterNames;
+        [ThreadStatic]
         private static string? _functionQualname;
         [ThreadStatic]
         private static Dictionary<string, CompilerAst.Expression>? _typeParameterBindings;
@@ -96,6 +98,7 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         public static CompilerAst.Statement LowerStatement(AstNodes.Stmt statement) {
+            RemoveAssignedTypeParameters(statement);
             CompilerAst.Statement lowered = statement switch {
                 AstNodes.Assign assign => new CompilerAst.AssignmentStatement(
                     assign.Targets.Select(LowerExpression).ToArray(),
@@ -127,7 +130,7 @@ namespace IronPython.Compiler.PublicAst {
                     LowerExpression(assert.Test),
                     assert.Msg is null ? null! : LowerExpression(assert.Msg)),
                 AstNodes.Global global => new CompilerAst.GlobalStatement(global.Names.Select(MangleIdentifier).ToArray()),
-                AstNodes.Nonlocal nonlocal => new CompilerAst.NonlocalStatement(nonlocal.Names.Select(MangleIdentifier).ToArray()),
+                AstNodes.Nonlocal nonlocal => LowerNonlocal(nonlocal),
                 AstNodes.Delete delete => new CompilerAst.DelStatement(
                     delete.Targets.Select(LowerExpression).ToArray()),
                 AstNodes.Break => new CompilerAst.BreakStatement(),
@@ -193,6 +196,37 @@ namespace IronPython.Compiler.PublicAst {
             return lowered;
         }
 
+        private static void RemoveAssignedTypeParameters(AstNodes.Stmt statement) {
+            if (_activeTypeParameterNames is null) return;
+            System.Collections.Generic.IEnumerable<AstNodes.ExprBase>? targets = statement switch {
+                AstNodes.Assign assign => assign.Targets,
+                AstNodes.AnnAssign assign => new[] { assign.Target },
+                AstNodes.AugAssign assign => new[] { assign.Target },
+                _ => null
+            };
+            if (targets is null) return;
+            foreach (AstNodes.ExprBase target in targets) {
+                if (target is AstNodes.Name name) {
+                    _activeTypeParameterNames.Remove(name.Id);
+                }
+            }
+        }
+
+        private static CompilerAst.Statement LowerNonlocal(AstNodes.Nonlocal nonlocal) {
+            if (_activeTypeParameterNames is not null) {
+                string[] invalid = nonlocal.Names
+                    .Where(_activeTypeParameterNames.Contains)
+                    .ToArray();
+                if (invalid.Length != 0) {
+                    throw PythonOps.SyntaxError(
+                        "no binding for nonlocal '{0}' found",
+                        invalid[0]);
+                }
+            }
+            return new CompilerAst.NonlocalStatement(
+                nonlocal.Names.Select(MangleIdentifier).ToArray());
+        }
+
         private static CompilerAst.FromImportStatement LowerImportFrom(
             AstNodes.ImportFrom importFrom) {
             string[] names = importFrom.Names.Select(alias => alias.Name).ToArray();
@@ -220,6 +254,7 @@ namespace IronPython.Compiler.PublicAst {
             if (LowerExpression(typeAlias.Name) is not CompilerAst.NameExpression name) {
                 throw new InvalidOperationException("TypeAlias name must be a simple name.");
             }
+            EnsureNoDisallowedTypeExpression(typeAlias.Value, typeAlias);
             ValidateTypeParameters(typeAlias.TypeParams);
             string[] parameterNames = typeAlias.TypeParams
                 .Select(GetTypeParameterName)
@@ -238,9 +273,16 @@ namespace IronPython.Compiler.PublicAst {
                 false,
                 typeAlias.TypeParams.Select(LowerTypeParameter).ToArray());
             SetLocation(typeParameters, typeAlias);
+            bool containsLambda = ContainsLambda(typeAlias.Value);
             bool useSource = (_inClassBody && typeAlias.TypeParams.Count == 0)
-                || (typeAlias.TypeParams.Count != 0
-                    && ContainsComprehension(typeAlias.Value));
+                || ContainsComprehension(typeAlias.Value)
+                || containsLambda;
+            CompilerAst.Expression enclosingTypeParameters =
+                containsLambda && _classDefinition?.TypeParameters is not null
+                    ? _classDefinition.TypeParameters
+                    : new CompilerAst.TupleExpression(
+                        false,
+                        Array.Empty<CompilerAst.Expression>());
             return new CompilerAst.AssignmentStatement(
                 new CompilerAst.Expression[] { name },
                 Call(
@@ -255,7 +297,9 @@ namespace IronPython.Compiler.PublicAst {
                             : (_classQualname ?? _className) + "." + name.Name),
                     Constant(null),
                     Constant(GetSourceText(typeAlias.Value)),
-                    Constant(useSource)));
+                    Constant(useSource),
+                    enclosingTypeParameters,
+                    Constant(!containsLambda)));
         }
 
         private static CompilerAst.Expression LowerTypeParameter(
@@ -279,6 +323,12 @@ namespace IronPython.Compiler.PublicAst {
             AstNodes.ExprBase? bound = typeParameter.GetFields()
                 .FirstOrDefault(field => field.Name is "bound" or "Bound")
                 .Value as AstNodes.ExprBase;
+            if (bound is not null) {
+                EnsureNoDisallowedTypeExpression(bound, typeParameter);
+            }
+            if (defaultValue is not null) {
+                EnsureNoDisallowedTypeExpression(defaultValue, typeParameter);
+            }
             bool hasConstraints = bound is AstNodes.Tuple;
             bool hasBound = bound is not null && !hasConstraints;
             return Call(
@@ -297,10 +347,10 @@ namespace IronPython.Compiler.PublicAst {
                 Constant(hasConstraints),
                 Constant(hasBound),
                 Constant(defaultValue is not null),
-                Constant(_inClassBody && bound is not null
+                Constant(bound is not null
                     ? GetSourceText(bound)
                     : null),
-                Constant(_inClassBody && defaultValue is not null
+                Constant(defaultValue is not null
                     ? GetSourceText(defaultValue)
                     : null));
         }
@@ -1427,6 +1477,9 @@ namespace IronPython.Compiler.PublicAst {
             AstNodes.PythonAstNode source) {
             string loweredName = MangleIdentifier(name);
             string? previousFunctionQualname = _functionQualname;
+            string[] rawTypeParameterNames = typeParameters
+                .Select(GetTypeParameterName)
+                .ToArray();
             string functionQualname = _functionQualname is null
                 ? _className is null
                     ? name
@@ -1435,12 +1488,19 @@ namespace IronPython.Compiler.PublicAst {
             _functionQualname = functionQualname;
             bool previousInClassBody = _inClassBody;
             _inClassBody = false;
+            HashSet<string>? previousTypeParameterNames = _activeTypeParameterNames;
+            var activeTypeParameterNames = previousTypeParameterNames is null
+                ? new HashSet<string>(StringComparer.Ordinal)
+                : new HashSet<string>(previousTypeParameterNames, StringComparer.Ordinal);
+            activeTypeParameterNames.UnionWith(rawTypeParameterNames);
+            _activeTypeParameterNames = activeTypeParameterNames;
             CompilerAst.SuiteStatement loweredBody;
             try {
                 loweredBody = LowerSuite(body);
             } finally {
                 _functionQualname = previousFunctionQualname;
                 _inClassBody = previousInClassBody;
+                _activeTypeParameterNames = previousTypeParameterNames;
             }
             bool hasYield = ContainsYield(body);
             if (!isAsync && !hasYield && body.Count != 0 && body[body.Count - 1] is AstNodes.Match) {
@@ -1464,6 +1524,9 @@ namespace IronPython.Compiler.PublicAst {
             function.IsGenerator = hasYield;
             function.GeneratorStop = function.IsGenerator;
             function.Decorators = decorators.Select(LowerExpression).ToArray();
+            if (returns is not null) {
+                EnsureNoDisallowedTypeExpression(returns, returns);
+            }
             function.ReturnAnnotation = returns is null
                 ? null!
                 : LowerExpression(returns);
@@ -1541,8 +1604,13 @@ namespace IronPython.Compiler.PublicAst {
             return new CompilerAst.Parameter(MangleIdentifier(argument.ArgName), kind) {
                 Annotation = argument.Annotation is null
                     ? null!
-                    : LowerExpression(argument.Annotation)
+                    : LowerParameterAnnotation(argument.Annotation)
             };
+        }
+
+        private static CompilerAst.Expression LowerParameterAnnotation(AstNodes.ExprBase annotation) {
+            EnsureNoDisallowedTypeExpression(annotation, annotation);
+            return LowerExpression(annotation);
         }
 
         private static CompilerAst.Statement LowerClass(AstNodes.ClassDef @class) {
@@ -1616,6 +1684,12 @@ namespace IronPython.Compiler.PublicAst {
             CompilerAst.Expression[] bases;
             CompilerAst.Keyword[] keywords;
             try {
+                foreach (AstNodes.ExprBase baseExpression in @class.Bases) {
+                    EnsureNoDisallowedTypeExpression(baseExpression, baseExpression);
+                }
+                foreach (AstNodes.Keyword keyword in @class.Keywords) {
+                    EnsureNoDisallowedTypeExpression(keyword.Value, keyword.Value);
+                }
                 bases = @class.Bases.Select(LowerExpression).ToArray();
                 keywords = @class.Keywords.Select(keyword => new CompilerAst.Keyword(
                     keyword.ArgName,
@@ -1639,6 +1713,10 @@ namespace IronPython.Compiler.PublicAst {
                 HeaderIndex = GetStartOffset(@class),
                 QualName = classQualname
             };
+            if (@class.TypeParams.Count != 0) {
+                definition.TypeParameterNames = typeParameterNames;
+                definition.TypeParameters = typeParameterReference;
+            }
 
             CompilerAst.ClassDefinition? previousClassDefinition = _classDefinition;
             bool previousInClassBody = _inClassBody;
@@ -1658,10 +1736,6 @@ namespace IronPython.Compiler.PublicAst {
 
             definition.Body = body;
             definition.Decorators = decorators;
-            if (@class.TypeParams.Count != 0) {
-                definition.TypeParameterNames = typeParameterNames;
-                definition.TypeParameters = typeParameterReference;
-            }
 
             return typeParameterAssignment is null
                 ? definition
@@ -1706,6 +1780,48 @@ namespace IronPython.Compiler.PublicAst {
             var finder = new ComprehensionFinder();
             finder.Visit(expression);
             return finder.Found;
+        }
+
+        private static bool ContainsLambda(AstNodes.ExprBase expression) {
+            var finder = new LambdaFinder();
+            finder.Visit(expression);
+            return finder.Found;
+        }
+
+        private sealed class LambdaFinder : AstNodes.PythonAstWalker {
+            public bool Found { get; private set; }
+
+            protected override void VisitNode(AstNodes.PythonAstNode node) {
+                if (node.NodeKind == "Lambda") {
+                    Found = true;
+                    return;
+                }
+                base.VisitNode(node);
+            }
+        }
+
+        private static void EnsureNoDisallowedTypeExpression(
+            AstNodes.PythonAstNode expression,
+            AstNodes.PythonAstNode source) {
+            var finder = new DisallowedTypeExpressionFinder();
+            finder.Visit(expression);
+            if (finder.Found is not null) {
+                throw PythonOps.SyntaxError(
+                    "{0} expression cannot be used within a type parameter list",
+                    finder.Found.ToLowerInvariant());
+            }
+        }
+
+        private sealed class DisallowedTypeExpressionFinder : AstNodes.PythonAstWalker {
+            public string? Found { get; private set; }
+
+            protected override void VisitNode(AstNodes.PythonAstNode node) {
+                if (node.NodeKind is "Yield" or "YieldFrom" or "Await" or "NamedExpr") {
+                    Found = node.NodeKind == "NamedExpr" ? "assignment" : node.NodeKind;
+                    return;
+                }
+                base.VisitNode(node);
+            }
         }
 
         private sealed class ComprehensionFinder : AstNodes.PythonAstWalker {

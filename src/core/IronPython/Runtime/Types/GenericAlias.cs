@@ -307,6 +307,81 @@ namespace IronPython.Runtime.Types {
             return PythonTuple.MakeTuple(normalized.ToArray());
         }
 
+        internal static object? RemapTypeParameters(
+            object? value,
+            PythonTuple typeParameters) {
+            if (value is PythonList list) {
+                var result = new PythonList();
+                foreach (object? item in list) {
+                    result.Add(RemapTypeParameters(item, typeParameters));
+                }
+                return result;
+            }
+            if (value is PythonTuple tuple) {
+                return PythonTuple.MakeTuple(tuple
+                    .Select(item => RemapTypeParameters(item, typeParameters))
+                    .ToArray());
+            }
+            if (value is GenericAlias alias) {
+                return new GenericAlias(
+                    alias.__origin__,
+                    PythonTuple.MakeTuple(alias.__args__
+                        .Select(item => RemapTypeParameters(item, typeParameters))
+                        .ToArray()),
+                    alias.__unpacked__);
+            }
+            if (value is not null
+                && (DynamicHelpers.GetPythonType(value).Name is
+                    "TypeVar" or "TypeVarTuple" or "ParamSpec")
+                && PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    value,
+                    "__name__",
+                    out object? valueName)
+                && valueName is string name) {
+                foreach (object typeParameter in typeParameters) {
+                    if (PythonOps.TryGetBoundAttr(
+                            DefaultContext.Default,
+                            typeParameter,
+                            "__name__",
+                            out object? typeParameterName)
+                        && string.Equals(
+                            typeParameterName as string,
+                            name,
+                            StringComparison.Ordinal)) {
+                        return typeParameter;
+                    }
+                }
+            }
+            if (value is not null
+                && PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    value,
+                    "__args__",
+                    out object? nestedArgs)
+                && nestedArgs is PythonTuple nestedTuple) {
+                PythonTuple remapped = PythonTuple.MakeTuple(nestedTuple
+                    .Select(item => RemapTypeParameters(item, typeParameters))
+                    .ToArray());
+                object typing = Importer.ImportModule(
+                    DefaultContext.Default,
+                    null,
+                    "typing",
+                    false,
+                    0);
+                object rebuild = PythonOps.GetBoundAttr(
+                    DefaultContext.Default,
+                    typing,
+                    "_rebuild_generic_alias");
+                return PythonCalls.Call(
+                    DefaultContext.Default,
+                    rebuild,
+                    value,
+                    remapped);
+            }
+            return value;
+        }
+
         private static void AddUnpackedArguments(
             List<object?> normalized,
             GenericAlias alias) {
