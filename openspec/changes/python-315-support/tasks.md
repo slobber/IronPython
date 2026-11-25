@@ -207,7 +207,7 @@
 - [ ] 12.12 Implement `TypeVarTuple`, `Unpack`, and `Self`.
 - [x] 12.13 Implement PEP 695 type parameters and `type` statements.
 - [ ] 12.14 Implement type-parameter defaults and annotation scopes.
-- [ ] 12.15 Implement `ReadOnly`, `TypeIs`, `NoDefault`, and `override`.
+- [x] 12.15 Implement `ReadOnly`, `TypeIs`, `NoDefault`, and `override`.
 - [ ] 12.16 Implement PEP 728 typed extra items.
 - [x] 12.17 Implement PEP 747 `TypeForm`.
 - [x] 12.18 Implement PEP 800 disjoint bases.
