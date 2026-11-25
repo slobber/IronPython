@@ -63,8 +63,10 @@ namespace IronPython.Runtime.Types {
                 __args__.Select(item => FormatAliasArgument(context, item)));
             string origin = __origin__ is PythonType type
                 ? type.Name
-                : __origin__ is TypeAliasObject alias && alias.__module__ is not null
-                    ? $"{alias.__module__}.{alias.__qualname__}"
+                : __origin__ is TypeAliasObject alias
+                    && alias.__module__ is string aliasModule
+                    && aliasModule != "<module>"
+                    ? $"{aliasModule}.{alias.__qualname__}"
                     : PythonOps.Repr(context, __origin__);
             return $"{origin}[{arguments}]";
         }
