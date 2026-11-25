@@ -308,6 +308,8 @@ namespace IronPython.Runtime.Operations {
             throw PythonOps.TypeError("can't convert complex to int");
         }
 
+        public static Complex __complex__(Complex self) => self;
+
         private static string FormatComplexValue(CodeContext/*!*/ context, double x)
             => DoubleOps.Repr(context, x, trailingZeroAfterWholeFloat: false);
 

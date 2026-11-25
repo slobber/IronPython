@@ -9,6 +9,7 @@ using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 
 using IronPython.Modules;
+using IronPython.Runtime.Exceptions;
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
@@ -122,20 +123,21 @@ namespace IronPython.Runtime {
             switch (annotationFormat) {
                 case 1:
                 case 2:
+                    for (int i = 0; i < _names.Count; i++) {
+                        annotations.Add(
+                            _names[i],
+                            EvaluateAnnotation(i, locals));
+                    }
+                    return annotations;
                 case 3:
                     for (int i = 0; i < _names.Count; i++) {
-                        Func<object?>? evaluator = _evaluators[i];
-                        object? value = TryGetTypeParameter(_sources[i], out object? typeParameter)
-                            ? typeParameter
-                            : evaluator is not null
-                                ? evaluator()
-                                : Builtin.eval(
-                                    _context!,
-                                    _sources[i],
-                                    BuildEvalGlobals(),
-                                    locals ?? _context!.Dict);
-                        value = LightExceptions.CheckAndThrow(value);
-                        annotations.Add(_names[i], value);
+                        try {
+                            annotations.Add(
+                                _names[i],
+                                EvaluateAnnotation(i, locals));
+                        } catch (UnboundNameException) {
+                            annotations.Add(_names[i], MakeForwardRef(_sources[i]));
+                        }
                     }
                     return annotations;
                 case 4:
@@ -146,6 +148,34 @@ namespace IronPython.Runtime {
                 default:
                     throw PythonOps.NotImplementedError("unsupported annotation format: {0}", annotationFormat);
             }
+        }
+
+        private object? EvaluateAnnotation(int index, PythonDictionary? locals) {
+            Func<object?>? evaluator = _evaluators[index];
+            object? value = TryGetTypeParameter(_sources[index], out object? typeParameter)
+                ? typeParameter
+                : evaluator is not null
+                    ? evaluator()
+                    : Builtin.eval(
+                        _context!,
+                        _sources[index],
+                        BuildEvalGlobals(),
+                        locals ?? _context!.Dict);
+            return LightExceptions.CheckAndThrow(value);
+        }
+
+        private object MakeForwardRef(string source) {
+            object annotationlib = Importer.ImportModule(
+                _context!,
+                null,
+                "annotationlib",
+                false,
+                0);
+            object constructor = PythonOps.GetBoundAttr(
+                _context!,
+                annotationlib,
+                "ForwardRef");
+            return PythonCalls.Call(_context!, constructor, source)!;
         }
 
         private PythonDictionary BuildEvalGlobals() {

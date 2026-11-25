@@ -1700,12 +1700,21 @@ namespace IronPython.Compiler.PublicAst {
                     keyword.ArgName,
                     LowerExpression(keyword.Value))).ToArray();
                 if (classTypeParameterTemporaryName is not null) {
-                    bases = bases.Concat(new CompilerAst.Expression[] {
-                        Call(
-                            "__build_generic_base__",
-                            new CompilerAst.NameExpression(
-                                classTypeParameterTemporaryName))
-                    }).ToArray();
+                    var genericBase = Call(
+                        "__build_generic_base__",
+                        new CompilerAst.NameExpression(
+                            classTypeParameterTemporaryName));
+                    var orderedBases = bases.ToList();
+                    int objectIndex = orderedBases.FindLastIndex(
+                        expression => expression is CompilerAst.NameExpression {
+                            Name: "object"
+                        });
+                    if (objectIndex >= 0) {
+                        orderedBases.Insert(objectIndex, genericBase);
+                    } else {
+                        orderedBases.Add(genericBase);
+                    }
+                    bases = orderedBases.ToArray();
                 }
             } finally {
                 _typeParameterBindings = previousBindings;

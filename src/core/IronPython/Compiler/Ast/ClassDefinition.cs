@@ -385,7 +385,13 @@ namespace IronPython.Compiler.Ast {
                     Ast.Block(init),
                     modStmt,
                     // __qualname__
-                    SetLocalName("__qualname__", Ast.Constant(QualName, typeof(string))),
+                    SetLocalName(
+                        "__qualname__",
+                        Ast.Constant(
+                            PythonVariable?.Kind is VariableKind.Global
+                                ? _name
+                                : QualName,
+                            typeof(string))),
                     docStmt is not null ? docStmt : AstUtils.Empty(),
                     bodyStmt,
                     typeParameterValues is null

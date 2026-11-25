@@ -13,7 +13,7 @@
     <BinDir>$(RootDir)bin</BinDir>
     <BuildSysDir>$(RootDir)eng</BuildSysDir>
     <StdLibRoot Condition=" '$(StdLibRoot)' == '' ">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\IronPython.StdLib'))</StdLibRoot>
-    <StdLibCommit>e1b92495af9e0722cff7317049b574f878dfaa7a</StdLibCommit>
+    <StdLibCommit>3f94fd23a520fc80c609aa34dc6afe91718adb9d</StdLibCommit>
   </PropertyGroup>
 
   <Import Project="$(BuildSysDir)\Tasks.targets" />

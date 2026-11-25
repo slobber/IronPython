@@ -202,6 +202,8 @@ namespace IronPython.Runtime {
 
         #region Public Python API surface
 
+        public Bytes __bytes__() => this;
+
         public Bytes capitalize() {
             if (Count == 0) {
                 return this.AsBytes();

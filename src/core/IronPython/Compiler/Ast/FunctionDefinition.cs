@@ -495,7 +495,9 @@ namespace IronPython.Compiler.Ast {
                 typeof(PythonOps).GetMethod(nameof(PythonOps.SetFunctionQualName))!,
                 AstUtils.Convert(ret, typeof(PythonFunction)),
                 Ast.Constant(
-                    string.IsNullOrEmpty(QualName) ? Name : QualName,
+                    PythonVariable?.Kind is VariableKind.Global
+                        ? Name
+                        : string.IsNullOrEmpty(QualName) ? Name : QualName,
                     typeof(string)));
 
             return AddDecorators(ret, Decorators);

@@ -382,15 +382,10 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             PythonTuple bases) {
             var resolved = new List<object>(bases.Count);
             foreach (object baseType in bases) {
-                if (baseType is GenericAlias alias) {
-                    resolved.Add(alias.__origin__);
-                } else if (baseType is not PythonType
-                    && PythonOps.TryGetBoundAttr(context, baseType, "__origin__", out object? origin)
-                    && origin is not null) {
-                    resolved.Add(origin);
-                } else if (baseType is not PythonType
+                if (baseType is not PythonType
                     && PythonOps.TryGetBoundAttr(context, baseType, "__mro_entries__", out object? callback)
-                    && callback is not null) {
+                    && callback is not null
+                    && PythonOps.IsCallable(context, callback)) {
                     object replacement = PythonCalls.Call(context, callback, bases)!;
                     if (replacement is PythonTuple tuple) {
                         foreach (object item in tuple) resolved.Add(item);
@@ -399,6 +394,10 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                     } else {
                         throw PythonOps.TypeError("__mro_entries__ must return a tuple");
                     }
+                } else if (baseType is not PythonType
+                    && PythonOps.TryGetBoundAttr(context, baseType, "__origin__", out object? origin)
+                    && origin is not null) {
+                    resolved.Add(origin);
                 } else {
                     resolved.Add(baseType);
                 }

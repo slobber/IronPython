@@ -479,6 +479,18 @@ namespace IronPython.Runtime.Operations {
             }
 
             if (!(typeinfo is PythonType dt)) {
+                if (PythonOps.TryGetBoundAttr(typeinfo, "__subclasscheck__", out object? subclassCheck)
+                    && PythonOps.IsCallable(context, subclassCheck)) {
+                    object? result = PythonCalls.Call(context, subclassCheck, c);
+                    if (result is bool isSubclass) {
+                        return isSubclass;
+                    }
+                    if (result != NotImplementedType.Value) {
+                        throw PythonOps.TypeError(
+                            "__subclasscheck__() must return a bool or NotImplemented");
+                    }
+                }
+
                 if (!PythonOps.TryGetBoundAttr(typeinfo, "__bases__", out object? bases)) {
                     //!!! deal with classes w/ just __bases__ defined.
                     throw PythonOps.TypeErrorForBadInstance("issubclass(): {0} is not a class nor a tuple of classes", typeinfo);
@@ -1101,7 +1113,11 @@ namespace IronPython.Runtime.Operations {
             PythonDictionary target = isGlobal ? context.GlobalDict : context.Dict;
             if (!target.TryGetValue("__annotate__", out object? annotate)
                 || annotate is not AnnotationFunction annotationFunction) {
-                annotationFunction = new AnnotationFunction(stringOnly);
+                annotationFunction = new AnnotationFunction(
+                    context,
+                    Array.Empty<string>(),
+                    Array.Empty<string>(),
+                    stringOnly);
                 target["__annotate__"] = annotationFunction;
                 if (isGlobal) {
                     target["__annotations__"] = new PythonDictionary();

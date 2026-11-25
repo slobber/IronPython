@@ -109,6 +109,7 @@ namespace IronPython.Runtime.Types {
         public object? GetCustomMember(CodeContext context, [NotNone] string name) {
             if (name is "__args__" or "__bases__" or "__call__" or "__copy__" or "__deepcopy__"
                 or "__eq__" or "__getitem__"
+                or "__instancecheck__" or "__subclasscheck__"
                 or "__hash__" or "__iter__" or "__mro_entries__" or "__ne__"
                 or "__or__" or "__origin__" or "__parameters__" or "__reduce__"
                 or "__reduce_ex__" or "__repr__" or "__ror__" or "__unpacked__") {
