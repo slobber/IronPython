@@ -9,7 +9,7 @@
     <BuildSysDir Condition=" '$(BuildSysDir)' == '' ">$(RootDir)eng</BuildSysDir>
     <UtilsDir Condition=" '$(UtilsDir)' == '' ">$(RootDir)eng\utils</UtilsDir>
     <StdLibRoot Condition=" '$(StdLibRoot)' == '' ">$([System.IO.Path]::GetFullPath('$(MSBuildThisFileDirectory)..\IronPython.StdLib'))</StdLibRoot>
-    <StdLibCommit>2087befb32aea2fbc08d8b551e1b8f1d5d9034a5</StdLibCommit>
+    <StdLibCommit>91313dc16952762294a1c51bb06a92150d746bed</StdLibCommit>
 
     <Mono Condition=" '$(Mono)' == '' AND '$(MSBuildRuntimeType)' == 'Mono' ">true</Mono>
     

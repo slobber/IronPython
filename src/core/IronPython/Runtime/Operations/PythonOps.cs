@@ -1574,7 +1574,7 @@ namespace IronPython.Runtime.Operations {
                     && TryGetBoundAttr(parentContext, origin, "_name", out object? originName)
                     && originName is string specialName
                     && specialName is "Final" or "Required" or "NotRequired"
-                        or "TypeForm" or "TypeIs") {
+                        or "TypeForm" or "TypeIs" or "ClassVar") {
                     throw PythonOps.TypeError(
                         "Cannot subclass {0}",
                         Repr(parentContext, dt));
