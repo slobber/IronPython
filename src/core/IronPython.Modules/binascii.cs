@@ -5,6 +5,7 @@
 #nullable enable
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Numerics;
 using System.Runtime.CompilerServices;
@@ -15,12 +16,20 @@ using IronPython.Runtime.Exceptions;
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
+using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
 
 [assembly: PythonModule("binascii", typeof(IronPython.Modules.PythonBinaryAscii))]
 namespace IronPython.Modules {
     public static class PythonBinaryAscii {
         public const string __doc__ = "Provides functions for converting between binary data encoded in various formats and ASCII.";
+
+        public static readonly Bytes BASE64_ALPHABET = Bytes.Make(
+            Encoding.ASCII.GetBytes(
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"));
+        public static readonly Bytes URLSAFE_BASE64_ALPHABET = Bytes.Make(
+            Encoding.ASCII.GetBytes(
+                "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"));
 
         private static readonly object _ErrorKey = new object();
         private static readonly object _IncompleteKey = new object();
@@ -141,33 +150,128 @@ namespace IronPython.Modules {
         public static Bytes a2b_base64(CodeContext/*!*/ context, [NotNone] string data)
             => a2b_base64(context, data.ToBytes());
 
-        public static Bytes b2a_base64([NotNone] IBufferProtocol data, bool newline = true) {
-            // TODO: newline should be a keyword only argument
-            using var buffer = data.GetBuffer();
-            return b2a_base64_impl(buffer.AsReadOnlySpan(), newline);
-
-            static Bytes b2a_base64_impl(ReadOnlySpan<byte> data, bool newline) {
-                if (data.Length == 0) return Bytes.Empty;
-                using var res = new MemoryStream();
-                res.EncodeData(data, (byte)'=', EncodeValue);
-                if (newline)
-                    res.WriteByte((byte)'\n');
-                return Bytes.Make(res.ToArray());
-
-                static byte EncodeValue(int val) {
-                    if (val < 26) return (byte)('A' + val);
-                    if (val < 52) return (byte)('a' + val - 26);
-                    if (val < 62) return (byte)('0' + val - 52);
-                    switch (val) {
-                        case 62:
-                            return (byte)'+';
-                        case 63:
-                            return (byte)'/';
-                        default:
-                            throw new InvalidOperationException(string.Format("Bad int val: {0}", val));
-                    }
+        public static Bytes b2a_base64(
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
+            bool newline = true;
+            bool padded = true;
+            int wrapcol = 0;
+            byte[]? alphabet = null;
+            foreach (KeyValuePair<object, object> item in kwargs) {
+                switch (item.Key) {
+                    case "newline":
+                        newline = Converter.ConvertToBoolean(item.Value);
+                        break;
+                    case "padded":
+                        padded = Converter.ConvertToBoolean(item.Value);
+                        break;
+                    case "wrapcol":
+                        wrapcol = ConvertWrapColumn(item.Value);
+                        break;
+                    case "alphabet":
+                        if (item.Value is not IBufferProtocol alphabetBuffer) {
+                            throw PythonOps.TypeError(
+                                "alphabet must be bytes-like");
+                        }
+                        alphabet = GetBytes(alphabetBuffer);
+                        if (alphabet.Length != 64) {
+                            throw PythonOps.ValueError(
+                                "alphabet must contain exactly 64 bytes");
+                        }
+                        break;
+                    default:
+                        throw PythonOps.TypeError(
+                            "b2a_base64() got an unexpected keyword argument '{0}'",
+                            item.Key);
                 }
             }
+
+            using var buffer = data.GetBuffer();
+            using var res = new MemoryStream();
+            if (!buffer.AsReadOnlySpan().IsEmpty) {
+                res.EncodeData(
+                    buffer.AsReadOnlySpan(),
+                    (byte)'=',
+                    EncodeValue);
+            }
+            byte[] encoded = res.ToArray();
+            int length = encoded.Length;
+            if (!padded) {
+                while (length > 0 && encoded[length - 1] == '=') {
+                    length--;
+                }
+            }
+            if (alphabet is not null) {
+                for (int i = 0; i < length; i++) {
+                    encoded[i] = alphabet[GetBase64Index(encoded[i])];
+                }
+            }
+            if (wrapcol <= 0 || length <= wrapcol) {
+                Array.Resize(ref encoded, length);
+                if (newline) {
+                    Array.Resize(ref encoded, length + 1);
+                    encoded[length] = (byte)'\n';
+                }
+                return Bytes.Make(encoded);
+            }
+
+            using var wrapped = new MemoryStream();
+            int lineLength = Math.Max(4, wrapcol / 4 * 4);
+            for (int offset = 0; offset < length; offset += lineLength) {
+                int count = Math.Min(lineLength, length - offset);
+                wrapped.Write(encoded, offset, count);
+                if (offset + count < length || newline) {
+                    wrapped.WriteByte((byte)'\n');
+                }
+            }
+            return Bytes.Make(wrapped.ToArray());
+
+            static byte EncodeValue(int val) {
+                if (val < 26) return (byte)('A' + val);
+                if (val < 52) return (byte)('a' + val - 26);
+                if (val < 62) return (byte)('0' + val - 52);
+                switch (val) {
+                    case 62:
+                        return (byte)'+';
+                    case 63:
+                        return (byte)'/';
+                    default:
+                        throw new InvalidOperationException(
+                            string.Format("Bad int val: {0}", val));
+                }
+            }
+        }
+
+        private static int GetBase64Index(byte value) {
+            if (value >= 'A' && value <= 'Z') {
+                return value - 'A';
+            }
+            if (value >= 'a' && value <= 'z') {
+                return value - 'a' + 26;
+            }
+            if (value >= '0' && value <= '9') {
+                return value - '0' + 52;
+            }
+            return value == '+' ? 62 : 63;
+        }
+
+        private static int ConvertWrapColumn(object value) {
+            object indexed;
+            try {
+                indexed = PythonOps.Index(value);
+            } catch (Exception) {
+                throw PythonOps.TypeError("wrapcol must be an integer");
+            }
+            BigInteger column = Converter.ConvertToBigInteger(indexed);
+            if (column < 0) {
+                throw PythonOps.ValueError("wrapcol must be non-negative");
+            }
+            return column > int.MaxValue ? int.MaxValue : (int)column;
+        }
+
+        private static byte[] GetBytes(IBufferProtocol value) {
+            using var buffer = value.GetBuffer();
+            return buffer.AsUnsafeArray() ?? buffer.ToArray();
         }
 
         #endregion
