@@ -61,12 +61,12 @@ namespace IronPython.Compiler.Ast {
             Debug.Assert(numList == 0 || firstListPos < args.Length);
 
             // count splatted dictionary args and find the lowest index of a dict argument, if any
-            ScanKwargs(kwargs, out var numDict, out int firstDictPos);
-            Debug.Assert(numDict == 0 || firstDictPos < kwargs.Length);
+            ScanKwargs(kwargs, out var numDict, out _);
 
             // all list arguments and all simple arguments after the first list will be collated into a single list for the actual call
             // all dictionary arguments will be merged into a single dictionary for the actual call
-            Argument[] kinds = new Argument[firstListPos + Math.Min(numList, 1) + (Kwargs.Count - numDict) + Math.Min(numDict, 1)];
+            int keywordArgumentCount = numDict > 0 ? 1 : kwargs.Length;
+            Argument[] kinds = new Argument[firstListPos + Math.Min(numList, 1) + keywordArgumentCount];
             MSAst.Expression[] values = new MSAst.Expression[2 + kinds.Length];
 
             values[0] = Parent.LocalContext;
@@ -92,21 +92,19 @@ namespace IronPython.Compiler.Ast {
                 i++;
             }
 
-            // add named arguments
-            if (Kwargs.Count != numDict) {
-                foreach (var arg in Kwargs) {
-                    if (arg.Name is not null) {
-                        kinds[i] = new Argument(arg.Name);
-                        values[i + 2] = arg.Expression;
-                        i++;
-                    }
-                }
-            }
-
-            // unpack dict arguments
+            // Merge named and unpacked keyword arguments in source order. This is
+            // observable through **kwargs inside the callee (PEP 468).
             if (numDict > 0) {
                 kinds[i] = _dictTypeArgument;
-                values[i + 2] = UnpackDictHelper(Parent.LocalContext, kwargs.Slice(firstDictPos), numDict);
+                values[i + 2] = UnpackKeywordsHelper(Parent.LocalContext, kwargs);
+                i++;
+            } else {
+                foreach (var arg in kwargs) {
+                    Debug.Assert(arg.Name is not null);
+                    kinds[i] = new Argument(arg.Name);
+                    values[i + 2] = arg.Expression;
+                    i++;
+                }
             }
 
             return Parent.Invoke(
@@ -154,20 +152,23 @@ namespace IronPython.Compiler.Ast {
                 return UnpackSequenceHelper<PythonList>(args, AstMethods.MakeEmptyList, AstMethods.ListAppend, AstMethods.ListExtend);
             }
 
-            // Compare to: CallExpression.Reduce.__UnpackKeywordsHelper
-            static MSAst.Expression UnpackDictHelper(MSAst.Expression context, ReadOnlySpan<Keyword> kwargs, int numDict) {
+            // Compare to: ClassDefinition.Reduce.__UnpackKeywordsHelper
+            static MSAst.Expression UnpackKeywordsHelper(MSAst.Expression context, ReadOnlySpan<Keyword> kwargs) {
                 Debug.Assert(kwargs.Length > 0);
-                Debug.Assert(0 < numDict && numDict <= kwargs.Length);
-                Debug.Assert(kwargs[0].Name is null);
 
-                if (numDict == 1) return kwargs[0].Expression;
-
-                var expressions = new ReadOnlyCollectionBuilder<MSAst.Expression>(numDict + 2);
+                var expressions = new ReadOnlyCollectionBuilder<MSAst.Expression>(kwargs.Length + 2);
                 var varExpr = Expression.Variable(typeof(PythonDictionary), "$dict");
                 expressions.Add(Expression.Assign(varExpr, Expression.Call(AstMethods.MakeEmptyDict)));
                 foreach (var arg in kwargs) {
                     if (arg.Name is null) {
                         expressions.Add(Expression.Call(AstMethods.DictMerge, context, varExpr, AstUtils.Convert(arg.Expression, typeof(object))));
+                    } else {
+                        expressions.Add(Expression.Call(
+                            AstMethods.DictMergeOne,
+                            context,
+                            varExpr,
+                            AstUtils.Constant(arg.Name, typeof(object)),
+                            AstUtils.Convert(arg.Expression, typeof(object))));
                     }
                 }
                 expressions.Add(varExpr);

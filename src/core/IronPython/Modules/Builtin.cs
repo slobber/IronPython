@@ -600,14 +600,14 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             "eval compiles the code as if were an expression\n" +
             "single compiles a single statement\n\n" +
             "source can either be a string, bytes or an AST object")]
-        public static object compile(CodeContext/*!*/ context, [NotNone] _ast.AST source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null, int _feature_version = -1) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] _ast.AST source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, object? optimize = null, object? module = null, int _feature_version = -1) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
             ValidateCompileMode(mode);
             string? moduleName = GetCompileModuleName(module);
 
-            bool astOnly = flags != null && (Converter.ConvertToInt32(flags) & _ast.PyCF_ONLY_AST) != 0;
+            bool astOnly = flags != null && (ConvertCompileFlags(flags) & _ast.PyCF_ONLY_AST) != 0;
 
             if (astOnly) {
                 return source;
@@ -624,7 +624,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         }
 
         [Documentation("")] // provided by first overload
-        public static object compile(CodeContext/*!*/ context, [NotNone] IBufferProtocol source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null, int _feature_version = -1) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] IBufferProtocol source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, object? optimize = null, object? module = null, int _feature_version = -1) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
@@ -639,7 +639,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         }
 
         [Documentation("")] // provided by first overload
-        public static object compile(CodeContext/*!*/ context, [NotNone] string source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, int optimize = -1, object? module = null, int _feature_version = -1) {
+        public static object compile(CodeContext/*!*/ context, [NotNone] string source, [NotNone] object filename, [NotNone] string mode, object? flags = null, bool dont_inherit = false, object? optimize = null, object? module = null, int _feature_version = -1) {
             // TODO: implement optimize
 
             string sfilename = PythonOps.FsPathDecoded(context, filename);
@@ -657,6 +657,15 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             var sourceUnit = context.LanguageContext.CreateSnippet(source, sfilename, sourceCodeKind);
 
             return CompileHelper(context, sourceUnit, mode, flags, dont_inherit, module);
+        }
+
+        private static int ConvertCompileFlags(object flags) {
+            object indexed = PythonOps.Index(flags);
+            try {
+                return Converter.ConvertToInt32(indexed);
+            } catch (OverflowException) {
+                throw PythonOps.OverflowError("compile() flags are too large");
+            }
         }
 
         private static SourceCodeKind ValidateCompileMode(string mode) {
@@ -677,7 +686,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             bool dont_inherit,
             object? module) {
             bool astOnly = false;
-            int iflags = flags != null ? Converter.ConvertToInt32(flags) : 0;
+            int iflags = flags != null ? ConvertCompileFlags(flags) : 0;
             if ((iflags & _ast.PyCF_ONLY_AST) != 0) {
                 astOnly = true;
                 iflags &= ~_ast.PyCF_ONLY_AST;
