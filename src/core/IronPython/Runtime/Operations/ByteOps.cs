@@ -104,6 +104,14 @@ namespace IronPython.Runtime.Operations {
                     return buf.AsReadOnlySpan().ToArray();
                 }
             }
+            if (PythonBufferProtocolWrapper.TryWrap(
+                    DefaultContext.Default,
+                    obj,
+                    out bp)) {
+                using (IPythonBuffer buf = bp.GetBuffer()) {
+                    return buf.AsReadOnlySpan().ToArray();
+                }
+            }
             throw PythonOps.TypeError("a bytes-like object is required, not '{0}'", PythonOps.GetPythonTypeName(obj));
         }
 
@@ -120,6 +128,14 @@ namespace IronPython.Runtime.Operations {
                 case Memory<byte> mem:
                     return mem.ToArray();
                 default:
+                    if (PythonBufferProtocolWrapper.TryWrap(
+                            context ?? DefaultContext.Default,
+                            value,
+                            out IBufferProtocol pythonBuffer)) {
+                        using (IPythonBuffer buf = pythonBuffer.GetBuffer()) {
+                            return buf.AsReadOnlySpan().ToArray();
+                        }
+                    }
                     int len = 0;
                     if (useHint) PythonOps.TryInvokeLengthHint(context ?? DefaultContext.Default, value, out len);
                     List<byte> ret = new List<byte>(len);

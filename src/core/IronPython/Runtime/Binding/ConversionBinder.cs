@@ -178,7 +178,23 @@ namespace IronPython.Runtime.Binding {
                             res = ConvertFromMemoryToBufferProtocol(self.Restrict(self.GetLimitType()), typeof(Memory<byte>));
                         } else if (Converter.HasImplicitConversion(fromType, typeof(ReadOnlyMemory<byte>))) {
                             res = ConvertFromMemoryToBufferProtocol(self.Restrict(self.GetLimitType()), typeof(ReadOnlyMemory<byte>));
+                        } else if (MetaPythonObject.GetPythonType(self)
+                                .TryResolveSlot(
+                                    _context.SharedContext,
+                                    "__buffer__",
+                                    out _)) {
+                            res = ConvertToPythonBufferProtocol(self);
                         }
+                    } else if (type == typeof(IBufferProtocol)
+                        && fromType != typeof(ByteArray)
+                        && fromType != typeof(Bytes)
+                        && fromType != typeof(MemoryView)
+                        && MetaPythonObject.GetPythonType(self)
+                            .TryResolveSlot(
+                                _context.SharedContext,
+                                "__buffer__",
+                                out _)) {
+                        res = ConvertToPythonBufferProtocol(self);
                     } else if (type.IsGenericType && !type.IsAssignableFrom(fromType)) {
                         Type genTo = type.GetGenericTypeDefinition();
 
@@ -743,6 +759,19 @@ namespace IronPython.Runtime.Binding {
                 ),
                 self.Restrictions
             );
+        }
+
+        private DynamicMetaObject ConvertToPythonBufferProtocol(
+            DynamicMetaObject self) {
+            return new DynamicMetaObject(
+                Ast.Convert(
+                    Ast.New(
+                        typeof(PythonBufferProtocolWrapper).GetConstructor(
+                            [typeof(CodeContext), typeof(object)])!,
+                        Ast.Constant(_context.SharedContext),
+                        AstUtils.Convert(self.Expression, typeof(object))),
+                    typeof(IBufferProtocol)),
+                self.Restrictions);
         }
 
         private DynamicMetaObject ConvertFromBufferProtocolToByteList(DynamicMetaObject self, Type toType) {

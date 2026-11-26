@@ -10,8 +10,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 using IronPython.Runtime.Exceptions;
+using IronPython.Runtime.Operations;
+using IronPython.Runtime.Types;
 
 namespace IronPython.Runtime {
     /// <summary>
@@ -153,6 +156,133 @@ namespace IronPython.Runtime {
             } catch (BufferException) {
                 buffer = null;
                 return false;
+            }
+        }
+    }
+
+    internal sealed class PythonBufferProtocolWrapper : IBufferProtocol {
+        private readonly CodeContext _context;
+        private readonly object _object;
+
+        public PythonBufferProtocolWrapper(
+            CodeContext context,
+            object value) {
+            _context = context;
+            _object = value;
+        }
+
+        internal static bool TryWrap(
+            CodeContext context,
+            object? value,
+            out IBufferProtocol buffer) {
+            if (value is not null
+                && value is not MemoryView) {
+                PythonType pythonType = DynamicHelpers.GetPythonType(value);
+                if ((value is not IBufferProtocol || !pythonType.IsSystemType)
+                    && pythonType.TryResolveSlot(
+                        context,
+                        "__buffer__",
+                        out _)) {
+                    buffer = new PythonBufferProtocolWrapper(
+                        context,
+                        value);
+                    return true;
+                }
+            }
+            buffer = null!;
+            return false;
+        }
+
+        public IPythonBuffer GetBuffer(
+            BufferFlags flags,
+            bool throwOnError) {
+            object? result = PythonCalls.Call(
+                _context,
+                PythonOps.GetBoundAttr(
+                    _context,
+                    _object,
+                    "__buffer__"),
+                unchecked((int)flags));
+            if (result is not MemoryView view) {
+                throw PythonOps.TypeError(
+                    "__buffer__ returned non-memoryview object");
+            }
+            return new PythonBufferProtocolHandle(
+                _context,
+                _object,
+                view);
+        }
+    }
+
+    internal sealed class PythonBufferProtocolHandle : IPythonBuffer {
+        private readonly CodeContext _context;
+        private readonly object _object;
+        private MemoryView? _view;
+
+        internal PythonBufferProtocolHandle(
+            CodeContext context,
+            object value,
+            MemoryView view) {
+            _context = context;
+            _object = value;
+            _view = view;
+        }
+
+        private MemoryView View
+            => _view ?? throw new ObjectDisposedException(
+                nameof(PythonBufferProtocolHandle));
+
+        private IPythonBuffer Buffer => View;
+
+        public object Object => _object;
+        public bool IsReadOnly => Buffer.IsReadOnly;
+        public int Offset => Buffer.Offset;
+        public string? Format => Buffer.Format;
+        public int ItemCount => Buffer.ItemCount;
+        public int ItemSize => Buffer.ItemSize;
+        public int NumOfDims => Buffer.NumOfDims;
+        public IReadOnlyList<int>? Shape => Buffer.Shape;
+        public IReadOnlyList<int>? Strides => Buffer.Strides;
+        public IReadOnlyList<int>? SubOffsets => Buffer.SubOffsets;
+
+        public ReadOnlySpan<byte> AsReadOnlySpan()
+            => Buffer.AsReadOnlySpan();
+
+        public Span<byte> AsSpan()
+            => Buffer.AsSpan();
+
+        public MemoryHandle Pin()
+            => Buffer.Pin();
+
+        public void Dispose() {
+            MemoryView? view = Interlocked.Exchange(ref _view, null);
+            if (view is null) {
+                return;
+            }
+            view.BeginRelease();
+            bool hasRelease = false;
+            try {
+                PythonType pythonType =
+                    DynamicHelpers.GetPythonType(_object);
+                if (pythonType.TryResolveSlot(
+                        _context,
+                        "__release_buffer__",
+                        out PythonTypeSlot slot)
+                    && (slot is not BuiltinMethodDescriptor descriptor
+                        || descriptor.DeclaringType != typeof(ByteArray))
+                    && PythonOps.TryGetBoundAttr(
+                        _context,
+                        _object,
+                        "__release_buffer__",
+                        out object? release)
+                    && release is not null) {
+                    hasRelease = true;
+                    PythonCalls.Call(_context, release, view);
+                }
+            } finally {
+                if (!hasRelease || _object is IBufferProtocol) {
+                    ((IDisposable)view).Dispose();
+                }
             }
         }
     }

@@ -271,7 +271,7 @@
 - [x] 15.19 Implement precise expression error ranges.
 - [x] 15.20 Implement exception notes.
 - [x] 15.21 Implement starred unpacking in `for`.
-- [ ] 15.22 Implement Python-level buffer protocol.
+- [x] 15.22 Implement Python-level buffer protocol.
 - [x] 15.23 Implement defined `locals()`/`exec()`/`eval()` semantics.
 - [x] 15.24 Implement 3.13 docstring whitespace normalization.
 - [x] 15.25 Implement bracketless `except`/`except*`.

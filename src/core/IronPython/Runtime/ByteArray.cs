@@ -91,6 +91,23 @@ namespace IronPython.Runtime {
             }
         }
 
+        public MemoryView __buffer__(CodeContext context, int flags)
+            => new MemoryView(
+                this,
+                (BufferFlags)flags
+                    | BufferFlags.Format
+                    | BufferFlags.ND);
+
+        public void __release_buffer__(
+            CodeContext context,
+            [NotNone] MemoryView buffer) {
+            if (!ReferenceEquals(buffer.obj, this)) {
+                throw PythonOps.ValueError(
+                    "memoryview does not match its exporting object");
+            }
+            buffer.release(context);
+        }
+
         public void __init__(CodeContext context, object? source) {
             if (Converter.TryConvertToIndex(source, out int size, throwTypeError: false)) {
                 __init__(size);

@@ -16,6 +16,7 @@ using Microsoft.Scripting.Utils;
 using Microsoft.Scripting.Generation;
 using Microsoft.Scripting.Runtime;
 using IronPython.Runtime.Operations;
+using IronPython.Runtime.Types;
 
 namespace IronPython.Runtime.Binding {
     internal sealed class PythonOverloadResolverFactory : OverloadResolverFactory {
@@ -178,6 +179,19 @@ namespace IronPython.Runtime.Binding {
                     fromType == typeof(byte[]) ||
                     fromType == typeof(ArraySegment<byte>)) {
                     return true;
+                }
+                if (fromArg is not null
+                    && fromType != typeof(ByteArray)
+                    && fromType != typeof(Bytes)
+                    && fromType != typeof(MemoryView)) {
+                    PythonType pythonType =
+                        MetaPythonObject.GetPythonType(fromArg);
+                    if (pythonType.TryResolveSlot(
+                            Binder.Context.SharedContext,
+                            "__buffer__",
+                            out _)) {
+                        return true;
+                    }
                 }
             }
 

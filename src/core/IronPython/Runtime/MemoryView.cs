@@ -42,16 +42,36 @@ namespace IronPython.Runtime {
         private readonly int _numItems;   // product(shape); 1 for scalars
         private readonly bool _isCContig;
         private readonly bool _isFContig;
+        private bool _releasing;
 
         /// <seealso href="https://docs.python.org/3/c-api/memoryview.html#c.PyMemoryView_FromObject"/>
-        public MemoryView([NotNone] IBufferProtocol @object) {
+        public MemoryView(
+            CodeContext context,
+            [NotNone] object @object)
+            : this(
+                GetBufferProtocol(context, @object),
+                BufferFlags.RecordsRO) {
+        }
+
+        internal MemoryView([NotNone] IBufferProtocol @object)
+            : this(@object, BufferFlags.RecordsRO) {
+        }
+
+        internal MemoryView(
+            [NotNone] IBufferProtocol @object,
+            BufferFlags flags) {
             _exporter = @object;
 
             // MemoryView should support all possible buffer exports (BufferFlags.FullRO)
             // but handling of suboffsets (BufferFlags.Indirect) is not implemented yet.
             // Hence the request is for BufferFlags.RecordsRO
-            _flags = BufferFlags.RecordsRO;
-            _buffer = @object.GetBuffer(_flags);
+            _flags = flags;
+            _buffer = @object.GetBuffer(flags);
+            if (_flags.HasFlag(BufferFlags.Writable)
+                && _buffer.IsReadOnly) {
+                throw PythonOps.BufferError(
+                    "memoryview: underlying buffer is not writable");
+            }
             // doublecheck that we don't have to deal with suboffsets
             if (_buffer.SubOffsets != null)
                 throw PythonOps.NotImplementedError("memoryview: indirect buffers are not supported");
@@ -101,6 +121,7 @@ namespace IronPython.Runtime {
         }
 
         public MemoryView([NotNone] MemoryView @object) {
+            @object.CheckBuffer();
             _exporter    = @object._exporter;
             _flags       = BufferFlags.RecordsRO;
             _buffer      = _exporter.GetBuffer(_flags);
@@ -184,9 +205,24 @@ namespace IronPython.Runtime {
             } catch {}
         }
 
+        internal void BeginRelease() {
+            _releasing = true;
+        }
+
         [MemberNotNull(nameof(_buffer))]
         private void CheckBuffer() {
-            if (_buffer == null) throw PythonOps.ValueError("operation forbidden on released memoryview object");
+            if (_buffer == null || _releasing) {
+                throw PythonOps.ValueError(
+                    "operation forbidden on released memoryview object");
+            }
+        }
+
+        [MemberNotNull(nameof(_buffer))]
+        private void CheckBufferForBytes() {
+            if (_buffer == null) {
+                throw PythonOps.ValueError(
+                    "operation forbidden on released memoryview object");
+            }
         }
 
         /// <summary>
@@ -282,13 +318,57 @@ namespace IronPython.Runtime {
 
         public object obj {
             get {
-                CheckBuffer();
+                CheckBufferForBytes();
                 return _exporter;
             }
         }
 
         public void release(CodeContext /*!*/ context) {
             ((IPythonBuffer)this).Dispose();
+        }
+
+        public MemoryView toreadonly() {
+            CheckBuffer();
+            return new MemoryView(this, true);
+        }
+
+        public MemoryView __buffer__(CodeContext context, int flags) {
+            CheckBuffer();
+            return _from_flags(context, this, flags);
+        }
+
+        public void __release_buffer__(
+            CodeContext context,
+            [NotNone] MemoryView buffer) {
+            if (!ReferenceEquals(buffer.obj, this)) {
+                throw PythonOps.ValueError(
+                    "memoryview does not match its exporting object");
+            }
+            buffer.release(context);
+        }
+
+        public static MemoryView _from_flags(
+            CodeContext context,
+            [NotNone] object @object,
+            int flags) {
+            return new MemoryView(
+                GetBufferProtocol(context, @object),
+                (BufferFlags)flags);
+        }
+
+        private static IBufferProtocol GetBufferProtocol(
+            CodeContext context,
+            object value) {
+            if (PythonBufferProtocolWrapper.TryWrap(
+                    context,
+                    value,
+                    out IBufferProtocol buffer)) {
+                return buffer;
+            }
+            if (value is IBufferProtocol direct) {
+                return direct;
+            }
+            throw PythonOps.TypeErrorForBytesLikeTypeMismatch(value);
         }
 
         public object __enter__() {
@@ -400,7 +480,7 @@ namespace IronPython.Runtime {
         }
 
         public Bytes tobytes() {
-            CheckBuffer();
+            CheckBufferForBytes();
 
             if (_shape.Contains(0)) {
                 return Bytes.Empty;
