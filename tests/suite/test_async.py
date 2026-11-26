@@ -7,6 +7,7 @@
 import sys
 import threading
 import unittest
+from asyncio import CancelledError
 
 from iptest import run_test, skipUnlessIronPython, is_netcoreapp
 from iptest.ipunittest import load_ironpython_test
@@ -19,7 +20,8 @@ def run_coro(coro):
         try:
             task = coro.send(value)
             # .NET Task yielded — block on it (test runner is synchronous)
-            task.Wait()
+            if task is not None:
+                task.Wait()
             value = None
         except StopIteration as e:
             return e.value
@@ -991,6 +993,37 @@ class DotNetRealAsyncTaskTest(unittest.TestCase):
             doubled = await py_double(val)
             return doubled
         self.assertEqual(run_coro(test()), 10)
+
+
+@unittest.skipUnless(_has_async_helpers, "requires IronPythonTest with AsyncInteropHelpers")
+class DotNetAsyncDisposableTest(unittest.TestCase):
+    def test_await_dispose_async(self):
+        probe = AsyncInteropHelpers.AsyncDisposableProbe.Create()
+
+        async def test():
+            await probe.DisposeAsync()
+            return probe.Disposed
+
+        self.assertTrue(run_coro(test()))
+        self.assertTrue(probe.Disposed)
+
+    def test_dispose_async_in_async_with(self):
+        probe = AsyncInteropHelpers.AsyncDisposableProbe.Create()
+
+        class Manager:
+            async def __aenter__(self):
+                return probe
+
+            async def __aexit__(self, exc_type, exc, tb):
+                await probe.DisposeAsync()
+                return False
+
+        async def test():
+            async with Manager():
+                pass
+            return probe.Disposed
+
+        self.assertTrue(run_coro(test()))
 
 
 @unittest.skipUnless(_has_async_helpers, "requires IronPythonTest with AsyncInteropHelpers")

@@ -872,7 +872,16 @@ namespace IronPython.Runtime.Operations {
             return spec.AlignNumericText(digits, self.IsZero, self.IsPositive());
         }
 
-        public static Bytes to_bytes(BigInteger value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(BigInteger value)
+            => to_bytes(value, 1, "big", false);
+
+        public static Bytes to_bytes(BigInteger value, int length)
+            => to_bytes(value, length, "big", false);
+
+        public static Bytes to_bytes(BigInteger value, int length, [NotNone] string byteorder)
+            => to_bytes(value, length, byteorder, false);
+
+        public static Bytes to_bytes(BigInteger value, int length, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
 
             bool isLittle = (byteorder == "little");
@@ -920,8 +929,16 @@ namespace IronPython.Runtime.Operations {
             static void ThrowOverflow() => throw PythonOps.OverflowError("int too big to convert");
         }
 
-        [ClassMethod, StaticExtensionMethod]
-        public static object from_bytes(CodeContext context, PythonType type, object? bytes, [NotNone] string byteorder, bool signed = false) {
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object? bytes)
+            => from_bytes(context, cls, bytes, "big", false);
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object? bytes, [NotNone] string byteorder)
+            => from_bytes(context, cls, bytes, byteorder, false);
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object? bytes, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
 
             bool isLittle = byteorder == "little";
@@ -938,9 +955,9 @@ namespace IronPython.Runtime.Operations {
             var val = new BigInteger(bytesArr);
 #endif
 
-            if (type == TypeCache.BigInteger) return val;
+            if (cls == TypeCache.BigInteger) return val;
 
-            return PythonTypeOps.CallParams(context, type, val);
+            return PythonTypeOps.CallParams(context, cls, val);
         }
 
         #endregion

@@ -220,6 +220,40 @@
                 "test.test_frame.TestIncompleteFrameAreInvisible.test_issue95818"
             ]
         },
+        {
+            "id": "stdlib-315-uuid-enum-introspection",
+            "category": "cpython-internal",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#17.10",
+            "reason": "This test compares enum class dictionaries to verify the private enum._simple_enum helper. The UUID values, generation, parsing, CLI, and pickle behavior pass; IronPython's enum implementation exposes a different descriptor representation for __weakref__ and _generate_next_value_.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_uuid.TestUUIDWithoutExtModule.test_safe_uuid_enum"
+            ]
+        },
+        {
+            "id": "stdlib-315-argparse-progname-process",
+            "category": "platform-unavailable",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#17.10",
+            "reason": "The remaining argparse prog-name cases launch a fresh interpreter or marshal compiled Python code. fork_exec is unavailable in this runtime checkpoint; the in-process parser, color, suggestion, file, and option behavior passes.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_argparse.TestLazyImports.*",
+                "test.test_argparse.TestProgName.test_*"
+            ]
+        },
+        {
+            "id": "stdlib-315-ensurepip-process-install",
+            "category": "platform-unavailable",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#17.13",
+            "reason": "The ensurepip unit suite and version/metadata checks pass. A real bootstrap delegates installation to a child interpreter through subprocess, which is blocked by the currently unavailable fork_exec implementation.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_ensurepip.RealInstallation.*"
+            ]
+        },
     {
       "id": "interpreter-call-c-api-code-inspection",
       "category": "cpython-c-api",

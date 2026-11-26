@@ -885,6 +885,7 @@ namespace IronPython.Runtime {
                 case "-infinity":
                     return double.NegativeInfinity;
                 default:
+                    s = RemoveFloatUnderscores(s);
                     // pass NumberStyles to disallow ,'s in float strings.
                     double res;
                     try {
@@ -894,6 +895,27 @@ namespace IronPython.Runtime {
                     }
                     return (res == 0.0 && text.lstrip().StartsWith('-')) ? DoubleOps.NegativeZero : res;
             }
+        }
+
+        private static string RemoveFloatUnderscores(string text) {
+            if (!text.Contains('_')) {
+                return text;
+            }
+            var result = new StringBuilder(text.Length);
+            for (int i = 0; i < text.Length; i++) {
+                char current = text[i];
+                if (current != '_') {
+                    result.Append(current);
+                    continue;
+                }
+                if (i == 0
+                    || i + 1 == text.Length
+                    || !char.IsAsciiDigit(text[i - 1])
+                    || !char.IsAsciiDigit(text[i + 1])) {
+                    throw new FormatException("invalid underscore placement in float literal");
+                }
+            }
+            return result.ToString();
         }
 
         private static string ReplaceUnicodeCharacters(string text) {

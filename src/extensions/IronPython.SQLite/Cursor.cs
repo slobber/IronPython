@@ -321,8 +321,10 @@ namespace IronPython.SQLite
                         }
                         else
                         {
-                            string item = Latin1.GetString(val, 0, val.Length);
-                            converted = PythonCalls.Call(context, converter, item);
+                            converted = PythonCalls.Call(
+                                context,
+                                converter,
+                                new Bytes(val));
                         }
                     }
                     else

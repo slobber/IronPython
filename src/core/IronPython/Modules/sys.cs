@@ -570,6 +570,9 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
             return ObjectOps.__sizeof__(o);
         }
 
+        public static PythonType _ironpython_cancelled_error
+            => PythonExceptions.CancelledError;
+
         [SupportedOSPlatform("windows"), PythonHidden(PlatformsAttribute.PlatformFamily.Unix)]
         public static PythonTuple getwindowsversion()
             => windows_version.GetWindowsVersion();

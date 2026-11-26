@@ -404,22 +404,22 @@ namespace IronPython.Runtime.Operations {
         }
 
         internal static PythonTypeSlot/*!*/ GetFinalSlotForFunction(BuiltinFunction/*!*/ func) {
-            if ((func.FunctionType & FunctionType.Method) != 0) {
-                BuiltinMethodDescriptor desc;
-                lock (_methodCache) {
-                    if (!_methodCache.TryGetValue(func, out desc)) {
-                        _methodCache[func] = desc = new BuiltinMethodDescriptor(func);
+            if (func.Targets[0].IsDefined(typeof(ClassMethodAttribute), true)) {
+                lock (_classMethodCache) {
+                    ClassMethodDescriptor desc;
+                    if (!_classMethodCache.TryGetValue(func, out desc)) {
+                        _classMethodCache[func] = desc = new ClassMethodDescriptor(func);
                     }
 
                     return desc;
                 }
             }
 
-            if (func.Targets[0].IsDefined(typeof(ClassMethodAttribute), true)) {
-                lock (_classMethodCache) {
-                    ClassMethodDescriptor desc;
-                    if (!_classMethodCache.TryGetValue(func, out desc)) {
-                        _classMethodCache[func] = desc = new ClassMethodDescriptor(func);
+            if ((func.FunctionType & FunctionType.Method) != 0) {
+                BuiltinMethodDescriptor desc;
+                lock (_methodCache) {
+                    if (!_methodCache.TryGetValue(func, out desc)) {
+                        _methodCache[func] = desc = new BuiltinMethodDescriptor(func);
                     }
 
                     return desc;

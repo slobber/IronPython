@@ -311,9 +311,36 @@ namespace IronPython.Runtime.Operations {
             return MathUtils.BitLength((int)value);
         }
 
-        public static Bytes to_bytes(SByte value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(SByte value) {
+            return Int64Ops.to_bytes(value, 1, "big", false);
+        }
+
+        public static Bytes to_bytes(SByte value, int length) {
+            return Int64Ops.to_bytes(value, length, "big", false);
+        }
+
+        public static Bytes to_bytes(SByte value, int length, [NotNone] string byteorder) {
+            return Int64Ops.to_bytes(value, length, byteorder, false);
+        }
+
+        public static Bytes to_bytes(SByte value, int length, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
             return Int64Ops.to_bytes(value, length, byteorder, signed);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, "big", false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder, bool signed) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, signed);
         }
 
         #endregion
@@ -689,9 +716,36 @@ namespace IronPython.Runtime.Operations {
             return MathUtils.BitLength((int)value);
         }
 
-        public static Bytes to_bytes(Byte value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(Byte value) {
+            return UInt64Ops.to_bytes(value, 1, "big", false);
+        }
+
+        public static Bytes to_bytes(Byte value, int length) {
+            return UInt64Ops.to_bytes(value, length, "big", false);
+        }
+
+        public static Bytes to_bytes(Byte value, int length, [NotNone] string byteorder) {
+            return UInt64Ops.to_bytes(value, length, byteorder, false);
+        }
+
+        public static Bytes to_bytes(Byte value, int length, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
             return UInt64Ops.to_bytes(value, length, byteorder, signed);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, "big", false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder, bool signed) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, signed);
         }
 
         #endregion
@@ -990,9 +1044,36 @@ namespace IronPython.Runtime.Operations {
             return MathUtils.BitLength((int)value);
         }
 
-        public static Bytes to_bytes(Int16 value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(Int16 value) {
+            return Int64Ops.to_bytes(value, 1, "big", false);
+        }
+
+        public static Bytes to_bytes(Int16 value, int length) {
+            return Int64Ops.to_bytes(value, length, "big", false);
+        }
+
+        public static Bytes to_bytes(Int16 value, int length, [NotNone] string byteorder) {
+            return Int64Ops.to_bytes(value, length, byteorder, false);
+        }
+
+        public static Bytes to_bytes(Int16 value, int length, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
             return Int64Ops.to_bytes(value, length, byteorder, signed);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, "big", false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder, bool signed) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, signed);
         }
 
         #endregion
@@ -1378,9 +1459,36 @@ namespace IronPython.Runtime.Operations {
             return MathUtils.BitLength((int)value);
         }
 
-        public static Bytes to_bytes(UInt16 value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(UInt16 value) {
+            return UInt64Ops.to_bytes(value, 1, "big", false);
+        }
+
+        public static Bytes to_bytes(UInt16 value, int length) {
+            return UInt64Ops.to_bytes(value, length, "big", false);
+        }
+
+        public static Bytes to_bytes(UInt16 value, int length, [NotNone] string byteorder) {
+            return UInt64Ops.to_bytes(value, length, byteorder, false);
+        }
+
+        public static Bytes to_bytes(UInt16 value, int length, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
             return UInt64Ops.to_bytes(value, length, byteorder, signed);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, "big", false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder, bool signed) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, signed);
         }
 
         #endregion
@@ -1641,9 +1749,36 @@ namespace IronPython.Runtime.Operations {
             return MathUtils.BitLength(value);
         }
 
-        public static Bytes to_bytes(Int32 value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(Int32 value) {
+            return Int64Ops.to_bytes(value, 1, "big", false);
+        }
+
+        public static Bytes to_bytes(Int32 value, int length) {
+            return Int64Ops.to_bytes(value, length, "big", false);
+        }
+
+        public static Bytes to_bytes(Int32 value, int length, [NotNone] string byteorder) {
+            return Int64Ops.to_bytes(value, length, byteorder, false);
+        }
+
+        public static Bytes to_bytes(Int32 value, int length, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
             return Int64Ops.to_bytes(value, length, byteorder, signed);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, "big", false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder, bool signed) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, signed);
         }
 
         #endregion
@@ -2029,9 +2164,36 @@ namespace IronPython.Runtime.Operations {
             return MathUtils.BitLengthUnsigned(value);
         }
 
-        public static Bytes to_bytes(UInt32 value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(UInt32 value) {
+            return UInt64Ops.to_bytes(value, 1, "big", false);
+        }
+
+        public static Bytes to_bytes(UInt32 value, int length) {
+            return UInt64Ops.to_bytes(value, length, "big", false);
+        }
+
+        public static Bytes to_bytes(UInt32 value, int length, [NotNone] string byteorder) {
+            return UInt64Ops.to_bytes(value, length, byteorder, false);
+        }
+
+        public static Bytes to_bytes(UInt32 value, int length, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
             return UInt64Ops.to_bytes(value, length, byteorder, signed);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, "big", false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, false);
+        }
+
+        [ClassMethod]
+        public static object from_bytes(CodeContext context, [NotNone] PythonType cls, object bytes, [NotNone] string byteorder, bool signed) {
+            return BigIntegerOps.from_bytes(context, cls, bytes, byteorder, signed);
         }
 
         #endregion

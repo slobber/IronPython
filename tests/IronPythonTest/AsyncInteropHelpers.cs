@@ -4,6 +4,7 @@
 
 #if NET
 
+using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -116,6 +117,20 @@ namespace IronPythonTest {
             [EnumeratorCancellation] CancellationToken ct = default) {
             await Task.CompletedTask;
             yield break;
+        }
+
+        /// <summary>
+        /// Probe for awaiting a real .NET IAsyncDisposable implementation.
+        /// </summary>
+        public sealed class AsyncDisposableProbe : IAsyncDisposable {
+            public bool Disposed { get; private set; }
+
+            public static AsyncDisposableProbe Create() => new();
+
+            public async ValueTask DisposeAsync() {
+                await Task.Delay(1);
+                Disposed = true;
+            }
         }
     }
 }

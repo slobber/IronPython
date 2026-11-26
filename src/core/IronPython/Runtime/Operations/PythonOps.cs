@@ -5738,6 +5738,9 @@ namespace IronPython.Runtime.Operations {
             }
             int index = stack.Count - 1;
             FunctionStack current = stack[index];
+            if (current.Context is null || current.Code is null) {
+                return;
+            }
             if (current.Frame is not null) {
                 current.Frame._lineNo = line;
             }

@@ -13,6 +13,8 @@ using IronPython.Runtime;
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
+using Microsoft.Scripting.Runtime;
+
 using sqlite3_stmt = Community.CsharpSqlite.Sqlite3.Vdbe;
 
 namespace IronPython.SQLite
@@ -181,10 +183,47 @@ namespace IronPython.SQLite
                 rc = Sqlite3.sqlite3_bind_double(st, index, (float)arg);
             else if(arg is double)
                 rc = Sqlite3.sqlite3_bind_double(st, index, (double)arg);
-            else if(arg is string)
-                rc = Sqlite3.sqlite3_bind_text(st, index, (string)arg, -1, Sqlite3.SQLITE_TRANSIENT);
+            else if(arg is string text)
+            {
+                for (int i = 0; i < text.Length; i++)
+                {
+                    if (char.IsHighSurrogate(text[i])
+                        && i + 1 < text.Length
+                        && char.IsLowSurrogate(text[i + 1]))
+                    {
+                        i++;
+                        continue;
+                    }
+                    if (char.IsSurrogate(text[i]))
+                    {
+                        throw PythonOps.UnicodeEncodeError(
+                            "utf-8",
+                            text,
+                            i,
+                            i + 1,
+                            "surrogates not allowed");
+                    }
+                }
+                rc = Sqlite3.sqlite3_bind_text(
+                    st,
+                    index,
+                    text,
+                    System.Text.Encoding.UTF8.GetByteCount(text),
+                    Sqlite3.SQLITE_TRANSIENT);
+            }
             else if(arg is byte[])
                 rc = Sqlite3.sqlite3_bind_blob(this.st, index, (byte[])arg, -1, Sqlite3.SQLITE_TRANSIENT);
+            else if (arg is IBufferProtocol bufferProtocol)
+            {
+                using IPythonBuffer buffer = bufferProtocol.GetBuffer(BufferFlags.FullRO);
+                byte[] data = buffer.ToArray();
+                rc = Sqlite3.sqlite3_bind_blob(
+                    st,
+                    index,
+                    data,
+                    data.Length,
+                    Sqlite3.SQLITE_TRANSIENT);
+            }
             else
                 throw PythonSQLite.MakeInterfaceError("Unable to bind parameter {0} - unsupported type {1}".Format(index, arg.GetType()));
 
@@ -211,11 +250,16 @@ namespace IronPython.SQLite
                 value is byte[])
             {
                 object proto = DynamicHelpers.GetPythonTypeFromType(typeof(PythonSQLite.PrepareProtocol));
-                object type = DynamicHelpers.GetPythonType(value);
+                object type = PythonSQLite.GetAdapterType(context, value);
 
                 object key = new PythonTuple(DefaultContext.Default, new[] { type, proto });
 
-                return PythonSQLite.adapters.ContainsKey(key);
+                return PythonSQLite.adapters.ContainsKey(key)
+                    || PythonSQLite.TryGetAdapter(
+                        (PythonType)type,
+                        out _)
+                    || PythonSQLite._adaptersByClrType.ContainsKey(
+                        value.GetType());
             }
             else
             {
@@ -226,12 +270,18 @@ namespace IronPython.SQLite
         private object adaptValue(CodeContext context, object value)
         {
             object proto = DynamicHelpers.GetPythonTypeFromType(typeof(PythonSQLite.PrepareProtocol));
-            object type = DynamicHelpers.GetPythonType(value);
+            object type = PythonSQLite.GetAdapterType(context, value);
 
             object key = new PythonTuple(DefaultContext.Default, new[] { type, proto });
 
             object adapter;
-            if(PythonSQLite.adapters.TryGetValue(key, out adapter))
+            if(PythonSQLite.adapters.TryGetValue(key, out adapter)
+                || PythonSQLite.TryGetAdapter(
+                    (PythonType)type,
+                    out adapter)
+                || PythonSQLite._adaptersByClrType.TryGetValue(
+                    value.GetType(),
+                    out adapter))
             {
                 object adapted = PythonCalls.Call(context, adapter, value);
                 return adapted;

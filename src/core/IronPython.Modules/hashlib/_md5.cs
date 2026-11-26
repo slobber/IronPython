@@ -18,8 +18,18 @@ namespace IronPython.Modules {
         [Documentation("Return a new MD5 hash object.")]
         public static MD5Type md5([NotNone] IBufferProtocol data) => new MD5Type(data);
 
+        public static MD5Type md5(
+            [NotNone] IBufferProtocol data,
+            bool usedforsecurity) => new MD5Type(data);
+
+        public static MD5Type md5(bool usedforsecurity) => new MD5Type();
+
         [Documentation("Return a new MD5 hash object.")]
         public static MD5Type md5([NotNone] string data) => throw HashHelpers.StringNotEncodedError();
+
+        public static MD5Type md5(
+            [NotNone] string data,
+            bool usedforsecurity) => throw HashHelpers.StringNotEncodedError();
 
         [Documentation("Return a new MD5 hash object.")]
         public static MD5Type md5() => new MD5Type();

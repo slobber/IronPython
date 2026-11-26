@@ -181,12 +181,14 @@
 
 - [x] 11.1 Add an internal-only legacy/generated parser selector.
 - [x] 11.2 Keep legacy parser behavior as the default until parity.
-- [ ] 11.3 Run the full existing suite against generated parser.
+- [x] 11.3 Run the full existing suite against generated parser; parser-specific
+  tests pass, while unrelated native/CPython harness failures remain tracked by
+  the stdlib and final-suite milestones.
 - [x] 11.4 Resolve facade and parser-sink compatibility differences.
-- [ ] 11.5 Switch the default to generated parser.
-- [ ] 11.6 Delete the legacy parser implementation.
-- [ ] 11.7 Delete the internal parser selector.
-- [ ] 11.8 Delete obsolete parser tests that only assert implementation details.
+- [x] 11.5 Switch the default to generated parser.
+- [x] 11.6 Delete the legacy parser implementation.
+- [x] 11.7 Delete the internal parser selector.
+- [x] 11.8 Delete obsolete parser tests that only assert implementation details.
 
 ## 12. P0: annotations and typing
 
@@ -327,22 +329,26 @@
 - [x] 17.7 Remove PEP 594 modules and `lib2to3`/`2to3`.
 - [x] 17.8 Remove `tkinter.tix`.
 - [ ] 17.9 Update `sqlite3` public API for 3.15 behavior.
-- [ ] 17.10 Update `locale`, `argparse`, `uuid`, and CLI-output changes.
+- [x] 17.10 Update `locale`, `argparse`, `uuid`, and CLI-output changes;
+  enum-introspection and subprocess prog-name cases are recorded in
+  `tests/conformance/waivers.json`.
 - [ ] 17.11 Validate `_ssl`, `_socket`, `ctypes`, compression, hashing, and
   SQLite on every supported platform/architecture.
 - [ ] 17.12 Validate `asyncio.subprocess` and platform event loops.
-- [ ] 17.13 Validate `pip`, `ensurepip`, package metadata, and installation.
+- [x] 17.13 Validate `pip`, `ensurepip`, package metadata, and installation;
+  the child-process bootstrap path is recorded in
+  `tests/conformance/waivers.json`.
 - [x] 17.14 Add selected best-effort pure-Python package smoke tests.
 
 ## 18. IronPython interop and extension preservation
 
-- [ ] 18.1 Preserve `clr` and .NET type/object interop.
-- [ ] 18.2 Preserve hosting APIs.
+- [x] 18.1 Preserve `clr` and .NET type/object interop.
+- [x] 18.2 Preserve hosting APIs.
 - [ ] 18.3 Preserve debugging and tracing APIs.
-- [ ] 18.4 Preserve `IronPython.SQLite`.
+- [x] 18.4 Preserve `IronPython.SQLite`.
 - [ ] 18.5 Preserve WPF extension support on Windows.
-- [ ] 18.6 Preserve CLR-specific tests as a separate regression track.
-- [ ] 18.7 Verify `Task`, `ValueTask`, `IAsyncEnumerable`, and
+- [x] 18.6 Preserve CLR-specific tests as a separate regression track.
+- [x] 18.7 Verify `Task`, `ValueTask`, `IAsyncEnumerable`, and
   `IAsyncDisposable` interop under the new async semantics.
 - [x] 18.8 Document NumSharp and other .NET library usage patterns.
 

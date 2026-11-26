@@ -330,11 +330,6 @@ namespace IronPython.Runtime.Operations {
             return spec.AlignNumericText(digits, self == 0, self > 0);
         }
 
-        [ClassMethod, StaticExtensionMethod]
-        public static object from_bytes(CodeContext context, PythonType type, object bytes, [NotNone] string byteorder, bool signed = false)
-            // TODO: signed should be a keyword only argument
-            => BigIntegerOps.from_bytes(context, type, bytes, byteorder, signed);
-
         #endregion
 
         #region Helpers
@@ -530,7 +525,16 @@ namespace IronPython.Runtime.Operations {
 
         #region Public API - Bytes
 
-        public static Bytes to_bytes(Int64 value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(Int64 value)
+            => to_bytes(value, 1, "big", false);
+
+        public static Bytes to_bytes(Int64 value, int length)
+            => to_bytes(value, length, "big", false);
+
+        public static Bytes to_bytes(Int64 value, int length, [NotNone] string byteorder)
+            => to_bytes(value, length, byteorder, false);
+
+        public static Bytes to_bytes(Int64 value, int length, [NotNone] string byteorder, bool signed) {
             // TODO: signed should be a keyword only argument
             bool isLittle = (byteorder == "little");
             if (!isLittle && byteorder != "big") throw PythonOps.ValueError("byteorder must be either 'little' or 'big'");
@@ -583,7 +587,16 @@ namespace IronPython.Runtime.Operations {
 
         #region Public API - Bytes
 
-        public static Bytes to_bytes(UInt64 value, int length, [NotNone] string byteorder, bool signed = false) {
+        public static Bytes to_bytes(UInt64 value)
+            => to_bytes(value, 1, "big", false);
+
+        public static Bytes to_bytes(UInt64 value, int length)
+            => to_bytes(value, length, "big", false);
+
+        public static Bytes to_bytes(UInt64 value, int length, [NotNone] string byteorder)
+            => to_bytes(value, length, byteorder, false);
+
+        public static Bytes to_bytes(UInt64 value, int length, [NotNone] string byteorder, bool signed) {
             bool isLittle = (byteorder == "little");
             if (!isLittle && byteorder != "big") throw PythonOps.ValueError("byteorder must be either 'little' or 'big'");
 

@@ -10,6 +10,7 @@ using System.Text;
 
 using IronPython.Runtime;
 using IronPython.Runtime.Exceptions;
+using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
 using Microsoft.Scripting.Runtime;
@@ -85,8 +86,12 @@ If locale is None then the current setting is returned.
         }
 
         [Documentation("compares two strings using the current locale")]
-        public static int strcoll(CodeContext/*!*/ context, string string1, string string2) {
-            return GetLocaleInfo(context).Collate.CompareInfo.Compare(string1, string2, CompareOptions.None);
+        public static int strcoll(CodeContext/*!*/ context, object string1, object string2) {
+            string value1 = GetCollationString(string1, "strcoll");
+            string value2 = GetCollationString(string2, "strcoll");
+            CheckEmbeddedNull(value1, "strcoll");
+            CheckEmbeddedNull(value2, "strcoll");
+            return GetLocaleInfo(context).Collate.CompareInfo.Compare(value1, value2, CompareOptions.None);
         }
 
         private sealed class SortKeyWrapper : IComparable<SortKeyWrapper>, IComparable {
@@ -104,8 +109,33 @@ If locale is None then the current setting is returned.
         [Documentation(@"returns a wrapped System.Globalization.SortKey that can be compared using the built-in cmp.
 
 Note: Return value differs from CPython - it is not a string.")]
-        public static object strxfrm(CodeContext/*!*/ context, string @string)
-            => new SortKeyWrapper(GetLocaleInfo(context).Collate.CompareInfo.GetSortKey(@string));
+        public static object strxfrm(CodeContext/*!*/ context, object value) {
+            string text = GetCollationString(value, "strxfrm");
+            CheckEmbeddedNull(text, "strxfrm");
+            return new SortKeyWrapper(
+                GetLocaleInfo(context).Collate.CompareInfo.GetSortKey(text));
+        }
+
+        private static string GetCollationString(object value, string function) {
+            if (value is string text) {
+                return text;
+            }
+            if (value is Extensible<string> extensible) {
+                return extensible.Value;
+            }
+            throw PythonOps.TypeError(
+                "{0}() argument must be str, not {1}",
+                function,
+                PythonOps.GetPythonTypeName(value));
+        }
+
+        private static void CheckEmbeddedNull(string value, string function) {
+            if (value.Contains('\0')) {
+                throw PythonOps.ValueError(
+                    "embedded null character in {0}() argument",
+                    function);
+            }
+        }
 
         private enum LocaleCategories {
             All = 0,

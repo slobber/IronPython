@@ -18,8 +18,18 @@ namespace IronPython.Modules {
         [Documentation("Return a new SHA-1 hash object.")]
         public static SHA1Type sha1([NotNone] IBufferProtocol data) => new SHA1Type(data);
 
+        public static SHA1Type sha1(
+            [NotNone] IBufferProtocol data,
+            bool usedforsecurity) => new SHA1Type(data);
+
+        public static SHA1Type sha1(bool usedforsecurity) => new SHA1Type();
+
         [Documentation("Return a new SHA-1 hash object.")]
         public static SHA1Type sha1([NotNone] string data) => throw HashHelpers.StringNotEncodedError();
+
+        public static SHA1Type sha1(
+            [NotNone] string data,
+            bool usedforsecurity) => throw HashHelpers.StringNotEncodedError();
 
         [Documentation("Return a new SHA-1 hash object.")]
         public static SHA1Type sha1() => new SHA1Type();

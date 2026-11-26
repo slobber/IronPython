@@ -131,6 +131,34 @@ namespace IronPython.Runtime.Operations {
         }
 
         /// <summary>
+        /// Returns the default pickle state for an object.
+        /// </summary>
+        public static object? __getstate__(CodeContext/*!*/ context, object self) {
+            object? dict;
+            if (self is IPythonObject pythonObject) {
+                dict = pythonObject.Dict;
+            } else if (!PythonOps.TryGetBoundAttr(context, self, "__dict__", out dict)) {
+                dict = null;
+            }
+
+            PythonDictionary? slots = GetInitializedSlotValues(self);
+            if (slots != null && slots.Count == 0) {
+                slots = null;
+            }
+
+            if (dict == null && slots == null) {
+                return null;
+            }
+            if (slots == null) {
+                return dict;
+            }
+            if (dict == null) {
+                return PythonTuple.MakeTuple(null, slots);
+            }
+            return PythonTuple.MakeTuple(dict, slots);
+        }
+
+        /// <summary>
         /// Runs the pickle protocol
         /// </summary>
         public static object? __reduce_ex__(CodeContext/*!*/ context, object self) {
