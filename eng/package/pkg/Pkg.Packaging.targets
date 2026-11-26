@@ -17,11 +17,14 @@
     <ItemGroup>
       <ApplicationFiles Include="$(StageDir)/net10.0/ipy" Condition="Exists('$(StageDir)/net10.0/ipy')" />
       <ApplicationFiles Include="$(StageDir)/net10.0/ipy.exe" Condition="Exists('$(StageDir)/net10.0/ipy.exe')" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/ipy.deps.json" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/ipy.runtimeconfig.json" />
       <ApplicationFiles Include="$(StageDir)/net10.0/*.dll" />
     </ItemGroup>
 
     <ItemGroup>
       <DLLFiles Include="$(StageDir)/net10.0/DLLs/*.dll" />
+      <RuntimeFiles Include="$(StageDir)/net10.0/runtimes/**/*" />
     </ItemGroup>
 
     <Exec Command="chmod 755 $(StageDir)/net10.0/ipy" Condition="Exists('$(StageDir)/net10.0/ipy')" />
@@ -39,6 +42,7 @@
     <Copy SourceFiles="@(ApplicationFiles)" DestinationFolder="$(PackageLayoutRootDir)/bin/%(ApplicationFiles.RecursiveDir)"/>
     <Copy SourceFiles="@(StdLibFiles)" DestinationFolder="$(PackageLayoutRootDir)/lib/%(StdLibFiles.RecursiveDir)"/>
     <Copy SourceFiles="@(DLLFiles)" DestinationFolder="$(PackageLayoutRootDir)/DLLs" />
+    <Copy SourceFiles="@(RuntimeFiles)" DestinationFolder="$(PackageLayoutRootDir)/bin/runtimes/%(RuntimeFiles.RecursiveDir)" />
 
     <Exec Command="pkgbuild --root $(PackageTempFolder) --identifier 'net.cyberstone.ironpython' --version '$(PackageVersion)' $(PackageDir)/CyberStone.IronPython-$(PackageVersion).pkg" />
 

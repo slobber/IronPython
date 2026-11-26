@@ -14,9 +14,12 @@
     <ItemGroup>
       <ApplicationFiles Include="$(StageDir)/net10.0/ipy" Condition="Exists('$(StageDir)/net10.0/ipy')" />
       <ApplicationFiles Include="$(StageDir)/net10.0/ipy.exe" Condition="Exists('$(StageDir)/net10.0/ipy.exe')" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/ipy.deps.json" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/ipy.runtimeconfig.json" />
       <ApplicationFiles Include="$(StageDir)/net10.0/*.exe" Condition="'$(OS)' == 'Windows_NT'" />
       <ApplicationFiles Include="$(StageDir)/net10.0/*.dll" Exclude="$(StageDir)/net10.0/IronPython.SQLite.dll;$(StageDir)/net10.0/IronPython.Wpf.dll" />
-      <ApplicationFiles Include="$(StageDir)/net10.0/DLLs/*.dll" />
+      <ExtensionFiles Include="$(StageDir)/net10.0/DLLs/*.dll" />
+      <RuntimeFiles Include="$(StageDir)/net10.0/runtimes/**/*" />
     </ItemGroup>
 
     <ItemGroup>
@@ -46,6 +49,8 @@
 
     <Copy SourceFiles="@(ScriptFiles)" DestinationFolder="$(PackageTempFolder)/usr/bin/"/>
     <Copy SourceFiles="@(ApplicationFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/%(ApplicationFiles.RecursiveDir)"/>
+    <Copy SourceFiles="@(ExtensionFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/DLLs/"/>
+    <Copy SourceFiles="@(RuntimeFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/runtimes/%(RuntimeFiles.RecursiveDir)"/>
     <Copy SourceFiles="@(StdLibFiles)" DestinationFolder="$(PackageTempFolder)/usr/lib/cyberstone-ironpython3.15/%(StdLibFiles.RecursiveDir)"/>
 
     <Exec Command="fakeroot dpkg-deb -v --build $(PackageTempFolder)"/>

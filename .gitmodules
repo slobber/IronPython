@@ -4,4 +4,5 @@
 	branch = main
 [submodule "IronPython.StdLib"]
 	path = src/core/IronPython.StdLib
-	url = https://github.com/IronLanguages/ironpython3-stdlib
+	url = git@git.cyber-stone.com:wnd/IronPython.StdLib.git
+	branch = python-3.15

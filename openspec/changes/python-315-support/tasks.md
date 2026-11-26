@@ -373,6 +373,6 @@
 - [x] 19.7 Build and test `CyberStone.IronPython.StdLib`.
 - [x] 19.8 Build and test `CyberStone.IronPython.Console`.
 - [ ] 19.9 Verify installer and archive packages for the supported matrix.
-- [ ] 19.10 Remove all migration-only switches and compatibility shims.
+- [x] 19.10 Remove all migration-only switches and compatibility shims.
 - [ ] 19.11 Update all public documentation and support declarations.
 - [ ] 19.12 Mark the OpenSpec change complete and archive it.
