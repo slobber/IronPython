@@ -1,1 +1,2 @@
-ipy3.4
+#!/bin/sh
+exec /usr/bin/dotnet /usr/share/cyberstone-ironpython3.15/ipy.dll "$@"

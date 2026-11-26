@@ -255,17 +255,24 @@ namespace IronPython.Runtime {
                         path.append(legacyStdLib);
 #else
                     if (RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
-                        var dirs = new string[] { "lib", "DLLs" };
+                        var dirs = new[] { "lib", "DLLs" };
                         var version = CurrentVersion.ReleaseLevel == "final" ? $"{CurrentVersion.Major}.{CurrentVersion.Minor}.{CurrentVersion.Micro}" : $"{CurrentVersion.Major}.{CurrentVersion.Minor}.{CurrentVersion.Micro}-{CurrentVersion.ReleaseLevel}{CurrentVersion.ReleaseSerial}";
-                        foreach (var dir in dirs) {
-                            var p = $"/Library/Frameworks/IronPython.framework/Versions/{version}/{dir}";
-                            if (Directory.Exists(p)) {
-                                path.append(p);
+                        foreach (var framework in new[] { "IronPython", "CyberStone.IronPython" }) {
+                            foreach (var dir in dirs) {
+                                var p = $"/Library/Frameworks/{framework}.framework/Versions/{version}/{dir}";
+                                if (Directory.Exists(p)) {
+                                    path.append(p);
+                                }
                             }
                         }
                     } else if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)) {
                         var version = $"{CurrentVersion.Major}.{CurrentVersion.Minor}";
-                        var dirs = new string[] { $"/usr/lib/ironpython{version}", $"/usr/share/ironpython{version}/DLLs" };
+                        var dirs = new[] {
+                            $"/usr/lib/ironpython{version}",
+                            $"/usr/lib/cyberstone-ironpython{version}",
+                            $"/usr/share/ironpython{version}/DLLs",
+                            $"/usr/share/cyberstone-ironpython{version}/DLLs"
+                        };
                         foreach (var dir in dirs) {
                             if (Directory.Exists(dir)) {
                                 path.append(dir);

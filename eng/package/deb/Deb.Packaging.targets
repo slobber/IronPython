@@ -12,8 +12,16 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ApplicationFiles Include="$(StageDir)/net10.0/*.exe" />
-      <ApplicationFiles Include="$(StageDir)/net10.0/**/*.dll" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/ipy" Condition="Exists('$(StageDir)/net10.0/ipy')" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/ipy.exe" Condition="Exists('$(StageDir)/net10.0/ipy.exe')" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/*.exe" Condition="'$(OS)' == 'Windows_NT'" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/*.dll" Exclude="$(StageDir)/net10.0/IronPython.SQLite.dll;$(StageDir)/net10.0/IronPython.Wpf.dll" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/DLLs/*.dll" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <UnixExecutableFiles Include="$(StageDir)/net10.0/ipy" Condition="Exists('$(StageDir)/net10.0/ipy')" />
+      <UnixExecutableFiles Include="$(StageDir)/net10.0/ipy.exe" Condition="Exists('$(StageDir)/net10.0/ipy.exe')" />
     </ItemGroup>
 
     <ItemGroup>
@@ -21,7 +29,7 @@
     </ItemGroup>
 
     <!-- Build the application deb -->
-    <Exec Command="chmod 777 $(StageDir)/net10.0/*.exe" />
+    <Exec Command="chmod 755 %(UnixExecutableFiles.Identity)" Condition="'@(UnixExecutableFiles)' != ''" />
     <Exec Command="rm -rf $(PackageTempFolder)" />
     <Exec Command="mkdir -p $(PackageTempFolder)/DEBIAN" />
     <Exec Command="cp $(PackageDebFolder)/DEBIAN/* $(PackageTempFolder)/DEBIAN"/>
@@ -33,8 +41,8 @@
     <ItemGroup>
       <StdLibOutputFiles Include="$(StageDir)/$(StdLibDirName)/**/*.py" />
     </ItemGroup>
-    <Exec Command="dos2unix %(StdLibOutputFiles.Identity)" />
-    <Exec Command="dos2unix $(PackageTempFolder)/DEBIAN/control"/>
+    <Exec Command="sed -i 's/\r$//' %(StdLibOutputFiles.Identity)" />
+    <Exec Command="sed -i 's/\r$//' $(PackageTempFolder)/DEBIAN/control"/>
 
     <Copy SourceFiles="@(ScriptFiles)" DestinationFolder="$(PackageTempFolder)/usr/bin/"/>
     <Copy SourceFiles="@(ApplicationFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/%(ApplicationFiles.RecursiveDir)"/>

@@ -11,7 +11,6 @@ Set:
 ```text
 DOTNET_ROOT=<dotnet-root>
 CYBERSTONE_IRONPYTHON_STDLIB=<IronPython.StdLib checkout>
-CYBERSTONE_IRONPYTHON_GENERATED_PARSER=1
 IRONPYTHONPATH=<IronPython.StdLib checkout>/lib
 ```
 

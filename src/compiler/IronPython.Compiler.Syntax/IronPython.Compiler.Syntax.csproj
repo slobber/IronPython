@@ -9,4 +9,8 @@
   <ItemGroup>
     <Using Remove="Microsoft.Scripting.Runtime.NotNullAttribute" />
   </ItemGroup>
+
+  <Import Project="$(AfterTargetFiles)" />
+  <Target Name="AfterBuildEnds" AfterTargets="AfterBuild" DependsOnTargets="$(AfterTargets)" />
+
 </Project>

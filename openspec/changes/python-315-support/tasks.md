@@ -369,9 +369,9 @@
 - [ ] 19.4 Verify all required x64/arm64 builds and tests.
 - [x] 19.5 Verify deterministic source-generator output; two full rebuilds
   produce byte-identical generated files for net10 and net11.
-- [ ] 19.6 Build and test `CyberStone.IronPython` NuGet packages.
-- [ ] 19.7 Build and test `CyberStone.IronPython.StdLib`.
-- [ ] 19.8 Build and test `CyberStone.IronPython.Console`.
+- [x] 19.6 Build and test `CyberStone.IronPython` NuGet packages.
+- [x] 19.7 Build and test `CyberStone.IronPython.StdLib`.
+- [x] 19.8 Build and test `CyberStone.IronPython.Console`.
 - [ ] 19.9 Verify installer and archive packages for the supported matrix.
 - [ ] 19.10 Remove all migration-only switches and compatibility shims.
 - [ ] 19.11 Update all public documentation and support declarations.

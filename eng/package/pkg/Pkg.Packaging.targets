@@ -15,7 +15,8 @@
     </ItemGroup>
 
     <ItemGroup>
-      <ApplicationFiles Include="$(StageDir)/net10.0/*.exe" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/ipy" Condition="Exists('$(StageDir)/net10.0/ipy')" />
+      <ApplicationFiles Include="$(StageDir)/net10.0/ipy.exe" Condition="Exists('$(StageDir)/net10.0/ipy.exe')" />
       <ApplicationFiles Include="$(StageDir)/net10.0/*.dll" />
     </ItemGroup>
 
@@ -23,7 +24,8 @@
       <DLLFiles Include="$(StageDir)/net10.0/DLLs/*.dll" />
     </ItemGroup>
 
-    <Exec Command="chmod 777 $(StageDir)/net10.0/*.exe" />
+    <Exec Command="chmod 755 $(StageDir)/net10.0/ipy" Condition="Exists('$(StageDir)/net10.0/ipy')" />
+    <Exec Command="chmod 755 $(StageDir)/net10.0/ipy.exe" Condition="Exists('$(StageDir)/net10.0/ipy.exe')" />
     <Exec Command="rm -rf $(PackageTempFolder)" />
     <Exec Command="mkdir -p $(PackageTempFolder)" />
 
