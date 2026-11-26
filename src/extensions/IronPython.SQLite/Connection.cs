@@ -550,10 +550,31 @@ namespace IronPython.SQLite
             {
                 foreach (WeakReference weakref in cursors)
                 {
-                    if (weakref.IsAlive
-                        && weakref.Target is Cursor cursor)
+                    if (!weakref.IsAlive
+                        || weakref.Target is not object cursor)
                     {
-                        cursor.CloseForConnection();
+                        continue;
+                    }
+
+                    try
+                    {
+                        if (cursor is Cursor nativeCursor)
+                        {
+                            nativeCursor.CloseForConnection();
+                        }
+                        else
+                        {
+                            PythonOps.Invoke(
+                                DefaultContext.Default,
+                                cursor,
+                                "close");
+                        }
+                    }
+                    catch
+                    {
+                        // Closing a connection must release all native
+                        // statements even if a Python cursor subclass close
+                        // hook fails.
                     }
                 }
             }
