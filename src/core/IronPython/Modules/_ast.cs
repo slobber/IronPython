@@ -328,7 +328,6 @@ namespace IronPython.Modules {
                     && source is not Import
                     && source is not ImportFrom;
                 if (validatePosition
-                    && !source._isParsedAst
                     && (line < 0
                         || column < 0
                         || endLine is < 0
