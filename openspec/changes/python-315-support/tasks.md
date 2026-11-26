@@ -367,7 +367,8 @@
 - [ ] 19.2 Resolve all non-waived failures and skips.
 - [ ] 19.3 Review every waiver for category, owner, issue, and expiry.
 - [ ] 19.4 Verify all required x64/arm64 builds and tests.
-- [ ] 19.5 Verify deterministic source-generator output.
+- [x] 19.5 Verify deterministic source-generator output; two full rebuilds
+  produce byte-identical generated files for net10 and net11.
 - [ ] 19.6 Build and test `CyberStone.IronPython` NuGet packages.
 - [ ] 19.7 Build and test `CyberStone.IronPython.StdLib`.
 - [ ] 19.8 Build and test `CyberStone.IronPython.Console`.
