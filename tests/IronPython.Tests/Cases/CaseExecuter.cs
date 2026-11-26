@@ -70,6 +70,7 @@ namespace IronPythonTest.Cases {
                 "");
 
             AddSearchPaths(engine);
+            AddExtensionAssemblies(engine);
             return engine;
         }
 
@@ -113,6 +114,19 @@ namespace IronPythonTest.Cases {
             engine.SetSearchPaths(paths);
         }
 
+        private static void AddExtensionAssemblies(ScriptEngine engine) {
+            string directory = Path.Combine(Path.GetDirectoryName(Executable)!, "DLLs");
+            if (!Directory.Exists(directory)) return;
+
+            foreach (string file in Directory.EnumerateFiles(directory, "*.dll")) {
+                try {
+                    engine.Runtime.LoadAssembly(Assembly.LoadFrom(file));
+                } catch {
+                    // Platform-specific extensions are absent from some test hosts.
+                }
+            }
+        }
+
         public CaseExecuter() {
             this.defaultEngine = Python.CreateEngine();
 
@@ -121,6 +135,7 @@ namespace IronPythonTest.Cases {
                 Executable,
                 "");
             AddSearchPaths(this.defaultEngine);
+            AddExtensionAssemblies(this.defaultEngine);
         }
 
         public int RunTest(TestInfo testcase) {
@@ -236,6 +251,12 @@ namespace IronPythonTest.Cases {
 
                 if (!string.IsNullOrEmpty(IRONPYTHONPATH)) {
                     proc.StartInfo.EnvironmentVariables["IRONPYTHONPATH"] = IRONPYTHONPATH;
+                }
+                foreach (string variable in new[] { "DOTNET_ROOT", "DOTNET_ROOT_X64", "DOTNET_ROOT_ARM64" }) {
+                    string value = Environment.GetEnvironmentVariable(variable);
+                    if (!string.IsNullOrEmpty(value)) {
+                        proc.StartInfo.EnvironmentVariables[variable] = value;
+                    }
                 }
 
                 if (!string.IsNullOrEmpty(testcase.Options.WorkingDirectory)) {
