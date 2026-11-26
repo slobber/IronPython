@@ -61,6 +61,14 @@ namespace IronPython.Modules {
             IntPtr fileActions,
             int descriptor);
 
+        [DllImport(
+            "libc",
+            EntryPoint = "posix_spawn_file_actions_addclosefrom_np",
+            SetLastError = true)]
+        private static extern int posix_spawn_file_actions_addclosefrom_np(
+            IntPtr fileActions,
+            int descriptor);
+
         [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawn_file_actions_adddup2(
             IntPtr fileActions,
@@ -232,6 +240,7 @@ namespace IronPython.Modules {
             }
 
             try {
+                var closedDescriptors = new HashSet<int>();
                 while (enumerator.MoveNext()) {
                     if (enumerator.Current is not PythonTuple action
                         || action.Count == 0) {
@@ -257,9 +266,13 @@ namespace IronPython.Modules {
                                 (uint)ToInt(action[4]!));
                             break;
                         case POSIX_SPAWN_CLOSE:
+                            int descriptor = ToInt(action[1]!);
                             rc = posix_spawn_file_actions_addclose(
                                 actions,
-                                ToInt(action[1]!));
+                                descriptor);
+                            if (rc == 0) {
+                                closedDescriptors.Add(descriptor);
+                            }
                             break;
                         case POSIX_SPAWN_DUP2:
                             rc = posix_spawn_file_actions_adddup2(
@@ -269,19 +282,21 @@ namespace IronPython.Modules {
                             break;
                         case POSIX_SPAWN_CLOSEFROM:
                             int start = ToInt(action[1]!);
-                            rc = 0;
-                            for (int fd = start; fd < 1024; fd++) {
-                                if (Syscall.fcntl(
-                                        fd,
-                                        FcntlCommand.F_GETFD) == -1) {
-                                    continue;
-                                }
-                                rc = posix_spawn_file_actions_addclose(
+                            try {
+                                rc = posix_spawn_file_actions_addclosefrom_np(
                                     actions,
-                                    fd);
-                                if (rc != 0) {
-                                    break;
-                                }
+                                    start);
+                            } catch (EntryPointNotFoundException) {
+                                rc = AddCloseFromFallback(
+                                    actions,
+                                    start,
+                                    closedDescriptors);
+                            }
+                            if (rc == (int)Errno.ENOSYS) {
+                                rc = AddCloseFromFallback(
+                                    actions,
+                                    start,
+                                    closedDescriptors);
                             }
                             break;
                         default:
@@ -296,6 +311,30 @@ namespace IronPython.Modules {
             } finally {
                 (enumerator as IDisposable)?.Dispose();
             }
+        }
+
+        private static int AddCloseFromFallback(
+            IntPtr actions,
+            int start,
+            HashSet<int> closedDescriptors) {
+            for (int fd = start; fd < 1024; fd++) {
+                if (closedDescriptors.Contains(fd)) {
+                    continue;
+                }
+                if (Syscall.fcntl(
+                        fd,
+                        FcntlCommand.F_GETFD) == -1) {
+                    continue;
+                }
+                int rc = posix_spawn_file_actions_addclose(
+                    actions,
+                    fd);
+                if (rc != 0) {
+                    return rc;
+                }
+                closedDescriptors.Add(fd);
+            }
+            return 0;
         }
 
         private static string[] ConvertSpawnArguments(

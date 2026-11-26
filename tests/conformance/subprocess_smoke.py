@@ -7,7 +7,7 @@ import sys
 
 
 def native_posix_spawn():
-    if not hasattr(os, "posix_spawn"):
+    if sys.platform == "win32" or not hasattr(os, "posix_spawn"):
         return
 
     command = ["/bin/sh", "-c", "exit 0"]
