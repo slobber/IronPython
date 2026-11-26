@@ -462,6 +462,98 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
 
         public static readonly BuiltinFunction __excepthook__ = excepthook;
 
+        [PythonType]
+        public sealed class UnraisableHookArgs
+        {
+            public object exc_type { get; }
+            public object exc_value { get; }
+            public object exc_traceback { get; }
+            public object err_msg { get; }
+            public object @object { get; }
+
+            internal UnraisableHookArgs(
+                object excType,
+                object excValue,
+                object excTraceback,
+                object errMsg,
+                object obj)
+            {
+                exc_type = excType;
+                exc_value = excValue;
+                exc_traceback = excTraceback;
+                err_msg = errMsg;
+                @object = obj;
+            }
+
+        }
+
+        [PythonHidden]
+        public static void unraisablehookImpl(
+            CodeContext context,
+            object hookArgs) {
+            object excValue = PythonOps.GetBoundAttr(
+                context,
+                hookArgs,
+                "exc_value");
+            object obj = PythonOps.GetBoundAttr(
+                context,
+                hookArgs,
+                "object");
+            if (obj is not null) {
+                PythonOps.PrintWithDest(
+                    context,
+                    context.LanguageContext.SystemStandardError,
+                    "Exception ignored in: "
+                        + PythonOps.Repr(context, obj));
+                PythonOps.PrintNewlineWithDest(
+                    context,
+                    context.LanguageContext.SystemStandardError);
+            }
+            PythonOps.PrintWithDest(
+                context,
+                context.LanguageContext.SystemStandardError,
+                context.LanguageContext.FormatException(
+                    PythonExceptions.ToClr(excValue)));
+        }
+
+        public static readonly BuiltinFunction __unraisablehook__ =
+            BuiltinFunction.MakeFunction(
+                "unraisablehook",
+                ArrayUtils.ConvertAll(
+                    typeof(SysModule).GetMember(
+                        nameof(SysModule.unraisablehookImpl)),
+                    (x) => (MethodBase)x),
+                typeof(SysModule));
+
+        public static object unraisablehook = __unraisablehook__;
+
+        public static void ReportUnraisable(
+            CodeContext context,
+            Exception exception,
+            object obj = null,
+            string errMsg = null) {
+            PythonExceptions.BaseException pythonException =
+                PythonExceptions.ToPython(exception);
+            object traceback = PythonOps.TryGetBoundAttr(
+                context,
+                pythonException,
+                "__traceback__",
+                out object value)
+                ? value
+                : null;
+            object hook = context.LanguageContext.SystemState.__dict__
+                .TryGetValue("unraisablehook", out object configuredHook)
+                ? configuredHook
+                : __unraisablehook__;
+            object hookArgs = new UnraisableHookArgs(
+                DynamicHelpers.GetPythonType(pythonException),
+                pythonException,
+                traceback,
+                errMsg,
+                obj);
+            PythonCalls.Call(context, hook, hookArgs);
+        }
+
         public static int getcheckinterval() {
             throw PythonOps.NotImplementedError("IronPython does not support sys.getcheckinterval");
         }
@@ -1026,6 +1118,7 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
 
             dict["meta_path"] = new PythonList(0);
             dict["path_hooks"] = new PythonList(0);
+            dict["unraisablehook"] = dict["__unraisablehook__"];
 
             // add zipimport to the path hooks for importing from zip files.
             try {

@@ -3,24 +3,15 @@
   <PropertyGroup>
     <TargetFrameworks>net10.0;net11.0</TargetFrameworks>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
-    <SQLiteCommon>SQLITE_DEBUG;TRUE;WIN32;_MSC_VER;SQLITE_ASCII;SQLITE_MEM_POOL;SQLITE_ENABLE_COLUMN_METADATA;SQLITE_OS_WIN;SQLITE_SYSTEM_MALLOC;VDBE_PROFILE_OFF</SQLiteCommon>
-    <SQLiteCommonOmit>SQLITE_OMIT_AUTHORIZATION;SQLITE_OMIT_DEPRECATED;SQLITE_OMIT_GET_TABLE;SQLITE_OMIT_INCRBLOB;SQLITE_OMIT_LOOKASIDE;SQLITE_OMIT_SHARED_CACHE;SQLITE_OMIT_UTF16;SQLITE_OMIT_WAL</SQLiteCommonOmit>
     <NoWarn>$(NoWarn);0168;0169;0414;0618;0649;1587;219;1570</NoWarn>
     <StoreInDLLs>true</StoreInDLLs>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
 
     <!-- output to DLLs folder -->
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
     <IntermediateOutputPath>$(BaseIntermediateOutputPath)$(Configuration)\$(TargetFramework)\DLLs</IntermediateOutputPath>
     <OutputPath>$(BaseOutputPath)\$(TargetFramework)\DLLs</OutputPath>
     <DisableTransitiveProjectReferences>true</DisableTransitiveProjectReferences>
-  </PropertyGroup>
-
-  <PropertyGroup Condition=" '$(Configuration)' == 'Debug' ">
-    <DefineConstants>NET_40;$(DefineConstants);$(SQLiteCommon);$(SQLiteCommonOmit);SQLITE_MUTEX_W32;SQLITE_THREADSAFE;SQLITE_ENABLE_OVERSIZE_CELL_CHECK</DefineConstants>
-  </PropertyGroup>
-
-  <PropertyGroup Condition=" '$(Configuration)' == 'Release' ">
-    <DefineConstants>NET_40;$(DefineConstants);$(SQLiteCommon);$(SQLiteCommonOmit);SQLITE_MUTEX_W32;SQLITE_THREADSAFE;NDEBUG</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup Condition=" '$(IsFullFramework)' == 'true' ">
@@ -31,6 +22,14 @@
   </ItemGroup>
   <ItemGroup Condition=" '$(IsFullFramework)' != 'true' ">
     <PackageReference Include="Mono.Unix" Version="7.1.0-final.1.21458.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="SQLitePCLRaw.bundle_e_sqlite3" Version="3.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="c#sqlite/**/*.cs" />
   </ItemGroup>
 
   <ItemGroup>

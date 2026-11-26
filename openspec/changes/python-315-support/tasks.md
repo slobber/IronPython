@@ -328,7 +328,9 @@
 - [x] 17.6 Remove `distutils` and other modules absent from CPython 3.15.2.
 - [x] 17.7 Remove PEP 594 modules and `lib2to3`/`2to3`.
 - [x] 17.8 Remove `tkinter.tix`.
-- [ ] 17.9 Update `sqlite3` public API for 3.15 behavior.
+- [x] 17.9 Update `sqlite3` public API for 3.15 behavior; SQLitePCLRaw
+  callback/process-isolation cases that require the unavailable `fork_exec`
+  path are recorded in `tests/conformance/waivers.json`.
 - [x] 17.10 Update `locale`, `argparse`, `uuid`, and CLI-output changes;
   enum-introspection and subprocess prog-name cases are recorded in
   `tests/conformance/waivers.json`.

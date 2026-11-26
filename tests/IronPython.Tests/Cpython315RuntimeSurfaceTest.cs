@@ -186,6 +186,26 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void SysExposesUnraisableHook() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            engine.Execute(
+                "import sys\n" +
+                "original = sys.unraisablehook\n" +
+                "assert original is sys.__unraisablehook__\n" +
+                "captured = []\n" +
+                "def hook(args):\n" +
+                "    captured.append(args)\n" +
+                "sys.unraisablehook = hook\n" +
+                "assert sys.unraisablehook is hook\n" +
+                "sys.unraisablehook = original\n" +
+                "assert sys.unraisablehook is original\n",
+                scope);
+        }
+
+        [Test]
         public void ClassIterationAndTypeKeywordsUseTheMetaclassProtocol() {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true

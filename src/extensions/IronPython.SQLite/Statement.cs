@@ -7,9 +7,11 @@
 
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics;
 using Community.CsharpSqlite;
 using IronPython.Runtime;
+using IronPython.Runtime.Exceptions;
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
@@ -52,6 +54,15 @@ namespace IronPython.SQLite
             this.db = connection.db;
             this.sql = operation;
 
+            if (this.sql.Length > Sqlite3.sqlite3_limit(
+                    this.db,
+                    PythonSQLite.SQLITE_LIMIT_SQL_LENGTH,
+                    -1))
+            {
+                throw PythonSQLite.MakeDataError(
+                    "query string is too large");
+            }
+
             this.st = null;
             string tail = null;
             if(Sqlite3.sqlite3_prepare(this.db, this.sql, -1, ref this.st, ref tail) != Sqlite3.SQLITE_OK /*TODO: || too much sql */)
@@ -93,9 +104,12 @@ namespace IronPython.SQLite
                 if(this._type != StatementType.Unknown)
                     return _type;
 
-                string s = this.sql.TrimStart();
+                string s = StripLeadingCommentsAndWhitespace(this.sql);
 
                 if(s.StartsWith("select", StringComparison.InvariantCultureIgnoreCase))
+                    this._type = StatementType.Select;
+                else if(s.StartsWith("with", StringComparison.InvariantCultureIgnoreCase)
+                    && Sqlite3.sqlite3_column_count(this.st) > 0)
                     this._type = StatementType.Select;
                 else if(s.StartsWith("insert", StringComparison.InvariantCultureIgnoreCase))
                     this._type = StatementType.Insert;
@@ -110,6 +124,49 @@ namespace IronPython.SQLite
 
                 return this._type;
             }
+        }
+
+        private static string StripLeadingCommentsAndWhitespace(string sql)
+        {
+            int index = 0;
+            while (index < sql.Length)
+            {
+                while (index < sql.Length
+                    && char.IsWhiteSpace(sql[index]))
+                {
+                    index++;
+                }
+                if (index + 1 < sql.Length
+                    && sql[index] == '-'
+                    && sql[index + 1] == '-')
+                {
+                    index += 2;
+                    while (index < sql.Length
+                        && sql[index] != '\n'
+                        && sql[index] != '\r')
+                    {
+                        index++;
+                    }
+                    continue;
+                }
+                if (index + 1 < sql.Length
+                    && sql[index] == '/'
+                    && sql[index + 1] == '*')
+                {
+                    int end = sql.IndexOf(
+                        "*/",
+                        index + 2,
+                        StringComparison.Ordinal);
+                    if (end < 0)
+                    {
+                        return "";
+                    }
+                    index = end + 2;
+                    continue;
+                }
+                break;
+            }
+            return sql.Substring(index);
         }
 
         public void BindParameters(CodeContext context, object parameters)
@@ -131,8 +188,22 @@ namespace IronPython.SQLite
                 BindParameters(context, (IDictionary)parameters, num_params_needed);
             else if(parameters is IList)
                 BindParameters(context, (IList)parameters, num_params_needed);
+            else if(parameters is not string
+                && PythonOps.TryGetBoundAttr(
+                    context,
+                    parameters,
+                    "__len__",
+                    out object lengthMethod))
+            {
+                BindParameters(
+                    context,
+                    parameters,
+                    lengthMethod,
+                    num_params_needed);
+            }
             else
-                throw PythonSQLite.MakeProgrammingError("unknown parameter type");
+                throw PythonSQLite.MakeProgrammingError(
+                    "parameters are of unsupported type");
 
             bound = true;
         }
@@ -148,10 +219,83 @@ namespace IronPython.SQLite
                 // remove the leading colon
                 binding_name = binding_name.Substring(1);
 
-                if(args.Contains(binding_name))
-                    BindParameter(context, i, maybeAdapt(context, args[binding_name]));
+                object value;
+                if (args.Contains(binding_name))
+                {
+                    value = args[binding_name];
+                }
+                else if (PythonOps.TryGetBoundAttr(
+                        context,
+                        args,
+                        "__getitem__",
+                        out object getItem))
+                {
+                    try
+                    {
+                        value = PythonCalls.Call(
+                            context,
+                            getItem,
+                            binding_name);
+                    }
+                    catch (KeyNotFoundException)
+                    {
+                        throw PythonSQLite.MakeProgrammingError(
+                            "You did not supply a value for binding {0}."
+                                .Format(i));
+                    }
+                }
                 else
-                    throw PythonSQLite.MakeProgrammingError("You did not supply a value for binding {0}.".Format(i));
+                {
+                    throw PythonSQLite.MakeProgrammingError(
+                        "You did not supply a value for binding {0}."
+                            .Format(i));
+                }
+
+                BindParameter(context, i, maybeAdapt(context, value));
+            }
+        }
+
+        private void BindParameters(
+            CodeContext context,
+            object sequence,
+            object lengthMethod,
+            int num_params_needed)
+        {
+            int length = Converter.ConvertToInt32(
+                PythonCalls.Call(context, lengthMethod));
+            if (num_params_needed != length)
+            {
+                throw PythonSQLite.MakeProgrammingError(
+                    "Incorrect number of bindings supplied.");
+            }
+            if (!PythonOps.TryGetBoundAttr(
+                    context,
+                    sequence,
+                    "__getitem__",
+                    out object getItem))
+            {
+                throw PythonSQLite.MakeProgrammingError(
+                    "parameters are of unsupported type");
+            }
+
+            for (int i = 0; i < length; ++i)
+            {
+                string name = Sqlite3.sqlite3_bind_parameter_name(
+                    st,
+                    i + 1);
+                if (!string.IsNullOrEmpty(name)
+                    && (name[0] == ':'
+                        || name[0] == '@'
+                        || name[0] == '$'))
+                {
+                    throw PythonSQLite.MakeProgrammingError(
+                        "Binding {0} is a named parameter".Format(i + 1));
+                }
+                object value = PythonCalls.Call(
+                    context,
+                    getItem,
+                    i);
+                BindParameter(context, i + 1, maybeAdapt(context, value));
             }
         }
 
@@ -160,8 +304,18 @@ namespace IronPython.SQLite
             if(num_params_needed != args.Count)
                 throw PythonSQLite.MakeProgrammingError("Incorrect number of bindings supplied.");
 
-            for(int i = 0; i < args.Count; ++i)
+            int length = args.Count;
+            for(int i = 0; i < length; ++i)
             {
+                string name = Sqlite3.sqlite3_bind_parameter_name(st, i + 1);
+                if (!string.IsNullOrEmpty(name)
+                    && (name[0] == ':'
+                        || name[0] == '@'
+                        || name[0] == '$'))
+                {
+                    throw PythonSQLite.MakeProgrammingError(
+                        "Binding {0} is a named parameter".Format(i + 1));
+                }
                 BindParameter(context, i + 1, maybeAdapt(context, args[i]));
             }
         }
@@ -178,22 +332,26 @@ namespace IronPython.SQLite
             else if(arg is long)
                 rc = Sqlite3.sqlite3_bind_int64(st, index, (long)arg);
             else if (arg is System.Numerics.BigInteger)
-                rc = Sqlite3.sqlite3_bind_int64(st, index, (long)((System.Numerics.BigInteger)arg));
+            {
+                var integer = (System.Numerics.BigInteger)arg;
+                if (integer < long.MinValue || integer > long.MaxValue)
+                {
+                    throw PythonOps.OverflowError(
+                        "Python int too large to convert to SQLite INTEGER");
+                }
+                rc = Sqlite3.sqlite3_bind_int64(st, index, (long)integer);
+            }
             else if(arg is float)
                 rc = Sqlite3.sqlite3_bind_double(st, index, (float)arg);
             else if(arg is double)
                 rc = Sqlite3.sqlite3_bind_double(st, index, (double)arg);
-            else if(arg is string text)
+            else if(arg is string || arg is ExtensibleString)
             {
+                string text = arg is string stringValue
+                    ? stringValue
+                    : ((ExtensibleString)arg).Value;
                 for (int i = 0; i < text.Length; i++)
                 {
-                    if (char.IsHighSurrogate(text[i])
-                        && i + 1 < text.Length
-                        && char.IsLowSurrogate(text[i + 1]))
-                    {
-                        i++;
-                        continue;
-                    }
                     if (char.IsSurrogate(text[i]))
                     {
                         throw PythonOps.UnicodeEncodeError(
@@ -216,6 +374,11 @@ namespace IronPython.SQLite
             else if (arg is IBufferProtocol bufferProtocol)
             {
                 using IPythonBuffer buffer = bufferProtocol.GetBuffer(BufferFlags.FullRO);
+                if (!buffer.IsCContiguous())
+                {
+                    throw PythonOps.BufferError(
+                        "memoryview: underlying buffer is not C-contiguous");
+                }
                 byte[] data = buffer.ToArray();
                 rc = Sqlite3.sqlite3_bind_blob(
                     st,
@@ -225,7 +388,7 @@ namespace IronPython.SQLite
                     Sqlite3.SQLITE_TRANSIENT);
             }
             else
-                throw PythonSQLite.MakeInterfaceError("Unable to bind parameter {0} - unsupported type {1}".Format(index, arg.GetType()));
+                throw PythonSQLite.MakeProgrammingError("Unable to bind parameter {0} - unsupported type {1}".Format(index, arg.GetType()));
 
             if(rc != Sqlite3.SQLITE_OK)
                 throw PythonSQLite.MakeInterfaceError("Unable to bind parameter {0}: {1}".Format(index, Sqlite3.sqlite3_errmsg(db)));
@@ -239,8 +402,12 @@ namespace IronPython.SQLite
         private bool needsAdaptation(CodeContext context, object value)
         {
             // TODO The check for primitive types could probably be cached like pysqlite does
-            if(value == null ||
-                value is int ||
+            if(value == null || value is IBufferProtocol)
+            {
+                return false;
+            }
+
+            if(value is int ||
                 value is bool ||
                 value is long ||
                 value is System.Numerics.BigInteger ||
@@ -254,12 +421,11 @@ namespace IronPython.SQLite
 
                 object key = new PythonTuple(DefaultContext.Default, new[] { type, proto });
 
-                return PythonSQLite.adapters.ContainsKey(key)
+                return PythonSQLite.adapters.TryGetValue(key, out _)
+                    || PythonSQLite.adapters.TryGetValue(type, out _)
                     || PythonSQLite.TryGetAdapter(
                         (PythonType)type,
-                        out _)
-                    || PythonSQLite._adaptersByClrType.ContainsKey(
-                        value.GetType());
+                        out _);
             }
             else
             {
@@ -276,15 +442,19 @@ namespace IronPython.SQLite
 
             object adapter;
             if(PythonSQLite.adapters.TryGetValue(key, out adapter)
+                || PythonSQLite.adapters.TryGetValue(type, out adapter)
                 || PythonSQLite.TryGetAdapter(
                     (PythonType)type,
-                    out adapter)
-                || PythonSQLite._adaptersByClrType.TryGetValue(
-                    value.GetType(),
                     out adapter))
             {
-                object adapted = PythonCalls.Call(context, adapter, value);
-                return adapted;
+                try
+                {
+                    return PythonCalls.Call(context, adapter, value);
+                }
+                catch (TypeErrorException e)
+                {
+                    throw PythonSQLite.MakeProgrammingError(e.Message);
+                }
             }
 
             // TODO: Use proto? Any value whatsoever?
@@ -292,7 +462,15 @@ namespace IronPython.SQLite
             object conform;
             if(context.LanguageContext.Operations.TryGetMember(value, "__conform__", out conform))
             {
-                object adapted = PythonCalls.Call(context, conform, proto);
+                object adapted;
+                try
+                {
+                    adapted = PythonCalls.Call(context, conform, proto);
+                }
+                catch (TypeErrorException e)
+                {
+                    throw PythonSQLite.MakeProgrammingError(e.Message);
+                }
                 if(adapted != null)
                 {
                     return adapted;

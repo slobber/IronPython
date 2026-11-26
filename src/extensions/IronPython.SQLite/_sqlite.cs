@@ -11,6 +11,7 @@ using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Text;
 using Community.CsharpSqlite;
+using IronPython.Modules;
 using IronPython.Runtime;
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
@@ -25,6 +26,19 @@ namespace IronPython.SQLite
     {
         public static readonly string version = typeof(PythonSQLite).Assembly.GetName().Version.ToString(3);
         public static readonly string sqlite_version = Sqlite3.sqlite3_version.Replace("(C#)", "");
+        public static bool callback_tracebacks;
+
+        public static void set_callback_tracebacks(bool enable)
+        {
+            callback_tracebacks = enable;
+        }
+
+        public const int LEGACY_TRANSACTION_CONTROL = Connection.LEGACY_TRANSACTION_CONTROL;
+
+        public const int SQLITE_DBCONFIG_ENABLE_FKEY =
+            Sqlite3.SQLITE_DBCONFIG_ENABLE_FKEY;
+        public const int SQLITE_DBCONFIG_ENABLE_TRIGGER =
+            Sqlite3.SQLITE_DBCONFIG_ENABLE_TRIGGER;
 
         public const int SQLITE_LIMIT_LENGTH = 0;
         public const int SQLITE_LIMIT_SQL_LENGTH = 1;
@@ -41,13 +55,25 @@ namespace IronPython.SQLite
 
         public static PythonDictionary converters = new PythonDictionary();
         public static PythonDictionary adapters = new PythonDictionary();
-        internal static readonly Dictionary<Type, object> _adaptersByClrType = new();
-        internal static readonly Dictionary<PythonType, object> _adaptersByPythonType = new();
-        private static readonly Dictionary<string, object> _adaptersByTypeRepr = new();
-
         public static readonly Type OptimizedUnicode = typeof(string);
 
         internal static Encoding Latin1 = Encoding.GetEncoding("iso-8859-1");
+
+        internal static void ReportUnraisable(
+            CodeContext context,
+            Exception exception,
+            object obj = null,
+            string errMsg = null)
+        {
+            if (callback_tracebacks)
+            {
+                SysModule.ReportUnraisable(
+                    context,
+                    exception,
+                    obj,
+                    errMsg);
+            }
+        }
 
         [SpecialName]
         public static void PerformModuleReload(PythonContext context, PythonDictionary dict)
@@ -194,7 +220,7 @@ namespace IronPython.SQLite
             if (TryGetAdapter(valueType, out adapter)) {
                 return PythonCalls.Call(context, adapter, value);
             }
-            if (_adaptersByClrType.TryGetValue(value.GetType(), out adapter)) {
+            if (adapters.TryGetValue(valueType, out adapter)) {
                 return PythonCalls.Call(context, adapter, value);
             }
 
@@ -256,44 +282,17 @@ Registers an adapter with pysqlite's adapter registry. Non-standard.")]
             object proto = DynamicHelpers.GetPythonTypeFromType(typeof(PrepareProtocol));
             object key = new PythonTuple(DefaultContext.Default, new object[] { type, proto });
             adapters[key] = adapter;
-            adapters[type] = adapter;
-            _adaptersByClrType[(Type)type] = adapter;
-            _adaptersByPythonType[type] = adapter;
-            _adaptersByTypeRepr[
-                PythonOps.Repr(DefaultContext.Default, type)] = adapter;
         }
 
         internal static bool TryGetAdapter(
             PythonType type,
             out object adapter)
         {
-            string typeRepr = PythonOps.Repr(DefaultContext.Default, type);
-            if (_adaptersByTypeRepr.TryGetValue(typeRepr, out adapter))
-            {
-                return true;
-            }
-            if (_adaptersByPythonType.TryGetValue(type, out adapter))
-            {
-                return true;
-            }
-            foreach (var pair in _adaptersByPythonType)
-            {
-                if (PythonOps.Repr(
-                        DefaultContext.Default,
-                        pair.Key) == typeRepr)
-                {
-                    adapter = pair.Value;
-                    return true;
-                }
-            }
             foreach (var pair in adapters)
             {
                 if (pair.Key is PythonType adapterType
                     && (ReferenceEquals(adapterType, type)
-                        || adapterType.Equals(type)
-                        || PythonOps.Repr(
-                            DefaultContext.Default,
-                            adapterType) == typeRepr))
+                        || adapterType.Equals(type)))
                 {
                     adapter = pair.Value;
                     return true;

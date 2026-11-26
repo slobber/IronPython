@@ -10,6 +10,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text;
 using IronPython.Runtime;
+using IronPython.Runtime.Operations;
 using System.Collections;
 using IronPython.Runtime.Exceptions;
 
@@ -44,7 +45,14 @@ namespace IronPython.SQLite
 
             public override int GetHashCode()
             {
-                return description.GetHashCode() ^ data.GetHashCode();
+                try
+                {
+                    return PythonOps.Hash(DefaultContext.Default, data);
+                }
+                catch (Exception)
+                {
+                    throw PythonOps.TypeError("unhashable type");
+                }
             }
 
             public object __iter__()
@@ -52,24 +60,103 @@ namespace IronPython.SQLite
                 return data;
             }
 
-            public object this[long i]
+            public int __len__()
             {
-                get { return this.data[i]; }
+                return data.Count;
             }
 
-            public object this[string s]
+            public object this[object index]
             {
                 get
                 {
-                    for(int i = 0; i < data.Count; ++i)
+                    if (index is string text)
                     {
-                        PythonTuple col_desc = (PythonTuple)description[i];
-                        if(s.Equals((string)col_desc[0], StringComparison.OrdinalIgnoreCase))
-                            return data[i];
+                        for(int i = 0; i < data.Count; ++i)
+                        {
+                            PythonTuple col_desc = (PythonTuple)description[i];
+                            if (AsciiEqualsIgnoreCase(
+                                    text,
+                                    (string)col_desc[0]))
+                            {
+                                return data[i];
+                            }
+                        }
+
+                        throw CreateThrowable(
+                            PythonExceptions.IndexError,
+                            text);
                     }
 
-                    throw CreateThrowable(PythonExceptions.IndexError, "No item with that key");
+                    if (index is int integer)
+                    {
+                        int normalized = integer;
+                        if (normalized < 0)
+                        {
+                            normalized += data.Count;
+                        }
+                        if (normalized < 0 || normalized >= data.Count)
+                        {
+                            throw PythonOps.IndexError(
+                                "tuple index out of range");
+                        }
+                        return data[normalized];
+                    }
+
+                    if (index is System.Numerics.BigInteger big)
+                    {
+                        throw PythonOps.IndexError(
+                            "cannot fit 'int' into an index-sized integer");
+                    }
+
+                    if (index is Slice slice)
+                    {
+                        return data[slice];
+                    }
+
+                    throw PythonOps.IndexError(
+                        "row indices must be integers or strings");
                 }
+            }
+
+            private static bool AsciiEqualsIgnoreCase(string left, string right)
+            {
+                if (left.Length != right.Length)
+                {
+                    return false;
+                }
+                for (int i = 0; i < left.Length; ++i)
+                {
+                    char a = left[i];
+                    char b = right[i];
+                    if (a >= 'A' && a <= 'Z')
+                    {
+                        a = (char)(a + ('a' - 'A'));
+                    }
+                    if (b >= 'A' && b <= 'Z')
+                    {
+                        b = (char)(b + ('a' - 'A'));
+                    }
+                    if (a != b)
+                    {
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            public object GetItem(string s)
+            {
+                return this[s];
+            }
+
+            public object __getitem__(object index)
+            {
+                return this[index];
+            }
+
+            public object __getitem__(string key)
+            {
+                return this[key];
             }
 
             public PythonList keys()
