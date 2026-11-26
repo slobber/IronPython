@@ -488,6 +488,8 @@ namespace IronPython.Modules {
 
             public void clear() => _data.Clear();
 
+            public object __reversed__() => new arrayiterator(this, reverse: true);
+
             public virtual object this[int index] {
                 get {
                     index = PythonOps.FixIndex(index, _data.Count);
@@ -1142,10 +1144,18 @@ namespace IronPython.Modules {
         public sealed class arrayiterator : IEnumerator<object> {
             private int _index;
             private readonly IList<object> _array;
+            private readonly bool _reverse;
             private bool _iterating;
+            private bool _started;
 
             internal arrayiterator(array a) {
                 _array = a;
+                Reset();
+            }
+
+            public arrayiterator([NotNone] array a, bool reverse = false) {
+                _array = a;
+                _reverse = reverse;
                 Reset();
             }
 
@@ -1155,17 +1165,21 @@ namespace IronPython.Modules {
             public object __iter__() => this;
 
             public object __reduce__(CodeContext context) {
-                object? iter;
-                context.TryLookupBuiltin("iter", out iter);
-                if (_iterating) {
-                    return PythonTuple.MakeTuple(iter, PythonTuple.MakeTuple(_array), _index + 1);
+                var type = DynamicHelpers.GetPythonType(this);
+                var args = PythonTuple.MakeTuple(_array, _reverse);
+                if (_started) {
+                    return PythonTuple.MakeTuple(
+                        type,
+                        args,
+                        _index + (_reverse ? -1 : 1));
                 }
-                return PythonTuple.MakeTuple(iter, PythonTuple.MakeTuple(PythonTuple.EMPTY));
+                return PythonTuple.MakeTuple(type, args);
             }
 
             public void __setstate__(int state) {
-                _index = state - 1;
-                _iterating = _index < _array.Count;
+                _index = state + (_reverse ? 1 : -1);
+                _iterating = _reverse ? _index >= 0 : _index < _array.Count;
+                _started = true;
             }
 
             void IDisposable.Dispose() { }
@@ -1173,16 +1187,23 @@ namespace IronPython.Modules {
             [PythonHidden]
             public bool MoveNext() {
                 if (_iterating) {
-                    _index++;
-                    _iterating = (_index < _array.Count);
+                    if (_reverse) {
+                        _index--;
+                        _iterating = _index >= 0;
+                    } else {
+                        _index++;
+                        _iterating = _index < _array.Count;
+                    }
+                    _started = true;
                 }
                 return _iterating;
             }
 
             [PythonHidden]
             public void Reset() {
-                _index = -1;
+                _index = _reverse ? _array.Count : -1;
                 _iterating = true;
+                _started = false;
             }
         }
     }
