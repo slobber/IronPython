@@ -244,18 +244,6 @@
             ]
         },
         {
-            "id": "sqlite3-315-child-process-isolation",
-            "category": "platform-unavailable",
-            "owner": "slobber",
-            "linkedIssue": "openspec:python-315-support#17.9",
-            "reason": "These SQLite cases launch a child interpreter to verify connection cleanup across process shutdown. The complete applicable sqlite3 suite passes except for the process-isolation path, which remains blocked by the runtime's unavailable fork_exec implementation.",
-            "reviewDate": "2026-12-31",
-            "tests": [
-                "test.test_sqlite3.test_dbapi.MultiprocessTests.test_ctx_mgr_rollback_if_commit_failed",
-                "test.test_sqlite3.test_transactions.AutocommitAttribute.test_autocommit_disabled_implicit_shutdown"
-            ]
-        },
-        {
             "id": "stdlib-315-lzma-native-extension",
             "category": "product-boundary",
             "owner": "slobber",

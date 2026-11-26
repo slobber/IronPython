@@ -99,7 +99,7 @@ namespace IronPython.Modules {
                 "posix_spawn");
             string[] argv = ConvertSpawnArguments(context, args);
             string[]? envp = env is null
-                ? null
+                ? GetCurrentEnvironment()
                 : ConvertSpawnEnvironment(context, env);
 
             IntPtr actions = Marshal.AllocHGlobal(
@@ -118,9 +118,7 @@ namespace IronPython.Modules {
                 }
 
                 NativeStringArray nativeArgv = new NativeStringArray(argv);
-                NativeStringArray? nativeEnv = envp is null
-                    ? null
-                    : new NativeStringArray(envp);
+                NativeStringArray nativeEnv = new NativeStringArray(envp);
                 try {
                     rc = posix_spawnp(
                         out int pid,
@@ -128,14 +126,14 @@ namespace IronPython.Modules {
                         actions,
                         IntPtr.Zero,
                         nativeArgv.Pointer,
-                        nativeEnv?.Pointer ?? IntPtr.Zero);
+                        nativeEnv.Pointer);
                     if (rc != 0) {
                         throw GetLastUnixError(executable);
                     }
                     return pid;
                 } finally {
                     nativeArgv.Dispose();
-                    nativeEnv?.Dispose();
+                    nativeEnv.Dispose();
                 }
             } finally {
                 posix_spawn_file_actions_destroy(actions);
@@ -280,6 +278,14 @@ namespace IronPython.Modules {
                         item.Value,
                         "environment value",
                         "posix_spawn"));
+            }
+            return result.ToArray();
+        }
+
+        private static string[] GetCurrentEnvironment() {
+            var result = new List<string>();
+            foreach (DictionaryEntry item in Environment.GetEnvironmentVariables()) {
+                result.Add(item.Key + "=" + item.Value);
             }
             return result.ToArray();
         }

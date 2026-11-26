@@ -33,8 +33,7 @@ On 2026-11-26, the platform module smoke passed on Linux x64 for both
 - `ctypes` size, libc, and from-buffer suites: 17 passed, 2 skipped
 - `test.test_zstd`: 121 passed, 3 skipped
 - concurrent `BZ2File.write` regression: passed
-- `test_sqlite3`: 514 passed, 8 skipped, and the two documented
-  process-isolation waivers
+- `test_sqlite3`: 516 run, 8 skipped, 0 failures
 
 Full CPython module suites remain part of the final conformance milestone;
 their unrelated open failures are not treated as platform-smoke passes.

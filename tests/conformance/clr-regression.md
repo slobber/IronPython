@@ -59,7 +59,7 @@ remain in `tests/suite/test_async.py`.
 
 `IronPython.SQLite` is a thin `_sqlite3` adapter over SQLitePCLRaw's
 `bundle_e_sqlite3` package. The legacy managed `Community.CsharpSqlite` sources
-are excluded from compilation.
+have been removed.
 
 ```bash
 dotnet build src/extensions/IronPython.SQLite/IronPython.SQLite.csproj \
@@ -79,8 +79,8 @@ IRONPYTHONPATH="$CYBERSTONE_IRONPYTHON_STDLIB/lib" \
   dotnet bin/Debug/net10.0/ipy.dll -m unittest -q test.test_sqlite3
 ```
 
-The suite requires SQLite's process-isolation cases to be waived while
-`fork_exec` is unavailable.
+The complete suite passes, including the process-isolation cases that exercise
+`os.posix_spawn`.
 
 ## Platform notes
 
