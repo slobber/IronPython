@@ -8,6 +8,7 @@ using System;
 using System.Numerics;
 
 using Microsoft.Scripting.Runtime;
+using IronPython.Runtime.Exceptions;
 using SpecialNameAttribute = System.Runtime.CompilerServices.SpecialNameAttribute;
 
 namespace IronPython.Runtime.Operations {
@@ -157,6 +158,15 @@ namespace IronPython.Runtime.Operations {
 
         public static Int32 __int__(Boolean x) {
             return (Int32)(x ? 1 : 0);
+        }
+
+        [SpecialName]
+        public static int OnesComplement(CodeContext context, bool x) {
+            PythonOps.Warn(
+                context,
+                PythonExceptions.DeprecationWarning,
+                "Bitwise inversion '~' on bool is deprecated and will be removed in Python 3.16");
+            return x ? -2 : -1;
         }
 
         [SpecialName, ImplicitConversionMethod]
