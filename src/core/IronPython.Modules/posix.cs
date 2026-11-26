@@ -120,31 +120,41 @@ namespace IronPython.Modules {
                 ? GetCurrentEnvironment()
                 : ConvertSpawnEnvironment(context, env);
 
-            IntPtr actions = Marshal.AllocHGlobal(
-                SpawnFileActionsBufferSize);
-            int rc = posix_spawn_file_actions_init(actions);
-            if (rc != 0) {
-                Marshal.FreeHGlobal(actions);
-                throw GetLastUnixError(executable);
+            IntPtr actions = IntPtr.Zero;
+            bool actionsInitialized = false;
+            int rc;
+            if (kwargs is not null
+                && kwargs.TryGetValue("file_actions", out object? value)
+                && value is not null) {
+                actions = Marshal.AllocHGlobal(SpawnFileActionsBufferSize);
+                rc = posix_spawn_file_actions_init(actions);
+                if (rc != 0) {
+                    Marshal.FreeHGlobal(actions);
+                    throw GetLastUnixError(executable);
+                }
+                actionsInitialized = true;
+                try {
+                    ApplySpawnFileActions(context, actions, value);
+                } catch {
+                    posix_spawn_file_actions_destroy(actions);
+                    Marshal.FreeHGlobal(actions);
+                    throw;
+                }
             }
 
             IntPtr attributes = Marshal.AllocHGlobal(
                 SpawnAttributesBufferSize);
             rc = posix_spawnattr_init(attributes);
             if (rc != 0) {
-                posix_spawn_file_actions_destroy(actions);
-                Marshal.FreeHGlobal(actions);
+                if (actionsInitialized) {
+                    posix_spawn_file_actions_destroy(actions);
+                    Marshal.FreeHGlobal(actions);
+                }
                 Marshal.FreeHGlobal(attributes);
                 throw GetLastUnixError(executable);
             }
 
             try {
-                if (kwargs is not null
-                    && kwargs.TryGetValue("file_actions", out object? value)
-                    && value is not null) {
-                    ApplySpawnFileActions(context, actions, value);
-                }
-
                 NativeStringArray nativeArgv = new NativeStringArray(argv);
                 NativeStringArray nativeEnv = new NativeStringArray(envp);
                 try {
@@ -178,8 +188,10 @@ namespace IronPython.Modules {
             } finally {
                 posix_spawnattr_destroy(attributes);
                 Marshal.FreeHGlobal(attributes);
-                posix_spawn_file_actions_destroy(actions);
-                Marshal.FreeHGlobal(actions);
+                if (actionsInitialized) {
+                    posix_spawn_file_actions_destroy(actions);
+                    Marshal.FreeHGlobal(actions);
+                }
             }
         }
 
