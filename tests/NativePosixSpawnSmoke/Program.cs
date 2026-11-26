@@ -102,6 +102,7 @@ sealed class NativeArray : IDisposable {
             Pointers[i] = _strings[i];
             Marshal.WriteIntPtr(Block, i * IntPtr.Size, _strings[i]);
         }
+        Marshal.WriteIntPtr(Block, values.Length * IntPtr.Size, IntPtr.Zero);
     }
 
     public void Dispose() {

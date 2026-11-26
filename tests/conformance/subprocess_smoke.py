@@ -11,7 +11,10 @@ def native_posix_spawn():
         return
 
     command = ["/bin/sh", "-c", "exit 0"]
-    env = dict(os.environ)
+    env = {
+        "HOME": os.environ.get("HOME", "/tmp"),
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+    }
     pid = os.posix_spawn(command[0], command, env)
     assert os.waitpid(pid, 0)[1] == 0
 
@@ -23,6 +26,7 @@ def native_posix_spawn():
             file_actions=[(os.POSIX_SPAWN_CLOSEFROM, 3)],
         )
         assert os.waitpid(pid, 0)[1] == 0
+    print("NATIVE_POSIX_SPAWN_OK", flush=True)
 
 
 def synchronous():
