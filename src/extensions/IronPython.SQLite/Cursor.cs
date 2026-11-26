@@ -119,8 +119,20 @@ namespace IronPython.SQLite
 
                 if(this.statement != null)
                 {
-                    this.statement.Reset();
+                    this.statement.SqliteFinalize();
+                    this.statement = null;
                 }
+            }
+
+            internal void CloseForConnection()
+            {
+                if (statement is not null)
+                {
+                    statement.SqliteFinalize();
+                    statement = null;
+                }
+                next_row = null;
+                cached_rows = null;
             }
 
             [Documentation("Executes a SQL statement.")]

@@ -449,6 +449,7 @@ namespace IronPython.SQLite
             {
                 checkThread();
 
+                closeCursors();
                 doAllStatements(AllStatmentsAction.Finalize);
                 if (this.db != null && in_transaction)
                 {
@@ -541,6 +542,18 @@ namespace IronPython.SQLite
                     if (weakref.IsAlive && weakref.Target is Cursor cursor)
                     {
                         cursor.MaterializeRemaining();
+                    }
+                }
+            }
+
+            private void closeCursors()
+            {
+                foreach (WeakReference weakref in cursors)
+                {
+                    if (weakref.IsAlive
+                        && weakref.Target is Cursor cursor)
+                    {
+                        cursor.CloseForConnection();
                     }
                 }
             }
