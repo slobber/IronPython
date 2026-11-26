@@ -1,8 +1,27 @@
 """Smoke coverage for synchronous and asyncio subprocess execution."""
 
 import asyncio
+import os
 import subprocess
 import sys
+
+
+def native_posix_spawn():
+    if not hasattr(os, "posix_spawn"):
+        return
+
+    command = ["/bin/sh", "-c", "exit 0"]
+    pid = os.posix_spawn(command[0], command, os.environ)
+    assert os.waitpid(pid, 0)[1] == 0
+
+    if hasattr(os, "POSIX_SPAWN_CLOSEFROM"):
+        pid = os.posix_spawn(
+            command[0],
+            command,
+            os.environ,
+            file_actions=[(os.POSIX_SPAWN_CLOSEFROM, 3)],
+        )
+        assert os.waitpid(pid, 0)[1] == 0
 
 
 def synchronous():
@@ -60,6 +79,7 @@ async def event_loop_round_trip():
 
 
 def main():
+    native_posix_spawn()
     synchronous()
     asyncio.run(asynchronous())
     asyncio.run(event_loop_round_trip())
