@@ -91,6 +91,7 @@ namespace IronPython.Modules {
         public static string pycache_prefix;
         public const string platlibdir = "lib";
         public const string _vpath = "";
+        public static readonly string _framework = null;
         public static readonly JitInfo _jit = new JitInfo();
         public static readonly Monitoring monitoring = new Monitoring();
         public static FrozenSetCollection stdlib_module_names = CreateStdlibModuleNames();

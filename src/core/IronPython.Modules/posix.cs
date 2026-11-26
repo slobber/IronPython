@@ -38,6 +38,7 @@ namespace IronPython.Modules {
         public const int POSIX_SPAWN_CLOSEFROM = 3;
 
         private const int SpawnFileActionsBufferSize = 256;
+        private const int SpawnAttributesBufferSize = 4096;
 
         [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawn_file_actions_init(
@@ -46,6 +47,14 @@ namespace IronPython.Modules {
         [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawn_file_actions_destroy(
             IntPtr fileActions);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int posix_spawnattr_init(
+            IntPtr attributes);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int posix_spawnattr_destroy(
+            IntPtr attributes);
 
         [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawn_file_actions_addclose(
@@ -110,6 +119,16 @@ namespace IronPython.Modules {
                 throw GetLastUnixError(executable);
             }
 
+            IntPtr attributes = Marshal.AllocHGlobal(
+                SpawnAttributesBufferSize);
+            rc = posix_spawnattr_init(attributes);
+            if (rc != 0) {
+                posix_spawn_file_actions_destroy(actions);
+                Marshal.FreeHGlobal(actions);
+                Marshal.FreeHGlobal(attributes);
+                throw GetLastUnixError(executable);
+            }
+
             try {
                 if (kwargs is not null
                     && kwargs.TryGetValue("file_actions", out object? value)
@@ -124,7 +143,7 @@ namespace IronPython.Modules {
                         out int pid,
                         executable,
                         actions,
-                        IntPtr.Zero,
+                        attributes,
                         nativeArgv.Pointer,
                         nativeEnv.Pointer);
                     if (rc != 0) {
@@ -136,6 +155,8 @@ namespace IronPython.Modules {
                     nativeEnv.Dispose();
                 }
             } finally {
+                posix_spawnattr_destroy(attributes);
+                Marshal.FreeHGlobal(attributes);
                 posix_spawn_file_actions_destroy(actions);
                 Marshal.FreeHGlobal(actions);
             }
