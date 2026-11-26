@@ -364,7 +364,7 @@
 
 - [ ] 19.1 Run the complete applicable CPython 3.15.2 suite on every platform.
 - [ ] 19.2 Resolve all non-waived failures and skips.
-- [ ] 19.3 Review every waiver for category, owner, issue, and expiry.
+- [x] 19.3 Review every waiver for category, owner, issue, and expiry.
 - [ ] 19.4 Verify all required x64/arm64 builds and tests.
 - [x] 19.5 Verify deterministic source-generator output; two full rebuilds
   produce byte-identical generated files for net10 and net11.

@@ -27,6 +27,15 @@ general waiver.
 
 Approved waivers are recorded in `waivers.json`.
 
+Validate waiver metadata before release:
+
+```text
+python3 eng/scripts/verify-waivers.py
+```
+
+The audit checks category, owner, linked issue, reason, review date, and
+duplicate test patterns.
+
 ## Release Gate
 
 - Zero unexplained failures

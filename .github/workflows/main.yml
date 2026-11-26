@@ -147,6 +147,8 @@ jobs:
       uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '11.0.x'
+    - name: Audit conformance waivers
+      run: python3 eng/scripts/verify-waivers.py
     - name: Build packages
       run: ./make.ps1 package
       shell: pwsh
