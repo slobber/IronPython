@@ -348,7 +348,7 @@
   refcount-finalization, and `CALL_FUNCTION_EX` event-layout cases are
   recorded in `tests/conformance/waivers.json`.
 - [x] 18.4 Preserve `IronPython.SQLite`.
-- [ ] 18.5 Preserve WPF extension support on Windows.
+- [x] 18.5 Preserve WPF extension support on Windows.
 - [x] 18.6 Preserve CLR-specific tests as a separate regression track.
 - [x] 18.7 Verify `Task`, `ValueTask`, `IAsyncEnumerable`, and
   `IAsyncDisposable` interop under the new async semantics.

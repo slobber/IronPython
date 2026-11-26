@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFrameworks>net10.0-windows;net11.0-windows</TargetFrameworks>
+    <Nullable>enable</Nullable>
+    <UseWPF>true</UseWPF>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\core\IronPython\IronPython.csproj" />
+    <ProjectReference Include="..\..\src\core\IronPython.Modules\IronPython.Modules.csproj" />
+    <ProjectReference Include="..\..\src\extensions\IronPython.Wpf\IronPython.Wpf.csproj" />
+  </ItemGroup>
+
+</Project>

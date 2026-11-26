@@ -74,3 +74,23 @@ Load `IronPython.SQLite.dll`, import `_sqlite3`, and exercise a small
 - WPF and WinForms checks are Windows-only and compile behind `FEATURE_WPF`.
 - C# compiler-dependent interop fixtures run only where `csc` is available.
 - GAC-only fixtures skip on .NET Core/Unix.
+
+## WPF smoke test
+
+Run this from Windows PowerShell after building the migration workspace. It
+exercises the WPF module import, control construction on an STA thread, and the
+`wpf.LoadComponent` XAML path for both supported Windows target frameworks.
+
+```powershell
+$env:CYBERSTONE_IRONPYTHON_STDLIB = "<IronPython.StdLib checkout>"
+
+dotnet build tests/WpfSmoke/WpfSmoke.csproj -f net10.0-windows
+dotnet build tests/WpfSmoke/WpfSmoke.csproj -f net11.0-windows
+
+dotnet run --project tests/WpfSmoke/WpfSmoke.csproj -f net10.0-windows --no-build
+dotnet run --project tests/WpfSmoke/WpfSmoke.csproj -f net11.0-windows --no-build
+```
+
+Each run must print `WPF_XAML_OK` and exit with code 0. The entry point must
+remain marked with `[STAThread]`; WPF controls cannot be constructed from an MTA
+thread.
