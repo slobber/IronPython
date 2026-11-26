@@ -54,6 +54,17 @@ internal static class Sqlite3
                 Handle = null;
             }
         }
+
+        internal int ManualClose()
+        {
+            if (Handle is null)
+            {
+                return SQLITE_OK;
+            }
+            int rc = Handle.manual_close();
+            Handle = null;
+            return rc;
+        }
     }
 
     internal sealed class Vdbe : IDisposable
@@ -74,6 +85,47 @@ internal static class Sqlite3
                 Handle.Dispose();
                 Handle = null;
             }
+        }
+
+        internal int ManualClose()
+        {
+            if (Handle is null)
+            {
+                return SQLITE_OK;
+            }
+            int rc = Handle.manual_close();
+            Handle = null;
+            return rc;
+        }
+    }
+
+    internal sealed class Backup : IDisposable
+    {
+        internal SQLitePCL.sqlite3_backup Handle { get; private set; }
+
+        internal Backup(SQLitePCL.sqlite3_backup handle)
+        {
+            Handle = handle;
+        }
+
+        public void Dispose()
+        {
+            if (Handle is not null)
+            {
+                Handle.Dispose();
+                Handle = null;
+            }
+        }
+
+        internal int ManualClose()
+        {
+            if (Handle is null)
+            {
+                return SQLITE_OK;
+            }
+            int rc = Handle.manual_close();
+            Handle = null;
+            return rc;
         }
     }
 
@@ -310,12 +362,7 @@ internal static class Sqlite3
             return SQLITE_OK;
         }
 
-        int rc = raw.sqlite3_close(db.Handle);
-        if (rc == SQLITE_OK)
-        {
-            db.Dispose();
-        }
-        return rc;
+        return db.ManualClose();
     }
 
     public static int sqlite3_prepare(
@@ -344,9 +391,7 @@ internal static class Sqlite3
             return SQLITE_OK;
         }
 
-        int rc = raw.sqlite3_finalize(statement.Handle);
-        statement.Dispose();
-        return rc;
+        return statement.ManualClose();
     }
 
     public static int sqlite3_reset(Vdbe statement)
@@ -465,6 +510,9 @@ internal static class Sqlite3
     public static int sqlite3_errcode(sqlite3 db)
         => raw.sqlite3_errcode(db.Handle);
 
+    public static int sqlite3_extended_errcode(sqlite3 db)
+        => raw.sqlite3_extended_errcode(db.Handle);
+
     public static int sqlite3_enable_load_extension(sqlite3 db, int enabled)
         => raw.sqlite3_enable_load_extension(db.Handle, enabled);
 
@@ -485,6 +533,82 @@ internal static class Sqlite3
 
     public static void sqlite3_interrupt(sqlite3 db)
         => raw.sqlite3_interrupt(db.Handle);
+
+    public static Backup sqlite3_backup_init(
+        sqlite3 destination,
+        string destinationName,
+        sqlite3 source,
+        string sourceName)
+    {
+        SQLitePCL.sqlite3_backup backup = raw.sqlite3_backup_init(
+            destination.Handle,
+            destinationName,
+            source.Handle,
+            sourceName);
+        return backup is null ? null : new Backup(backup);
+    }
+
+    public static int sqlite3_backup_step(Backup backup, int pages)
+        => raw.sqlite3_backup_step(backup.Handle, pages);
+
+    public static int sqlite3_backup_remaining(Backup backup)
+        => raw.sqlite3_backup_remaining(backup.Handle);
+
+    public static int sqlite3_backup_pagecount(Backup backup)
+        => raw.sqlite3_backup_pagecount(backup.Handle);
+
+    public static int sqlite3_backup_finish(Backup backup)
+    {
+        if (backup is null)
+        {
+            return SQLITE_OK;
+        }
+        return backup.ManualClose();
+    }
+
+    public static byte[] sqlite3_serialize(sqlite3 db, string name)
+    {
+        IntPtr data = raw.sqlite3_serialize(
+            db.Handle,
+            name,
+            out long size,
+            0);
+        if (data == IntPtr.Zero)
+        {
+            return null;
+        }
+
+        try
+        {
+            byte[] result = new byte[size];
+            Marshal.Copy(data, result, 0, result.Length);
+            return result;
+        }
+        finally
+        {
+            raw.sqlite3_free(data);
+        }
+    }
+
+    public static int sqlite3_deserialize(
+        sqlite3 db,
+        string name,
+        byte[] data)
+    {
+        IntPtr copy = raw.sqlite3_malloc64(data.Length);
+        if (copy == IntPtr.Zero)
+        {
+            return SQLITE_NOMEM;
+        }
+        Marshal.Copy(data, 0, copy, data.Length);
+        return raw.sqlite3_deserialize(
+            db.Handle,
+            name,
+            copy,
+            data.Length,
+            data.Length,
+            raw.SQLITE_DESERIALIZE_FREEONCLOSE);
+    }
 
     public static void sqlite3ExpirePreparedStatements(sqlite3 db)
     {

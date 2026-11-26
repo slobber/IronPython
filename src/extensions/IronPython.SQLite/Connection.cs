@@ -8,6 +8,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading;
 using Community.CsharpSqlite;
@@ -161,6 +162,58 @@ namespace IronPython.SQLite
                 Sqlite3.sqlite3_interrupt(db);
             }
 
+            public object backup_init(Connection target, string name)
+            {
+                checkThread();
+                checkConnection();
+                target.checkThread();
+                target.checkConnection();
+                Sqlite3.Backup backup = Sqlite3.sqlite3_backup_init(
+                    target.db,
+                    name,
+                    db,
+                    name);
+                if (backup is null)
+                {
+                    throw GetSqliteError(target.db, null);
+                }
+
+                var result = new NativeBackup(backup);
+                function_pinboard.Add(result);
+                return result;
+            }
+
+            public Bytes serialize(string name = "main")
+            {
+                checkThread();
+                checkConnection();
+                byte[] data = Sqlite3.sqlite3_serialize(db, name);
+                if (data is null)
+                {
+                    int rc = Sqlite3.sqlite3_errcode(db);
+                    if (rc != Sqlite3.SQLITE_OK)
+                    {
+                        throw GetSqliteError(db, null);
+                    }
+                    return new Bytes(Array.Empty<byte>());
+                }
+                return new Bytes(data);
+            }
+
+            public void deserialize(Bytes data, string name = "main")
+            {
+                checkThread();
+                checkConnection();
+                int rc = Sqlite3.sqlite3_deserialize(
+                    db,
+                    name,
+                    data.ToArray());
+                if (rc != Sqlite3.SQLITE_OK)
+                {
+                    throw GetSqliteError(db, null);
+                }
+            }
+
             public void enable_load_extension(object enable)
             {
                 checkThread();
@@ -190,6 +243,58 @@ namespace IronPython.SQLite
                         string.IsNullOrEmpty(error)
                             ? Sqlite3.sqlite3_errmsg(db)
                             : error);
+                }
+            }
+
+            [PythonType]
+            public sealed class NativeBackup
+            {
+                private Sqlite3.Backup backup;
+                private int pageCountValue;
+                private int remainingValue;
+
+                internal NativeBackup(Sqlite3.Backup backup)
+                {
+                    this.backup = backup;
+                }
+
+                public int step(int pages)
+                {
+                    if (backup is null)
+                    {
+                        return Sqlite3.SQLITE_DONE;
+                    }
+
+                    int rc = Sqlite3.sqlite3_backup_step(
+                        backup,
+                        pages);
+                    pageCountValue = Sqlite3.sqlite3_backup_pagecount(backup);
+                    remainingValue = Sqlite3.sqlite3_backup_remaining(backup);
+                    if (rc == Sqlite3.SQLITE_DONE
+                        || rc == Sqlite3.SQLITE_ERROR)
+                    {
+                        Sqlite3.sqlite3_backup_finish(backup);
+                        backup = null;
+                    }
+                    return rc;
+                }
+
+                public int pagecount => pageCountValue;
+
+                public int remaining => remainingValue;
+
+                public void close()
+                {
+                    if (backup is not null)
+                    {
+                        Sqlite3.sqlite3_backup_finish(backup);
+                        backup = null;
+                    }
+                }
+
+                ~NativeBackup()
+                {
+                    close();
                 }
             }
 
