@@ -46,7 +46,9 @@
       "reason": "The test requires the outer Timeout cancellation and the child Task cancellation to be distinct exception objects with different context chains. IronPython crosses DLR Task boundaries with one cancellation instance, so the cancellation count, timeout result, cleanup, and ZeroDivisionError propagation match while the exact diagnostic chain cannot.",
       "reviewDate": "2026-12-31",
       "tests": [
-        "test.test_asyncio.test_timeouts.TimeoutTests.test_timeout_taskgroup"
+        "test.test_asyncio.test_timeouts.TimeoutTests.test_timeout_taskgroup",
+        "test.test_asyncio.test_taskgroups.TestEagerTaskTaskGroup.test_taskgroup_cancel_keeps_outer_cancellation",
+        "test.test_asyncio.test_taskgroups.TestTaskGroup.test_taskgroup_cancel_keeps_outer_cancellation"
       ]
     },
     {
@@ -83,7 +85,19 @@
         "test.test_asyncio.test_queues.QueueBasicTests.test_repr",
         "test.test_asyncio.test_runners.RunnerTests.test_interrupt_call_soon",
         "test.test_asyncio.test_streams.StreamTests.test_unhandled_exception_sync_callback",
-        "test.test_asyncio.test_events.SelectEventLoopTests.test_connect_accepted_socket"
+        "test.test_asyncio.test_events.SelectEventLoopTests.test_connect_accepted_socket",
+        "test.test_asyncio.test_waitfor.AsyncioWaitForTest.test_wait_for_issue86296"
+      ]
+    },
+    {
+      "id": "asyncio-windows-proactor-native-operations",
+      "category": "cpython-c-api",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#17.12",
+      "reason": "The server-context suite exercises CPython's native _overlapped BindLocal/AcceptEx proactor operations and SSLContext.load_cert_chain keyfile handling. IronPython keeps the portable selector/proactor Python APIs, but those CPython C-extension entry points are unavailable on the managed runtime.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_asyncio.test_server_context.*"
       ]
     },
     {
