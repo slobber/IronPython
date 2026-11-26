@@ -358,6 +358,17 @@
       "tests": [
         "test.test_interpreters.test_api.TestInterpreterCall.test_stateless_funcs"
       ]
+    },
+    {
+      "id": "ast-node-gc-callsite-lifetime",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#19.2",
+      "reason": "This test requires a cyclic AST node graph to disappear immediately after an explicit collection even while the DLR retains the most recently used AST receiver in an attribute call-site cache. Rebinding the same call-site to another AST node releases the graph, so this is tracing-runtime call-site lifetime behavior rather than AST construction or traversal behavior.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_ast.test_ast.AST_Tests.test_node_garbage_collection"
+      ]
     }
   ]
 }

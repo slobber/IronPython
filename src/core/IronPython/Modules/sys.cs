@@ -55,6 +55,18 @@ namespace IronPython.Modules {
 
         public static bool is_finalizing() => false;
 
+        private static int _intMaxStrDigits = 4300;
+
+        public static int get_int_max_str_digits() => _intMaxStrDigits;
+
+        public static void set_int_max_str_digits(int value) {
+            if (value != 0 && value < 640) {
+                throw PythonOps.ValueError(
+                    "threshold must be 0 or >= 640");
+            }
+            _intMaxStrDigits = value;
+        }
+
         /// <summary>
         /// Handles output of the expression statement.
         /// Prints the value and sets the __builtin__._

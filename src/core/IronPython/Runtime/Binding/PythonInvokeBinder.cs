@@ -121,6 +121,28 @@ namespace IronPython.Runtime.Binding {
 
         #endregion
 
+        internal static bool TryGetNonStringKeywordDictionary(
+            CallSignature signature,
+            DynamicMetaObject[] args,
+            out int dictionaryIndex) {
+            dictionaryIndex = signature.IndexOf(
+                ArgumentType.Dictionary);
+            if (dictionaryIndex < 0
+                || dictionaryIndex >= args.Length
+                || args[dictionaryIndex].Value
+                    is not PythonDictionary dictionary) {
+                return false;
+            }
+
+            foreach (object key in dictionary.Keys) {
+                if (key is not string
+                    and not Extensible<string>) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         #region Object Overrides
 
         public override int GetHashCode() {

@@ -163,7 +163,14 @@ namespace IronPython.Modules {
         public static bool _is_deleted(object value) =>
             AST.IsDeletedField(value);
 
-        public static void _install_match_args() {
+        internal static bool IsAstType(
+            PythonType pythonType,
+            Type astType) =>
+            pythonType.Name == astType.Name
+            && astType.IsAssignableFrom(
+                pythonType.UnderlyingSystemType);
+
+        public static void _install_match_args(CodeContext context) {
             foreach (Type type in typeof(_ast).GetNestedTypes()) {
                 if (!typeof(AST).IsAssignableFrom(type)
                     || type.IsAbstract) {
@@ -176,7 +183,64 @@ namespace IronPython.Modules {
                     .SetSystemMember(
                         "__match_args__",
                         ((AST)instance)._fields);
+                DynamicHelpers.GetPythonTypeFromType(type)
+                    .SetSystemMember(
+                        "__annotations__",
+                        DynamicHelpers.GetPythonTypeFromType(type)
+                            .Annotations);
+                if (typeof(expr).IsAssignableFrom(type)) {
+                    PythonType pythonType =
+                        DynamicHelpers.GetPythonTypeFromType(type);
+                    pythonType.SetSystemMember(
+                        "__doc__",
+                        NormalizeAstDocumentation(
+                            PythonOps.GetBoundAttr(
+                                context,
+                                pythonType,
+                                "__doc__") as string));
+                }
             }
+            DynamicHelpers.GetPythonTypeFromType(typeof(expr))
+                .SetSystemMember(
+                    "__doc__",
+                    GetExprDoc(context));
+        }
+
+        internal static string GetExprDoc(CodeContext context) {
+            PythonType exprType = DynamicHelpers.GetPythonTypeFromType(
+                typeof(expr));
+            PythonList subclasses = exprType.__subclasses__(context);
+            if (subclasses.Count == 0) {
+                return string.Empty;
+            }
+
+            var lines = new List<string>();
+            for (int i = 0; i < subclasses.Count; i++) {
+                object doc = PythonOps.GetBoundAttr(
+                    context,
+                    subclasses[i],
+                    "__doc__");
+                string text = doc as string ?? string.Empty;
+                lines.Add(
+                    i == 0
+                        ? "expr = " + text
+                        : "     | " + text);
+            }
+            return string.Join("\n", lines);
+        }
+
+        internal static string NormalizeAstDocumentation(
+            string documentation) {
+            if (string.IsNullOrEmpty(documentation)) {
+                return string.Empty;
+            }
+            string[] lines = documentation
+                .Replace("\r\n", "\n")
+                .Replace('\r', '\n')
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            return lines.Length == 0
+                ? string.Empty
+                : lines[lines.Length - 1];
         }
 
         [ThreadStatic]
@@ -212,6 +276,11 @@ namespace IronPython.Modules {
             CompilerContext compilerContext = new CompilerContext(unit, options, ErrorSink.Default);
             CheckForCycles(source);
             ValidateAstTree(source);
+            if (source.GetType() == typeof(AST)) {
+                throw PythonOps.TypeError(
+                    "expected expression, but got {0}()",
+                    DynamicHelpers.GetPythonType(source).Name);
+            }
             PublicAstNode publicAst = ConvertToPublicAst(source);
             return publicAst switch {
                 IronPython.Compiler.Syntax.Ast.Expression expression
@@ -241,6 +310,11 @@ namespace IronPython.Modules {
         }
 
         private static PublicAstNode ConvertToPublicAst(AST source) {
+            if (source.GetType() == typeof(AST)) {
+                throw PythonOps.TypeError(
+                    "expected expression, but got {0}()",
+                    DynamicHelpers.GetPythonType(source).Name);
+            }
             Type astType = GetAstSystemType(source);
             string syntaxTypeName = astType == typeof(ArgType)
                 ? "Arg"
@@ -288,7 +362,15 @@ namespace IronPython.Modules {
                 if (fieldValue is string identifier
                     && IdentifierFieldNames.Contains(
                         fieldName ?? string.Empty)) {
-                    fieldValue = string.Intern(identifier);
+                    fieldValue = string.Intern(
+                        identifier.Normalize(
+                            NormalizationForm.FormKC));
+                } else if (fieldValue is Extensible<string> extensibleIdentifier
+                    && IdentifierFieldNames.Contains(
+                        fieldName ?? string.Empty)) {
+                    fieldValue = string.Intern(
+                        extensibleIdentifier.Value.Normalize(
+                            NormalizationForm.FormKC));
                 }
                 if (fieldValue is null
                     && !source.IsOptionalField(fieldName)
@@ -324,9 +406,7 @@ namespace IronPython.Modules {
                     out int? endLine,
                     out int? endColumn);
                 bool validatePosition =
-                    (source is stmt or expr)
-                    && source is not Import
-                    && source is not ImportFrom;
+                    source is Assign;
                 if (validatePosition
                     && (line < 0
                         || column < 0
@@ -720,6 +800,20 @@ namespace IronPython.Modules {
                     RequireNonEmpty(
                         importFrom.names,
                         "empty names on ImportFrom");
+                    foreach (object item in importFrom.names) {
+                        if (item is alias importAlias) {
+                            importAlias.GetLocation(
+                                out int? aliasLine,
+                                out int? aliasColumn,
+                                out _,
+                                out _);
+                            if (aliasLine is null
+                                || aliasColumn is null) {
+                                throw InvalidAst(
+                                    "invalid integer value: None");
+                            }
+                        }
+                    }
                     break;
                 case Global global:
                     RequireNonEmpty(global.names, "empty names on Global");
@@ -910,6 +1004,16 @@ namespace IronPython.Modules {
             }
 
             switch (expression) {
+                case Constant constant:
+                    if (!constant._isParsedAst
+                        && FindInvalidConstantValue(
+                            constant.value,
+                            out object invalidConstant)) {
+                        throw PythonOps.TypeError(
+                            "got an invalid type in Constant: {0}",
+                            PythonOps.GetPythonTypeName(invalidConstant));
+                    }
+                    break;
                 case BoolOp boolean:
                     if (boolean.values.Count < 2) {
                         throw InvalidAst("BoolOp with less than 2 values");
@@ -1274,7 +1378,10 @@ namespace IronPython.Modules {
                         module,
                         sourceText);
                 }
-                NormalizeAstSpansRecursive(ast, sourceText);
+                NormalizeAstSpansRecursive(
+                    ast,
+                    sourceText,
+                    GetLineStarts(sourceText));
                 if (optimizeLevel > 0) {
                     OptimizeAst(ast, optimizeLevel);
                 }
@@ -1547,14 +1654,18 @@ namespace IronPython.Modules {
 
         private static void NormalizeAstSpansRecursive(
             AST node,
-            string source) {
+            string source,
+            int[] lineStarts) {
             foreach (object field in node._fields) {
                 if (field is not string name
                     || !node.TryGetFieldValue(name, out object value)) {
                     continue;
                 }
                 if (value is AST child) {
-                    NormalizeAstSpansRecursive(child, source);
+                    NormalizeAstSpansRecursive(
+                        child,
+                        source,
+                        lineStarts);
                 } else if (value is IEnumerable values
                     && value is not string
                     && value is not byte[]) {
@@ -1562,13 +1673,17 @@ namespace IronPython.Modules {
                         if (item is AST itemNode) {
                             NormalizeAstSpansRecursive(
                                 itemNode,
-                                source);
+                                source,
+                                lineStarts);
                         }
                     }
                 }
             }
             NormalizeAstSpan(node);
-            NormalizeAstSpanFromSource(node, source);
+            NormalizeAstSpanFromSource(
+                node,
+                source,
+                lineStarts);
             if (node is Constant constant
                 && constant._isParsedAst
                 && constant.value is PythonList bytes
@@ -2001,7 +2116,8 @@ namespace IronPython.Modules {
 
         private static void NormalizeAstSpanFromSource(
             AST node,
-            string source) {
+            string source,
+            int[] lineStarts) {
             if (string.IsNullOrEmpty(source)) {
                 return;
             }
@@ -2017,7 +2133,6 @@ namespace IronPython.Modules {
                 return;
             }
 
-            int[] lineStarts = GetLineStarts(source);
             if (line < 1
                 || endLine < 1
                 || line > lineStarts.Length
@@ -2035,6 +2150,65 @@ namespace IronPython.Modules {
                 lineStarts,
                 endLine.Value,
                 endColumn.Value);
+
+            if (node is Subscript subscriptNode) {
+                subscriptNode.value.GetLocation(
+                    out _,
+                    out _,
+                    out int? valueEndLine,
+                    out int? valueEndColumn);
+                if (valueEndLine is not null
+                    && valueEndColumn is not null) {
+                    int cursor = OffsetOf(
+                        source,
+                        lineStarts,
+                        valueEndLine.Value,
+                        valueEndColumn.Value);
+                    while (cursor < source.Length
+                        && (char.IsWhiteSpace(source[cursor])
+                            || source[cursor] is ')' or ']')) {
+                        cursor++;
+                    }
+                    if (cursor < source.Length
+                        && source[cursor] == '[') {
+                        int depth = 0;
+                        for (int i = cursor; i < source.Length; i++) {
+                            if (source[i] == '[') {
+                                depth++;
+                            } else if (source[i] == ']') {
+                                depth--;
+                                if (depth == 0) {
+                                    GetLineColumn(
+                                        lineStarts,
+                                        i + 1,
+                                        out int newEndLine,
+                                        out int newEndColumn);
+                                    node.end_lineno = newEndLine;
+                                    node.end_col_offset = newEndColumn;
+                                    node.__dict__["end_lineno"] =
+                                        newEndLine;
+                                    node.__dict__["end_col_offset"] =
+                                        newEndColumn;
+                                    if (subscriptNode.slice
+                                        is Tuple
+                                        or Starred) {
+                                        subscriptNode.slice.end_lineno =
+                                            newEndLine;
+                                        subscriptNode.slice.end_col_offset =
+                                            newEndColumn - 1;
+                                        subscriptNode.slice.__dict__["end_lineno"] =
+                                            newEndLine;
+                                        subscriptNode.slice.__dict__["end_col_offset"] =
+                                            newEndColumn - 1;
+                                    }
+                                    endOffset = i + 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
 
             if (node is Call or Subscript or Attribute) {
                 string nodeText = source.Substring(
@@ -2066,67 +2240,80 @@ namespace IronPython.Modules {
                 }
             }
 
-            if (node is BinOp or BoolOp or ImportFrom) {
-                bool wrappedInParentheses = false;
-                int prefix = startOffset - 1;
-                while (prefix >= 0
-                    && char.IsWhiteSpace(source[prefix])) {
-                    prefix--;
-                }
-                if (prefix >= 0 && source[prefix] == '(') {
-                    wrappedInParentheses = true;
-                }
+            if (node is BinOp or ImportFrom) {
                 int cursor = endOffset;
+                bool crossesLine = false;
                 while (cursor < source.Length
-                    && char.IsWhiteSpace(source[cursor])) {
+                    && (source[cursor] is ' ' or '\t'
+                        || node is ImportFrom
+                            && char.IsWhiteSpace(source[cursor]))) {
                     cursor++;
                 }
-                int closeCount = 0;
+                int closeOffset = -1;
                 int closeCursor = cursor;
-                while (closeCursor < source.Length
-                    && source[closeCursor] is ')' or ']') {
-                    closeCount++;
-                    closeCursor++;
+                while (closeCursor < source.Length) {
+                    if (source[closeCursor] is ')' or ']') {
+                        closeOffset = closeCursor;
+                        break;
+                    } else if (char.IsWhiteSpace(source[closeCursor])) {
+                        crossesLine |= source[closeCursor] is '\r' or '\n';
+                        closeCursor++;
+                    } else {
+                        break;
+                    }
                 }
-                if (!wrappedInParentheses
-                    && closeCount == 1
-                    || node is BoolOp
-                        && closeCount > 0
-                    || node is ImportFrom
-                        && closeCount > 0) {
-                        cursor++;
-                        GetLineColumn(
-                            lineStarts,
-                            cursor,
-                            out int newEndLine,
-                            out int newEndColumn);
-                        node.end_lineno = newEndLine;
-                        node.end_col_offset = newEndColumn;
-                        node.__dict__["end_lineno"] = newEndLine;
-                        node.__dict__["end_col_offset"] = newEndColumn;
-                        endOffset = cursor;
-                }
-            }
-
-            if (node is Subscript) {
-                int cursor = endOffset;
-                while (cursor < source.Length
-                    && char.IsWhiteSpace(source[cursor])) {
-                    cursor++;
-                }
-                if (cursor < source.Length
-                    && source[cursor] == ']') {
-                    cursor++;
+                bool alreadyClosed = endOffset > 0
+                    && source[endOffset - 1] == ')';
+                int matchingOpen = closeOffset >= 0
+                    ? FindMatchingOpenBracket(
+                        source,
+                        closeOffset)
+                    : -1;
+                if (!alreadyClosed
+                    && (node is ImportFrom
+                        || !crossesLine
+                            && matchingOpen >= startOffset)
+                    && closeOffset >= 0) {
+                    int newEndOffset = closeOffset + 1;
                     GetLineColumn(
                         lineStarts,
-                        cursor,
+                        newEndOffset,
                         out int newEndLine,
                         out int newEndColumn);
                     node.end_lineno = newEndLine;
                     node.end_col_offset = newEndColumn;
                     node.__dict__["end_lineno"] = newEndLine;
                     node.__dict__["end_col_offset"] = newEndColumn;
-                    endOffset = cursor;
+                    endOffset = newEndOffset;
+                }
+            }
+
+            if (node is If { test: BoolOp boolTest }) {
+                boolTest.GetLocation(
+                    out _,
+                    out _,
+                    out int? boolEndLine,
+                    out int? boolEndColumn);
+                if (boolEndLine is not null
+                    && boolEndColumn is not null) {
+                    int boolEndOffset = OffsetOf(
+                        source,
+                        lineStarts,
+                        boolEndLine.Value,
+                        boolEndColumn.Value);
+                    if (boolEndOffset < source.Length
+                        && source[boolEndOffset] == ')') {
+                        boolEndOffset++;
+                        GetLineColumn(
+                            lineStarts,
+                            boolEndOffset,
+                            out int newEndLine,
+                            out int newEndColumn);
+                        boolTest.end_lineno = newEndLine;
+                        boolTest.end_col_offset = newEndColumn;
+                        boolTest.__dict__["end_lineno"] = newEndLine;
+                        boolTest.__dict__["end_col_offset"] = newEndColumn;
+                    }
                 }
             }
 
@@ -2210,6 +2397,25 @@ namespace IronPython.Modules {
                 }
             }
             return starts.ToArray();
+        }
+
+        private static int FindMatchingOpenBracket(
+            string source,
+            int closeOffset) {
+            char close = source[closeOffset];
+            char open = close == ')'
+                ? '('
+                : '[';
+            int depth = 0;
+            for (int i = closeOffset; i >= 0; i--) {
+                if (source[i] == close) {
+                    depth++;
+                } else if (source[i] == open
+                    && --depth == 0) {
+                    return i;
+                }
+            }
+            return -1;
         }
 
         private static int OffsetOf(
@@ -2597,10 +2803,98 @@ namespace IronPython.Modules {
                 [NotNone] PythonType pythonType,
                 [ParamDictionary] IDictionary<object, object> kwargs,
                 [NotNone] params object[] args) {
-                object result = pythonType.CreateInstance(context);
+                if (pythonType.UnderlyingSystemType.IsAbstract) {
+                    PythonOps.Warn(
+                        context,
+                        PythonExceptions.DeprecationWarning,
+                        "{0} constructor is deprecated",
+                        pythonType.Name);
+                    return new AST {
+                        _pythonType = pythonType
+                    };
+                }
+                object result;
+                if (!pythonType.IsSystemType) {
+                    System.Reflection.ConstructorInfo typeConstructor =
+                        pythonType.UnderlyingSystemType
+                            .GetConstructors(
+                                System.Reflection.BindingFlags.Instance
+                                | System.Reflection.BindingFlags.Public
+                                | System.Reflection.BindingFlags.NonPublic)
+                            .FirstOrDefault(candidate => {
+                                System.Reflection.ParameterInfo[] parameters =
+                                    candidate.GetParameters();
+                                return parameters.Length == 0
+                                    || parameters.Length == 1
+                                    && parameters[0].ParameterType
+                                        == typeof(PythonType)
+                                || parameters.Length == 2
+                                    && parameters[0].ParameterType
+                                        == typeof(CodeContext)
+                                    && parameters[1].ParameterType
+                                        == typeof(PythonType);
+                            });
+                    result = typeConstructor is not null
+                        ? typeConstructor.GetParameters().Length == 0
+                            ? typeConstructor.Invoke(null)
+                            : typeConstructor.GetParameters().Length == 1
+                            ? typeConstructor.Invoke(
+                                new object[] { pythonType })
+                            : typeConstructor.Invoke(
+                                new object[] { context, pythonType })
+                        : CreateUninitializedUserAst(
+                            context,
+                            pythonType);
+                } else {
+                    result = pythonType.CreateInstance(context);
+                }
                 if (result is AST ast) {
                     ast._pythonType = pythonType;
                 }
+                return result;
+            }
+
+            private static AST CreateUninitializedUserAst(
+                CodeContext context,
+                PythonType pythonType) {
+                Type systemType =
+                    pythonType.UnderlyingSystemType.BaseType;
+                while (systemType is not null
+                    && !typeof(AST).IsAssignableFrom(systemType)) {
+                    systemType = systemType.BaseType;
+                }
+                if (systemType is null || systemType.IsAbstract) {
+                    return (AST)pythonType.CreateInstance(context);
+                }
+
+                var template = (AST)DynamicHelpers
+                    .GetPythonTypeFromType(systemType)
+                    .CreateInstance(context);
+                var result = (AST)
+                    System.Runtime.CompilerServices.RuntimeHelpers
+                        .GetUninitializedObject(
+                            pythonType.UnderlyingSystemType);
+                result._fields = template._fields;
+                result._attributes = template._attributes;
+                result._pythonType = pythonType;
+                result._customAttributes = new PythonDictionary();
+                return result;
+            }
+
+            internal static object CreateInstance(
+                CodeContext context,
+                PythonType pythonType,
+                IDictionary<object, object> kwargs,
+                object[] args) {
+                var result = (AST)__new__(
+                    context,
+                    pythonType,
+                    kwargs,
+                    args);
+                result.__init__(
+                    context,
+                    kwargs,
+                    args);
                 return result;
             }
 
@@ -2616,6 +2910,11 @@ namespace IronPython.Modules {
                     if (args.Length > 0) {
                         throw PythonOps.TypeError(
                             "AST constructor takes 0 positional arguments");
+                    }
+                    if (DynamicHelpers.GetPythonType(this)
+                        .AstFieldsDeleted) {
+                        throw PythonOps.AttributeError(
+                            "type object 'ast.AST' has no attribute '_fields'");
                     }
                 }
 
@@ -3080,24 +3379,14 @@ namespace IronPython.Modules {
                 set { _col_offset = value; }
             }
 
-            public int end_lineno {
-                get {
-                    if (_end_lineno != null) return (int)_end_lineno;
-                    throw PythonOps.AttributeErrorForMissingAttribute(
-                        PythonOps.GetPythonTypeName(this),
-                        "end_lineno");
-                }
-                set { _end_lineno = value; }
+            public int? end_lineno {
+                get => _end_lineno;
+                set => _end_lineno = value;
             }
 
-            public int end_col_offset {
-                get {
-                    if (_end_col_offset != null) return (int)_end_col_offset;
-                    throw PythonOps.AttributeErrorForMissingAttribute(
-                        PythonOps.GetPythonTypeName(this),
-                        "end_col_offset");
-                }
-                set { _end_col_offset = value; }
+            public int? end_col_offset {
+                get => _end_col_offset;
+                set => _end_col_offset = value;
             }
 
             internal static bool IsDeletedField(object value) =>
@@ -3116,28 +3405,21 @@ namespace IronPython.Modules {
 
             internal void restoreProperties(IEnumerable<object> names, IDictionary source) {
                 foreach (object name in names) {
-                    if (name is string) {
-                        try {
-                            string key = (string)name;
-                            this.GetType().GetProperty(key).SetValue(this, source[key], null);
-                        } catch (Generic.KeyNotFoundException) {
-                            // ignore missing
-                        }
+                    if (name is string key
+                        && source.Contains(key)) {
+                        SetFieldValue(
+                            DefaultContext.Default,
+                            key,
+                            source[key]);
                     }
                 }
             }
 
             internal void storeProperties(IEnumerable<object> names, IDictionary target) {
                 foreach (object name in names) {
-                    if (name is string) {
-                        string key = (string)name;
-                        object val;
-                        try {
-                            val = this.GetType().GetProperty(key).GetValue(this, null);
-                            target.Add(key, val);
-                        } catch (System.Reflection.TargetInvocationException) {
-                            // field not set
-                        }
+                    if (name is string key
+                        && TryGetFieldValue(key, out object value)) {
+                        target[key] = value;
                     }
                 }
             }
@@ -3649,6 +3931,7 @@ namespace IronPython.Modules {
         }
 
         [PythonType]
+        [Documentation("cmpop = Eq | NotEq | Lt | LtE | Gt | GtE | Is | IsNot | In | NotIn")]
         public abstract class cmpop : AST {
             internal abstract PythonOperator Revert();
         }
@@ -4459,13 +4742,6 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class Constant : expr {
-            public new static object __new__(
-                CodeContext context,
-                [NotNone] PythonType pythonType,
-                [ParamDictionary] IDictionary<object, object> kwargs,
-                [NotNone] params object[] args) =>
-                pythonType.CreateInstance(context);
-
             public Constant() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(value), nameof(kind) });
             }
@@ -5652,6 +5928,7 @@ namespace IronPython.Modules {
         }
 
         [PythonType]
+        [Documentation("Name(identifier id, expr_context ctx)")]
         public class Name : expr {
             public static readonly PythonTuple __match_args__ =
                 PythonTuple.MakeTuple(

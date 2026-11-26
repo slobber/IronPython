@@ -84,6 +84,30 @@ namespace IronPython.Runtime.Binding {
             PerfTrack.NoteEvent(PerfTrack.Categories.BindingTarget, "BuiltinFunction " + Value.Targets.Count + ", " + Value.Targets[0].GetParameters().Length);
             PerfTrack.NoteEvent(PerfTrack.Categories.BindingSlow, "BuiltinFunction " + BindingHelpers.GetCallSignature(call));
 
+            CallSignature signature =
+                BindingHelpers.GetCallSignature(call);
+            if (Value.Name == "__replace__"
+                && Value.__self__ is IronPython.Modules._ast.AST
+                && PythonInvokeBinder.TryGetNonStringKeywordDictionary(
+                    signature,
+                    args,
+                    out int dictionaryIndex)) {
+                return new DynamicMetaObject(
+                    Ast.Call(
+                        typeof(PythonOps).GetMethod(
+                            nameof(PythonOps.CallAstReplaceWithKeywordArgs)),
+                        codeContext,
+                        AstUtils.Constant(Value.__self__),
+                        AstUtils.Convert(
+                            args[dictionaryIndex].Expression,
+                            typeof(PythonDictionary))),
+                    Restrictions.Merge(
+                        BindingRestrictions.GetInstanceRestriction(
+                            Expression,
+                            Value))
+                        .Merge(BindingRestrictions.Combine(args)));
+            }
+
             if (this.NeedsDeferral()) {
                 return call.Defer(ArrayUtils.Insert(this, args));
             }

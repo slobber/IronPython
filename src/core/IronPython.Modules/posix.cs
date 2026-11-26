@@ -32,9 +32,13 @@ namespace IronPython.Modules {
     public static partial class PythonNT {
 #if FEATURE_NATIVE
 
+        [PythonHidden(PlatformsAttribute.PlatformFamily.Windows)]
         public const int POSIX_SPAWN_OPEN = 0;
+        [PythonHidden(PlatformsAttribute.PlatformFamily.Windows)]
         public const int POSIX_SPAWN_CLOSE = 1;
+        [PythonHidden(PlatformsAttribute.PlatformFamily.Windows)]
         public const int POSIX_SPAWN_DUP2 = 2;
+        [PythonHidden(PlatformsAttribute.PlatformFamily.Windows)]
         public const int POSIX_SPAWN_CLOSEFROM = 3;
 
         private const short POSIX_SPAWN_RESETIDS = 0x01;
@@ -142,6 +146,7 @@ namespace IronPython.Modules {
 
         [SupportedOSPlatform("linux")]
         [SupportedOSPlatform("macos")]
+        [PythonHidden(PlatformsAttribute.PlatformFamily.Windows)]
         public static int posix_spawn(
             CodeContext context,
             [NotNone] object path,

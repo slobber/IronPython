@@ -4767,6 +4767,27 @@ namespace IronPython.Runtime.Operations {
             return null;
         }
 
+        public static object CallAstConstructorWithKeywordArgs(
+            CodeContext/*!*/ context,
+            PythonType pythonType,
+            object[] args,
+            PythonDictionary keywordArguments) {
+            return IronPython.Modules._ast.AST.CreateInstance(
+                context,
+                pythonType,
+                keywordArguments,
+                args);
+        }
+
+        public static object CallAstReplaceWithKeywordArgs(
+            CodeContext/*!*/ context,
+            object instance,
+            PythonDictionary keywordArguments) {
+            return ((IronPython.Modules._ast.AST)instance).__replace__(
+                context,
+                keywordArguments);
+        }
+
         public static bool IsPythonType(PythonType type) {
             return type.IsPythonType;
         }

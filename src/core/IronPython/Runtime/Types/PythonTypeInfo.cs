@@ -1166,6 +1166,12 @@ namespace IronPython.Runtime.Types {
 
         private class DocumentationDescriptor : PythonTypeSlot {
             internal override bool TryGetValue(CodeContext context, object instance, PythonType owner, out object value) {
+                if (IronPython.Modules._ast.IsAstType(
+                        owner,
+                        typeof(IronPython.Modules._ast.expr))) {
+                    value = IronPython.Modules._ast.GetExprDoc(context);
+                    return true;
+                }
                 if (owner.IsSystemType) {
                     value = PythonTypeOps.GetDocumentation(owner.UnderlyingSystemType);
                     return true;

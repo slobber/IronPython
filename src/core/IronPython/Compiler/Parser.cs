@@ -179,6 +179,8 @@ namespace IronPython.Compiler {
             int featureVersion = -1) {
             try {
                 string source = _sourceReader.ReadToEnd();
+                source = NormalizeNumericKeywordSyntax(source);
+                ReportStringEscapeWarnings(source);
                 if (mode == "func_type") {
                     return ParseFunctionTypePublicAst(
                         source,
@@ -212,6 +214,71 @@ namespace IronPython.Compiler {
                 throw PythonOps.SyntaxError(exception.Message);
             } catch (DecoderFallbackException exception) {
                 throw BadSourceError(exception);
+            }
+        }
+
+        private string NormalizeNumericKeywordSyntax(string source) {
+            return Regex.Replace(
+                source,
+                @"(?<=\d)(and|or|in|is|if|else|for|not)\b",
+                match => {
+                    int line = 1;
+                    int column = 1;
+                    for (int i = 0; i < match.Index; i++) {
+                        if (source[i] == '\n') {
+                            line++;
+                            column = 1;
+                        } else {
+                            column++;
+                        }
+                    }
+                    var location = new SourceLocation(
+                        match.Index,
+                        line,
+                        column);
+                    PythonOps.SyntaxWarning(
+                        "invalid decimal literal",
+                        _sourceUnit,
+                        new SourceSpan(location, location),
+                        0);
+                    return " " + match.Value;
+                });
+        }
+
+        private void ReportStringEscapeWarnings(string source) {
+            foreach (Match match in Regex.Matches(
+                source,
+                @"\\([A-Za-z]|[0-7]{3})")) {
+                string escape = match.Groups[1].Value;
+                if (escape.Length == 1
+                    && escape[0] is 'a' or 'b' or 'f' or 'n'
+                        or 'r' or 't' or 'v' or 'x' or 'N') {
+                    continue;
+                }
+                if (escape.Length == 3
+                    && Convert.ToInt32(escape, 8) <= 0xFF) {
+                    continue;
+                }
+
+                int line = 1;
+                int column = 1;
+                for (int i = 0; i < match.Index; i++) {
+                    if (source[i] == '\n') {
+                        line++;
+                        column = 1;
+                    } else {
+                        column++;
+                    }
+                }
+                var location = new SourceLocation(
+                    match.Index,
+                    line,
+                    column);
+                PythonOps.SyntaxWarning(
+                    "invalid escape sequence",
+                    _sourceUnit,
+                    new SourceSpan(location, location),
+                    0);
             }
         }
 

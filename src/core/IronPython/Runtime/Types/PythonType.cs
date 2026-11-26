@@ -250,11 +250,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
 #nullable enable
 
-        [System.Diagnostics.CodeAnalysis.SuppressMessage(
-            "Usage",
-            "IPY01",
-            Justification = "The descriptor setter accepts a Python dictionary value.")]
-        public PythonDictionary __annotations__ {
+        internal PythonDictionary Annotations {
             get {
                 if (IsSystemType
                     && _annotate is null
@@ -303,6 +299,17 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             }
         }
 
+        [SpecialName, PropertyMethod, WrapperDescriptor]
+        public static PythonDictionary Get__annotations__(
+            [NotNone] PythonType self) =>
+            self.Annotations;
+
+        [SpecialName, PropertyMethod, WrapperDescriptor]
+        public static void Set__annotations__(
+            [NotNone] PythonType self,
+            [NotNone] PythonDictionary value) =>
+            self.Annotations = value;
+
         public object? __annotate__ {
             get => _annotate;
             set {
@@ -346,6 +353,9 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         private PythonDictionary _annotations = new PythonDictionary();
         private bool _annotationsInitialized;
         private object? _annotate;
+        private bool _astFieldsDeleted;
+
+        internal bool AstFieldsDeleted => _astFieldsDeleted;
 
         internal void SetSystemAnnotations(PythonDictionary annotations) {
             if (!IsSystemType) {
@@ -358,7 +368,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         }
 
         internal void SetSystemMember(string name, object value) {
-            if (!IsSystemType || _dict is null) {
+            if (_dict is null) {
                 return;
             }
             _dict[name] = ToTypeSlot(value);
@@ -814,6 +824,11 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
         [SpecialName, PropertyMethod, WrapperDescriptor]
         public static object Get__doc__(CodeContext/*!*/ context, PythonType self) {
+            if (IronPython.Modules._ast.IsAstType(
+                    self,
+                    typeof(IronPython.Modules._ast.expr))) {
+                return IronPython.Modules._ast.GetExprDoc(context);
+            }
             PythonTypeSlot pts;
             object res;
             if (self.TryLookupSlot(context, "__doc__", out pts) &&
@@ -1743,6 +1758,15 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         internal void SetCustomMember(CodeContext/*!*/ context, string name, object value) {
             Debug.Assert(context != null);
 
+            if (IronPython.Modules._ast.IsAstType(
+                    this,
+                    typeof(IronPython.Modules._ast.AST))
+                && name == "_fields") {
+                _astFieldsDeleted = false;
+                UpdateVersion();
+                return;
+            }
+
             PythonTypeSlot dts;
 
             // search the type
@@ -1788,6 +1812,15 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
         internal bool DeleteCustomMember(CodeContext/*!*/ context, string name) {
             Debug.Assert(context != null);
+
+            if (IronPython.Modules._ast.IsAstType(
+                    this,
+                    typeof(IronPython.Modules._ast.AST))
+                && name == "_fields") {
+                _astFieldsDeleted = true;
+                UpdateVersion();
+                return true;
+            }
 
             if (name == "__annotations__") {
                 Delete__annotations__();
@@ -2590,7 +2623,17 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             // check the slots to see if we're weak refable
             if (CheckForSlotWithDefault(context, _resolutionOrder, slots, "__weakref__")) {
                 _attrs |= PythonTypeAttributes.WeakReferencable;
-                AddSlot("__weakref__", new PythonTypeWeakRefSlot(this));
+                bool inheritsWeakRef = _resolutionOrder
+                    .Skip(1)
+                    .Any(type => type.TryLookupSlot(
+                        context,
+                        "__weakref__",
+                        out _));
+                if (!inheritsWeakRef) {
+                    AddSlot(
+                        "__weakref__",
+                        new PythonTypeWeakRefSlot(this));
+                }
             }
 
             // check if we have a dictionary

@@ -304,7 +304,34 @@ namespace IronPython.Runtime.Operations {
         }
 
         public static string __repr__(BigInteger/*!*/ self) {
-            return self.ToString();
+            int limit = IronPython.Modules.SysModule.get_int_max_str_digits();
+            if (limit != 0) {
+                BigInteger magnitude = BigInteger.Abs(self);
+                if (magnitude > 9) {
+                    long bitLength = magnitude.GetBitLength();
+                    double guaranteedDigits =
+                        bitLength / 3.3219280948873626;
+                    if (guaranteedDigits > limit + 1) {
+                        ThrowIntegerStringConversionLimit(limit);
+                    }
+                }
+            }
+
+            string result = self.ToString();
+            if (limit != 0
+                && result.AsSpan(result[0] == '-' ? 1 : 0).Length
+                    > limit) {
+                ThrowIntegerStringConversionLimit(limit);
+            }
+            return result;
+        }
+
+        internal static void ThrowIntegerStringConversionLimit(int limit) {
+            throw PythonOps.ValueError(
+                "Exceeds the limit ({0} digits) for integer string conversion; "
+                + "use sys.set_int_max_str_digits() to increase the limit. "
+                + "Consider hexadecimal for large integers.",
+                limit);
         }
 
         public static object __getnewargs__(CodeContext context, BigInteger self) {

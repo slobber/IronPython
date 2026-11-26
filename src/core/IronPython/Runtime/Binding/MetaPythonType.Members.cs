@@ -51,6 +51,28 @@ namespace IronPython.Runtime.Binding {
             PerfTrack.NoteEvent(PerfTrack.Categories.BindingTarget, "Type SetMember");
             PythonContext state = PythonContext.GetPythonContext(member);
 
+            if (member.Name == "_fields"
+                && IronPython.Modules._ast.IsAstType(
+                    Value,
+                    typeof(IronPython.Modules._ast.AST))) {
+                return new DynamicMetaObject(
+                    Ast.Call(
+                        typeof(PythonOps).GetMethod(
+                            nameof(PythonOps.PythonTypeSetCustomMember)),
+                        AstUtils.Constant(state.SharedContext),
+                        AstUtils.Convert(
+                            Expression,
+                            typeof(PythonType)),
+                        AstUtils.Constant(member.Name),
+                        AstUtils.Convert(
+                            value.Expression,
+                            typeof(object))),
+                    Restrictions.Merge(value.Restrictions)
+                        .Merge(BindingRestrictions.GetInstanceRestriction(
+                            Expression,
+                            Value)));
+            }
+
             if (Value.IsSystemType) {
                 MemberTracker tt = MemberTracker.FromMemberInfo(Value.UnderlyingSystemType.GetTypeInfo());
                 MemberGroup mg = state.Binder.GetMember(MemberRequestKind.Set, Value.UnderlyingSystemType, member.Name);
@@ -88,6 +110,26 @@ namespace IronPython.Runtime.Binding {
         public override DynamicMetaObject/*!*/ BindDeleteMember(DeleteMemberBinder/*!*/ member) {
             PerfTrack.NoteEvent(PerfTrack.Categories.Binding, "Type DeleteMember " + Value.UnderlyingSystemType.FullName);
             PerfTrack.NoteEvent(PerfTrack.Categories.BindingTarget, "Type DeleteMember");
+            if (member.Name == "_fields"
+                && IronPython.Modules._ast.IsAstType(
+                    Value,
+                    typeof(IronPython.Modules._ast.AST))) {
+                PythonContext state =
+                    PythonContext.GetPythonContext(member);
+                return new DynamicMetaObject(
+                    Ast.Call(
+                        typeof(PythonOps).GetMethod(
+                            nameof(PythonOps.PythonTypeDeleteCustomMember)),
+                        AstUtils.Constant(state.SharedContext),
+                        AstUtils.Convert(
+                            Expression,
+                            typeof(PythonType)),
+                        AstUtils.Constant(member.Name)),
+                    Restrictions.Merge(
+                        BindingRestrictions.GetInstanceRestriction(
+                            Expression,
+                            Value)));
+            }
             if (Value.IsSystemType) {
                 PythonContext state = PythonContext.GetPythonContext(member);
 

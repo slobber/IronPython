@@ -752,7 +752,11 @@ namespace IronPython.Runtime.Operations {
                 autoDoc += FixCtorDoc(type, DocBuilder.CreateAutoDoc(ci, DynamicHelpers.GetPythonTypeFromType(type).Name, 0)) + Environment.NewLine;
             }
 
-            return autoDoc;
+            return typeof(IronPython.Modules._ast.expr).IsAssignableFrom(
+                    type)
+                ? IronPython.Modules._ast.NormalizeAstDocumentation(
+                    autoDoc)
+                : autoDoc;
         }
 
         private static string FixCtorDoc(Type type, string autoDoc) {

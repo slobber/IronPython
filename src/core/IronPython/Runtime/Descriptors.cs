@@ -143,6 +143,23 @@ namespace IronPython.Runtime {
             }
         }
 
+        public object __call__(
+            CodeContext context,
+            [NotNone] params object[] args) {
+            return PythonCalls.Call(context, _func, args)!;
+        }
+
+        public object __call__(
+            CodeContext context,
+            [ParamDictionary] IDictionary<object, object> kwargs,
+            [NotNone] params object[] args) {
+            return PythonCalls.CallWithKeywordArgs(
+                context,
+                _func,
+                args,
+                kwargs)!;
+        }
+
         public bool __isabstractmethod__ {
             get {
                 object? isabstract;

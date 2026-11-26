@@ -29,6 +29,21 @@ namespace IronPython.Runtime.Binding {
         #region IPythonInvokable Members
 
         public DynamicMetaObject/*!*/ Invoke(PythonInvokeBinder/*!*/ pythonInvoke, Expression/*!*/ codeContext, DynamicMetaObject/*!*/ target, DynamicMetaObject/*!*/[]/*!*/ args) {
+            if (typeof(IronPython.Modules._ast.AST)
+                    .IsAssignableFrom(
+                        Value.UnderlyingSystemType)
+                && Value.Name
+                    != nameof(IronPython.Modules._ast.AST)
+                && PythonInvokeBinder.TryGetNonStringKeywordDictionary(
+                    pythonInvoke.Signature,
+                    args,
+                    out _)) {
+                return MakeAstConstructorCall(
+                    codeContext,
+                    pythonInvoke,
+                    args);
+            }
+
             DynamicMetaObject translated = BuiltinFunction.TranslateArguments(pythonInvoke, codeContext, target, args, false, Value.Name);
             if (translated != null) {
                 return translated;
@@ -61,6 +76,46 @@ namespace IronPython.Runtime.Binding {
         #endregion
 
         #region Invoke Implementation
+
+        private DynamicMetaObject MakeAstConstructorCall(
+            Expression codeContext,
+            PythonInvokeBinder call,
+            DynamicMetaObject[] args) {
+            int dictionaryIndex =
+                call.Signature.IndexOf(
+                    ArgumentType.Dictionary);
+            List<Expression> callArguments = new List<Expression>();
+            for (int i = 0; i < args.Length; i++) {
+                if (i != dictionaryIndex
+                    && call.Signature.GetArgumentKind(i)
+                        is ArgumentType.Simple) {
+                    callArguments.Add(
+                        AstUtils.Convert(
+                            args[i].Expression,
+                            typeof(object)));
+                }
+            }
+
+            return new DynamicMetaObject(
+                Ast.Call(
+                    typeof(PythonOps).GetMethod(
+                        nameof(PythonOps.CallAstConstructorWithKeywordArgs)),
+                    codeContext,
+                    AstUtils.Convert(
+                        Expression,
+                        typeof(PythonType)),
+                    Ast.NewArrayInit(
+                        typeof(object),
+                        callArguments),
+                    AstUtils.Convert(
+                        args[dictionaryIndex].Expression,
+                        typeof(PythonDictionary))),
+                Restrictions.Merge(
+                    BindingRestrictions.GetInstanceRestriction(
+                        Expression,
+                        Value))
+                    .Merge(BindingRestrictions.Combine(args)));
+        }
 
         private DynamicMetaObject/*!*/ InvokeWorker(DynamicMetaObjectBinder/*!*/ call, DynamicMetaObject/*!*/[]/*!*/ args, Expression/*!*/ codeContext) {
             PerfTrack.NoteEvent(PerfTrack.Categories.Binding, "Type Invoke " + Value.UnderlyingSystemType.FullName + args.Length);
