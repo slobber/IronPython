@@ -50,6 +50,10 @@ namespace IronPython.Compiler.PublicAst {
         [ThreadStatic]
         private static PythonContext? _pythonContext;
         [ThreadStatic]
+        private static SourceUnit? _sourceUnit;
+        [ThreadStatic]
+        private static string? _compileModuleName;
+        [ThreadStatic]
         private static bool _allowLazyImportsInExec;
         [ThreadStatic]
         private static HashSet<string>? _compatibilityLazyModules;
@@ -74,6 +78,8 @@ namespace IronPython.Compiler.PublicAst {
             bool returnValue) {
             if (module == null) throw new ArgumentNullException(nameof(module));
             if (context == null) throw new ArgumentNullException(nameof(context));
+            _sourceUnit = context.SourceUnit;
+            _compileModuleName = ((PythonCompilerOptions)context.Options).ModuleName;
 
             if (module.Body.OfType<AstNodes.ImportFrom>().Any(importFrom =>
                     string.Equals(importFrom.Module, "__future__", StringComparison.Ordinal)
@@ -2203,6 +2209,7 @@ namespace IronPython.Compiler.PublicAst {
             System.Collections.Generic.IReadOnlyList<AstNodes.TypeParamBase> typeParameters,
             bool isAsync,
             AstNodes.PythonAstNode source) {
+            ValidateUniqueParameters(arguments, source);
             string loweredName = MangleIdentifier(name);
             string? previousFunctionQualname = _functionQualname;
             string[] rawTypeParameterNames = typeParameters
@@ -2326,6 +2333,44 @@ namespace IronPython.Compiler.PublicAst {
                 function.EnclosingTypeParameters = _classDefinition.TypeParameters;
             }
             return function;
+        }
+
+        private static void ValidateUniqueParameters(
+            AstNodes.Arguments arguments,
+            AstNodes.PythonAstNode source) {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            IEnumerable<string> parameterNames = arguments.Posonlyargs
+                .Concat(arguments.Args)
+                .Concat(arguments.Kwonlyargs)
+                .Select(parameter => parameter.ArgName);
+            if (arguments.Vararg is not null) {
+                parameterNames = parameterNames.Append(arguments.Vararg.ArgName);
+            }
+            if (arguments.Kwarg is not null) {
+                parameterNames = parameterNames.Append(arguments.Kwarg.ArgName);
+            }
+            foreach (string parameterName in parameterNames) {
+                if (names.Add(parameterName)) {
+                    continue;
+                }
+                if (_sourceUnit is null) {
+                    throw PythonOps.TypeError(
+                        "duplicate parameter '{0}' in function definition",
+                        parameterName);
+                }
+                int offset = GetStartOffset(source);
+                var location = new SourceLocation(
+                    offset,
+                    source.LineNumber ?? 1,
+                    (source.ColumnOffset ?? 0) + 1);
+                throw PythonOps.SyntaxError(
+                    string.Format(
+                        "duplicate parameter '{0}' in function definition",
+                        parameterName),
+                    _sourceUnit,
+                    new SourceSpan(location, location),
+                    ErrorCodes.SyntaxError);
+            }
         }
 
         private static CompilerAst.Parameter[] LowerParameters(
@@ -2834,9 +2879,15 @@ namespace IronPython.Compiler.PublicAst {
             CompilerAst.Expression result = LowerComparisonOperand(
                 comparison.Comparators[comparison.Comparators.Count - 1]);
             for (int i = comparison.Ops.Count - 1; i >= 0; i--) {
-                CompilerAst.Expression left = i == 0
-                    ? LowerComparisonOperand(comparison.Left)
-                    : LowerComparisonOperand(comparison.Comparators[i - 1]);
+                AstNodes.ExprBase leftNode = i == 0
+                    ? comparison.Left
+                    : comparison.Comparators[i - 1];
+                WarnOnIdentityLiteral(
+                    comparison.Ops[i],
+                    leftNode,
+                    comparison.Comparators[i]);
+                CompilerAst.Expression left =
+                    LowerComparisonOperand(leftNode);
                 result = new CompilerAst.BinaryExpression(
                     LowerCompareOperator(comparison.Ops[i]),
                     left,
@@ -2844,6 +2895,56 @@ namespace IronPython.Compiler.PublicAst {
             }
             return result;
         }
+
+        private static void WarnOnIdentityLiteral(
+            AstNodes.CompareOpKind operation,
+            AstNodes.ExprBase left,
+            AstNodes.ExprBase right) {
+            if (_pythonContext is null
+                || operation is not (AstNodes.Is or AstNodes.IsNot)) {
+                return;
+            }
+            string? literalType = GetLiteralType(left)
+                ?? GetLiteralType(right);
+            if (literalType is null) {
+                return;
+            }
+            if (_sourceUnit is null) {
+                return;
+            }
+            int offset = GetStartOffset(left);
+            var location = new SourceLocation(
+                offset,
+                left.LineNumber ?? 1,
+                (left.ColumnOffset ?? 0) + 1);
+            string message = string.Format(
+                "\"{0}\" with '{1}' literal. Did you mean \"==\"?",
+                operation is AstNodes.Is ? "is" : "is not",
+                literalType);
+            PythonOps.SyntaxWarning(
+                message,
+                _sourceUnit,
+                new SourceSpan(location, location),
+                0,
+                _compileModuleName);
+        }
+
+        private static string? GetLiteralType(AstNodes.ExprBase expression)
+            => expression switch {
+                AstNodes.Constant { Value: string } => "str",
+                AstNodes.Constant { Value: byte[] } => "bytes",
+                AstNodes.Constant { Value: bool } => null,
+                AstNodes.Constant { Value: null } => null,
+                AstNodes.Constant { Value: System.Numerics.BigInteger } => "int",
+                AstNodes.Constant { Value: int } => "int",
+                AstNodes.Constant { Value: double } => "float",
+                AstNodes.Constant { Value: System.Numerics.Complex } => "complex",
+                AstNodes.List => "list",
+                AstNodes.Tuple => "tuple",
+                AstNodes.Set => "set",
+                AstNodes.Dict => "dict",
+                _ => null
+            };
 
         private static CompilerAst.Expression LowerComparisonOperand(
             AstNodes.ExprBase expression) {

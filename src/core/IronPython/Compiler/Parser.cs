@@ -8,6 +8,7 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -30,6 +31,8 @@ namespace IronPython.Compiler {
     public class Parser : IDisposable {
         private static readonly char[] _newLineChars = ['\n'];
         private static readonly char[] _whiteSpace = [' ', '\t'];
+        private static readonly ConditionalWeakTable<SourceUnit, HashSet<string>>
+            _reportedSyntaxWarnings = new();
 
         private ErrorSink _errors;
         private ParserSink _sink;
@@ -38,13 +41,15 @@ namespace IronPython.Compiler {
         private SourceCodeReader _sourceReader;
         private int _errorCode;
         private readonly CompilerContext _context;
+        private readonly string _moduleName;
 
         private Parser(
             CompilerContext context,
             SourceCodeReader reader,
             ErrorSink errorSink,
             ParserSink parserSink,
-            ModuleOptions languageFeatures) {
+            ModuleOptions languageFeatures,
+            string moduleName) {
             ContractUtils.RequiresNotNull(reader, nameof(reader));
             ContractUtils.RequiresNotNull(errorSink, nameof(errorSink));
             ContractUtils.RequiresNotNull(parserSink, nameof(parserSink));
@@ -53,6 +58,7 @@ namespace IronPython.Compiler {
             _sourceReader = reader;
             _errors = errorSink;
             ParserSink = parserSink;
+            _moduleName = moduleName;
             Reset(context.SourceUnit, languageFeatures);
         }
 
@@ -84,7 +90,8 @@ namespace IronPython.Compiler {
                 reader,
                 context.Errors,
                 context.ParserSink,
-                compilerOptions.Module);
+                compilerOptions.Module,
+                compilerOptions.ModuleName);
         }
 
         public PythonAst ParseFile(bool makeModule)
@@ -96,10 +103,16 @@ namespace IronPython.Compiler {
                 PegParser parser = CreateGeneratedParser(
                     source,
                     out PythonTokenizer tokenizer);
+                ReportStringEscapeWarnings(source);
                 PegParseResult result =
                     parser.Parse(PythonGeneratedParser.ModuleStartRule);
                 if (!result.Success
                     || result.Value is not IronPython.Compiler.Syntax.Ast.Module module) {
+                    if (CanTreatAsIncomplete(source, tokenizer)) {
+                        _sourceUnit.CodeProperties =
+                            ScriptCodeParseResult.IncompleteStatement;
+                        return null;
+                    }
                     throw CreateGeneratedParseError(
                         parser,
                         tokenizer,
@@ -237,53 +250,223 @@ namespace IronPython.Compiler {
                         match.Index,
                         line,
                         column);
-                    PythonOps.SyntaxWarning(
+                    ReportSyntaxWarningOnce(
+                        match.Index,
                         "invalid decimal literal",
-                        _sourceUnit,
-                        new SourceSpan(location, location),
-                        0);
+                        location);
                     return " " + match.Value;
                 });
         }
 
         private void ReportStringEscapeWarnings(string source) {
-            foreach (Match match in Regex.Matches(
-                source,
-                @"\\([A-Za-z]|[0-7]{3})")) {
-                string escape = match.Groups[1].Value;
-                if (escape.Length == 1
-                    && escape[0] is 'a' or 'b' or 'f' or 'n'
-                        or 'r' or 't' or 'v' or 'x' or 'N') {
-                    continue;
+            var interpolatedRaw = new Stack<bool>();
+            foreach (PythonToken token in new PythonTokenizer(source).Tokenize()) {
+                switch (token.Kind) {
+                    case PythonTokenKind.FStringStart:
+                    case PythonTokenKind.TStringStart:
+                        interpolatedRaw.Push(
+                            HasRawPrefix(token.SourceText));
+                        break;
+                    case PythonTokenKind.FStringMiddle:
+                    case PythonTokenKind.TStringMiddle:
+                        if (interpolatedRaw.Count == 0
+                            || !interpolatedRaw.Peek()) {
+                            ReportInvalidEscapes(
+                                source,
+                                token.SourceText,
+                                token.StartOffset);
+                        }
+                        break;
+                    case PythonTokenKind.FStringEnd:
+                    case PythonTokenKind.TStringEnd:
+                        if (interpolatedRaw.Count != 0) {
+                            interpolatedRaw.Pop();
+                        }
+                        break;
+                    case PythonTokenKind.String:
+                        if (!HasRawPrefix(token.SourceText)) {
+                            ReportInvalidEscapes(
+                                source,
+                                StringContent(token.SourceText),
+                                token.StartOffset + ContentOffset(token.SourceText));
+                        }
+                        break;
                 }
-                if (escape.Length == 3
-                    && Convert.ToInt32(escape, 8) <= 0xFF) {
-                    continue;
-                }
-
-                int line = 1;
-                int column = 1;
-                for (int i = 0; i < match.Index; i++) {
-                    if (source[i] == '\n') {
-                        line++;
-                        column = 1;
-                    } else {
-                        column++;
-                    }
-                }
-                var location = new SourceLocation(
-                    match.Index,
-                    line,
-                    column);
-                PythonOps.SyntaxWarning(
-                    "invalid escape sequence",
-                    _sourceUnit,
-                    new SourceSpan(location, location),
-                    0);
             }
         }
 
+        private void ReportInvalidEscapes(
+            string source,
+            string text,
+            int sourceOffset) {
+            for (int i = 0; i + 1 < text.Length; i++) {
+                if (text[i] != '\\') continue;
+
+                char escape = text[++i];
+                if (escape is '\\' or '\'' or '"' or '\n' or '\r'
+                    or 'a' or 'b' or 'f' or 'n' or 'r' or 't' or 'v') {
+                    continue;
+                }
+                if (escape == 'x'
+                    && i + 2 < text.Length
+                    && IsHex(text[i + 1])
+                    && IsHex(text[i + 2])) {
+                    i += 2;
+                    continue;
+                }
+                if (escape == 'u'
+                    && HasHexDigits(text, i + 1, 4)) {
+                    i += 4;
+                    continue;
+                }
+                if (escape == 'U'
+                    && HasHexDigits(text, i + 1, 8)) {
+                    i += 8;
+                    continue;
+                }
+                if (escape == 'N'
+                    && i + 1 < text.Length
+                    && text[i + 1] == '{'
+                    && text.IndexOf('}', i + 2) >= 0) {
+                    i = text.IndexOf('}', i + 2);
+                    continue;
+                }
+                if (escape is >= '0' and <= '7') {
+                    int end = i + 1;
+                    while (end < text.Length
+                        && end < i + 3
+                        && text[end] is >= '0' and <= '7') {
+                        end++;
+                    }
+                    if (Convert.ToInt32(
+                            text.Substring(i, end - i),
+                            8) <= 0xFF) {
+                        i = end - 1;
+                        continue;
+                    }
+                    ReportInvalidEscape(
+                        source,
+                        sourceOffset + i - 1,
+                        text.Substring(i - 1, end + 1 - i),
+                        "octal");
+                    continue;
+                }
+
+                ReportInvalidEscape(
+                    source,
+                    sourceOffset + i - 1,
+                    text.Substring(i - 1, 2),
+                    "escape");
+            }
+        }
+
+        private void ReportInvalidEscape(
+            string source,
+            int offset,
+            string sequence,
+            string kind) {
+            (int line, int column) = GetLineColumn(source, offset);
+            var location = new SourceLocation(offset, line, column);
+            string quoted = "\"" + sequence + "\"";
+            string raw = "\"" + sequence.Replace(
+                "\\",
+                "\\\\",
+                StringComparison.Ordinal) + "\"";
+            string message =
+                $"{quoted} is an invalid {kind} sequence. " +
+                "Such sequences will not work in the future. " +
+                $"Did you mean {raw}? A raw string is also an option.";
+            ReportSyntaxWarningOnce(offset, message, location);
+        }
+
+        private void ReportSyntaxWarningOnce(
+            int offset,
+            string message,
+            SourceLocation location) {
+            HashSet<string> reported = _reportedSyntaxWarnings.GetOrCreateValue(
+                _sourceUnit);
+            lock (reported) {
+                if (!reported.Add($"{offset}:{message}")) {
+                    return;
+                }
+            }
+            PythonOps.SyntaxWarning(
+                message,
+                _sourceUnit,
+                new SourceSpan(location, location),
+                0,
+                _moduleName);
+        }
+
+        private static bool HasRawPrefix(string literal) {
+            int quote = literal.IndexOfAny(['\'', '"']);
+            return quote > 0
+                && literal.AsSpan(0, quote).IndexOfAny('r', 'R') >= 0;
+        }
+
+        private static int ContentOffset(string literal) {
+            int quote = literal.IndexOfAny(['\'', '"']);
+            if (quote < 0) return 0;
+            int quoteLength = quote + 2 < literal.Length
+                && literal[quote + 1] == literal[quote]
+                && literal[quote + 2] == literal[quote]
+                    ? 3
+                    : 1;
+            return quote + quoteLength;
+        }
+
+        private static string StringContent(string literal) {
+            int offset = ContentOffset(literal);
+            int quote = literal.IndexOfAny(['\'', '"']);
+            int quoteLength = quote >= 0
+                && quote + 2 < literal.Length
+                && literal[quote + 1] == literal[quote]
+                && literal[quote + 2] == literal[quote]
+                    ? 3
+                    : 1;
+            int end = literal.Length - quoteLength;
+            return end <= offset ? string.Empty : literal[offset..end];
+        }
+
+        private static bool HasHexDigits(
+            string text,
+            int start,
+            int count) {
+            if (start + count > text.Length) return false;
+            for (int i = start; i < start + count; i++) {
+                if (!IsHex(text[i])) return false;
+            }
+            return true;
+        }
+
+        private static bool IsHex(char value)
+            => value is >= '0' and <= '9'
+                or >= 'a' and <= 'f'
+                or >= 'A' and <= 'F';
+
+        private static (int Line, int Column) GetLineColumn(
+            string source,
+            int offset) {
+            int line = 1;
+            int column = 1;
+            int end = Math.Min(offset, source.Length);
+            for (int i = 0; i < end; i++) {
+                if (source[i] == '\n') {
+                    line++;
+                    column = 1;
+                } else {
+                    column++;
+                }
+            }
+            return (line, column);
+        }
+
         public PythonAst ParseInteractiveCode(
+            out ScriptCodeParseResult properties) {
+            return ParseInteractiveCodeImpl(out properties);
+        }
+
+        private PythonAst ParseInteractiveCodeImpl(
             out ScriptCodeParseResult properties) {
             properties = ScriptCodeParseResult.Complete;
             string source = _sourceReader.ReadToEnd();
@@ -293,6 +476,7 @@ namespace IronPython.Compiler {
             PegParser parser = CreateGeneratedParser(
                 source,
                 out PythonTokenizer tokenizer);
+            ReportStringEscapeWarnings(source);
             PegParseResult result =
                 parser.Parse(PythonGeneratedParser.InteractiveStartRule);
             if (!result.Success
@@ -339,6 +523,21 @@ namespace IronPython.Compiler {
                 printExpressions: true);
         }
 
+        private bool CanTreatAsIncomplete(
+            string source,
+            PythonTokenizer tokenizer) {
+            if (_context.Options is not PythonCompilerOptions
+                {
+                    AllowIncompleteInput: true
+                }) {
+                return false;
+            }
+            string trimmed = source.TrimEnd();
+            return tokenizer.NeedsMoreInput
+                || (StartsCompoundStatement(trimmed)
+                    && trimmed.EndsWith(':'));
+        }
+
         private static bool StartsCompoundStatement(string source) {
             string text = source.TrimStart();
             return text.StartsWith('@')
@@ -351,16 +550,26 @@ namespace IronPython.Compiler {
         }
 
         public PythonAst ParseSingleStatement() {
+            return ParseSingleStatementImpl();
+        }
+
+        private PythonAst ParseSingleStatementImpl() {
             try {
                 string source = EnsureTrailingNewLine(
                     _sourceReader.ReadToEnd());
                 PegParser parser = CreateGeneratedParser(
                     source,
                     out PythonTokenizer tokenizer);
+                ReportStringEscapeWarnings(source);
                 PegParseResult result =
                     parser.Parse(PythonGeneratedParser.ModuleStartRule);
                 if (!result.Success
                     || result.Value is not IronPython.Compiler.Syntax.Ast.Module module) {
+                    if (CanTreatAsIncomplete(source, tokenizer)) {
+                        _sourceUnit.CodeProperties =
+                            ScriptCodeParseResult.IncompleteStatement;
+                        return null;
+                    }
                     throw CreateGeneratedParseError(
                         parser,
                         tokenizer,
@@ -385,6 +594,7 @@ namespace IronPython.Compiler {
                 PegParser parser = CreateGeneratedParser(
                     source,
                     out PythonTokenizer tokenizer);
+                ReportStringEscapeWarnings(source);
                 PegParseResult result =
                     parser.Parse(PythonGeneratedParser.EvalStartRule);
                 if (!result.Success

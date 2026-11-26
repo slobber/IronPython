@@ -727,6 +727,8 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             int iflags = flags != null ? ConvertCompileFlags(flags) : 0;
             bool typeComments =
                 (iflags & _ast.PyCF_TYPE_COMMENTS) != 0;
+            bool allowIncompleteInput =
+                (iflags & _ast.PyCF_ALLOW_INCOMPLETE_INPUT) != 0;
             if ((iflags & _ast.PyCF_ONLY_AST) != 0) {
                 astOnly = true;
                 iflags &= ~_ast.PyCF_ONLY_AST;
@@ -735,12 +737,14 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 _ast.PyCF_IGNORE_COOKIE
                 | _ast.PyCF_TYPE_COMMENTS
                 | _ast.PyCF_ALLOW_TOP_LEVEL_AWAIT
+                | _ast.PyCF_ALLOW_INCOMPLETE_INPUT
                 | _ast.PyCF_OPTIMIZED_AST);
 
             bool inheritContext = GetCompilerInheritance(dont_inherit);
             CompileFlags cflags = GetCompilerFlags(iflags);
             PythonCompilerOptions opts = GetRuntimeGeneratedCodeCompilerOptions(context, inheritContext, cflags);
             opts.ModuleName = GetCompileModuleName(module);
+            opts.AllowIncompleteInput = allowIncompleteInput;
             if ((cflags & CompileFlags.CO_DONT_IMPLY_DEDENT) != 0) {
                 opts.DontImplyDedent = true;
             }

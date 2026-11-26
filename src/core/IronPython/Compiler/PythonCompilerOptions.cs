@@ -17,6 +17,7 @@ namespace IronPython.Compiler {
         private int[] _initialIndentation;
         private CompilationMode _compilationMode;
         private bool _allowLazyImportsInExec = true;
+        private bool _allowIncompleteInput;
 
         /// <summary>
         /// Creates a new PythonCompilerOptions with the default language features enabled.
@@ -35,6 +36,11 @@ namespace IronPython.Compiler {
         public bool DontImplyDedent {
             get { return _dontImplyIndent; }
             set { _dontImplyIndent = value; }
+        }
+
+        public bool AllowIncompleteInput {
+            get { return _allowIncompleteInput; }
+            set { _allowIncompleteInput = value; }
         }
 
         /// <summary>

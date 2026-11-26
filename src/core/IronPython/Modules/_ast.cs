@@ -41,7 +41,8 @@ namespace IronPython.Modules {
         public const int PyCF_IGNORE_COOKIE = 0x800;
         public const int PyCF_TYPE_COMMENTS = 0x1000;
         public const int PyCF_ALLOW_TOP_LEVEL_AWAIT = 0x2000;
-        public const int PyCF_OPTIMIZED_AST = 0x4000;
+        public const int PyCF_ALLOW_INCOMPLETE_INPUT = 0x4000;
+        public const int PyCF_OPTIMIZED_AST = 0x8400;
         public const int PyCF_ONLY_AST = 0x400;
 
         static _ast() {
@@ -3154,7 +3155,10 @@ namespace IronPython.Modules {
             private static bool IsOptionalType(object fieldType) {
                 if (fieldType is null) return false;
                 if (fieldType is UnionType union) {
-                    return union.__args__.Any(member => member is null);
+                    return union.__args__.Any(
+                        member => member is null
+                            || member is PythonType memberType
+                                && memberType.Name == "NoneType");
                 }
                 string typeName = fieldType.ToString() ?? string.Empty;
                 return typeName.Contains("None", StringComparison.Ordinal);

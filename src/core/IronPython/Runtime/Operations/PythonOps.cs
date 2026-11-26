@@ -5558,10 +5558,51 @@ namespace IronPython.Runtime.Operations {
         public static Exception SystemExit() => new SystemExitException();
 
         public static void SyntaxWarning(string message, SourceUnit sourceUnit, SourceSpan span, int errorCode) {
+            SyntaxWarning(message, sourceUnit, span, errorCode, null);
+        }
+
+        public static void SyntaxWarning(
+            string message,
+            SourceUnit sourceUnit,
+            SourceSpan span,
+            int errorCode,
+            string? moduleName) {
             PythonContext pc = (PythonContext)sourceUnit.LanguageContext;
             CodeContext context = pc.SharedContext;
 
-            ShowWarning(context, PythonExceptions.SyntaxWarning, message, sourceUnit.Path, span.Start.Line);
+            object? warnings = pc.GetWarningsModule();
+            string filename = sourceUnit.Path ?? "<unknown>";
+            if (warnings is not null
+                && TryGetBoundAttr(
+                    context,
+                    warnings,
+                    "warn_explicit",
+                    out object? warnExplicit)
+                && warnExplicit is not null) {
+                try {
+                    PythonCalls.Call(
+                        context,
+                        warnExplicit,
+                        message,
+                        PythonExceptions.SyntaxWarning,
+                        filename,
+                        span.Start.Line,
+                        moduleName);
+                } catch (SyntaxWarningException warning) {
+                    throw SyntaxError(
+                        warning.Message,
+                        sourceUnit,
+                        span,
+                        errorCode);
+                }
+            } else {
+                ShowWarning(
+                    context,
+                    PythonExceptions.SyntaxWarning,
+                    message,
+                    filename,
+                    span.Start.Line);
+            }
         }
 
         internal static Exception SyntaxError(string message) => new SyntaxErrorException(message);

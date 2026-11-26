@@ -25,7 +25,7 @@ namespace IronPythonTest.Util {
             sectionName = string.IsNullOrEmpty(sectionName) ? "DEFAULT" : sectionName;
 
             string value;
-            while ((sectionName = GetParentSection(sectionName, out Section section)) != null) {
+            foreach (Section section in GetSections(sectionName)) {
                 if (section.TryGetValue(key, out value)) {
                     return value;
                 }
@@ -34,10 +34,16 @@ namespace IronPythonTest.Util {
             return options["DEFAULT"].TryGetValue(key, out value) ? value : @default;
         }
 
-        private string GetParentSection(string sectionName, out Section section) {
-            var idx = sectionName.LastIndexOf('.');
-            var newSectionName = idx == -1 ? null : sectionName.Substring(0, idx);
-            return options.TryGetValue(sectionName, out section) || newSectionName == null ? newSectionName : GetParentSection(newSectionName, out section);
+        private IEnumerable<Section> GetSections(string sectionName) {
+            while (!string.IsNullOrEmpty(sectionName)) {
+                if (options.TryGetValue(sectionName, out Section section)) {
+                    yield return section;
+                }
+                int index = sectionName.LastIndexOf('.');
+                sectionName = index == -1
+                    ? string.Empty
+                    : sectionName.Substring(0, index);
+            }
         }
 
         public bool GetBool(string sectionName, string key) {

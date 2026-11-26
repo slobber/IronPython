@@ -715,7 +715,29 @@ namespace IronPython.Runtime {
                 throw new SyntaxErrorException("unexpected EOF while parsing",
                     sourceUnit, new SourceSpan(new SourceLocation(0, 1, 1), new SourceLocation(0, 1, 1)), 0, Severity.Error);
             }
-            return ((RunnableScriptCode)code).GetFunctionCode(register);
+            if (code is null) {
+                string message = sourceUnit.CodeProperties
+                    == ScriptCodeParseResult.IncompleteStatement
+                        ? "incomplete input"
+                        : "invalid syntax";
+                throw new SyntaxErrorException(
+                    message,
+                    sourceUnit,
+                    new SourceSpan(
+                        new SourceLocation(0, 1, 1),
+                        new SourceLocation(0, 1, 1)),
+                    ErrorCodes.SyntaxError,
+                    Severity.Error);
+            }
+            FunctionCode functionCode =
+                ((RunnableScriptCode)code).GetFunctionCode(register);
+            if (options.FutureAnnotations) {
+                functionCode._flagsOverride =
+                    (FunctionAttributes)(
+                        (int)functionCode.Flags
+                        | (int)CompileFlags.CO_FUTURE_ANNOTATIONS);
+            }
+            return functionCode;
         }
 
         #endregion
@@ -736,12 +758,42 @@ namespace IronPython.Runtime {
 
         public override bool Equals(object obj) {
             // overridden because CPython defines this on code objects
-            return base.Equals(obj);
+            if (obj is not FunctionCode other) return false;
+            if (ReferenceEquals(this, other)) return true;
+            return Equals(co_code, other.co_code)
+                && Equals(co_consts, other.co_consts)
+                && Equals(co_names, other.co_names)
+                && Equals(co_varnames, other.co_varnames)
+                && Equals(co_freevars, other.co_freevars)
+                && Equals(co_cellvars, other.co_cellvars)
+                && string.Equals(co_filename, other.co_filename, StringComparison.Ordinal)
+                && string.Equals(co_name, other.co_name, StringComparison.Ordinal)
+                && string.Equals(co_qualname, other.co_qualname, StringComparison.Ordinal)
+                && co_firstlineno == other.co_firstlineno
+                && co_argcount == other.co_argcount
+                && co_posonlyargcount == other.co_posonlyargcount
+                && co_kwonlyargcount == other.co_kwonlyargcount
+                && co_flags == other.co_flags;
         }
 
         public override int GetHashCode() {
             // overridden because CPython defines this on code objects
-            return base.GetHashCode();
+            var hash = new HashCode();
+            hash.Add(co_code);
+            hash.Add(co_consts);
+            hash.Add(co_names);
+            hash.Add(co_varnames);
+            hash.Add(co_freevars);
+            hash.Add(co_cellvars);
+            hash.Add(co_filename, StringComparer.Ordinal);
+            hash.Add(co_name, StringComparer.Ordinal);
+            hash.Add(co_qualname, StringComparer.Ordinal);
+            hash.Add(co_firstlineno);
+            hash.Add(co_argcount);
+            hash.Add(co_posonlyargcount);
+            hash.Add(co_kwonlyargcount);
+            hash.Add(co_flags);
+            return hash.ToHashCode();
         }
 
         [return: MaybeNotImplemented]
