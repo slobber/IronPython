@@ -246,7 +246,7 @@ namespace IronPythonTest.Cases {
                 arguments.Add($"-X:MaxRecursion {testcase.Options.MaxRecursion}");
             if (testcase.Options.Tracing)
                 arguments.Add("-X:Tracing");
-            string? configuredArguments = testcase.Options.Arguments;
+            string configuredArguments = testcase.Options.Arguments;
             if (configuredArguments is null && IsPackageTestCase(testcase.Path)) {
                 arguments.Add("-m");
                 arguments.Add(GetModuleName(testcase.Path));
@@ -267,7 +267,7 @@ namespace IronPythonTest.Cases {
                         proc.StartInfo.EnvironmentVariables[variable] = value;
                     }
                 }
-                string? dotnetHost = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+                string dotnetHost = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
                 if (string.IsNullOrEmpty(dotnetHost)
                     && string.Equals(
                         Path.GetFileNameWithoutExtension(Environment.ProcessPath),
@@ -322,8 +322,8 @@ namespace IronPythonTest.Cases {
             }
         }
 
-        private static string? FindOnPath(string executable) {
-            string? path = Environment.GetEnvironmentVariable("PATH");
+        private static string FindOnPath(string executable) {
+            string path = Environment.GetEnvironmentVariable("PATH");
             if (string.IsNullOrEmpty(path)) return null;
 
             foreach (string directory in path.Split(Path.PathSeparator)) {
@@ -342,7 +342,7 @@ namespace IronPythonTest.Cases {
             string root = string.IsNullOrEmpty(IRONPYTHONPATH)
                 ? GetStdLibPath()
                 : IRONPYTHONPATH;
-            string? directory = Path.GetDirectoryName(path);
+            string directory = Path.GetDirectoryName(path);
             while (!string.IsNullOrEmpty(directory)
                    && directory.StartsWith(root, StringComparison.Ordinal)) {
                 if (File.Exists(Path.Combine(directory, "__init__.py"))) {
