@@ -369,6 +369,17 @@
       "tests": [
         "test.test_ast.test_ast.AST_Tests.test_node_garbage_collection"
       ]
+    },
+    {
+      "id": "private-interpreter-engine-lifecycle",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#16.10",
+      "reason": "This private _interpreters suite asserts CPython engine-global state, raw cross-interpreter object sharing, reference counts, and thread-level interpreter lifecycle. IronPython runs isolated DLR contexts and cannot share CPython interpreter objects; the public concurrent.interpreters API is covered by the separate test_interpreters package.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test__interpreters.*"
+      ]
     }
   ]
 }
