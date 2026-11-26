@@ -226,6 +226,16 @@ namespace IronPython.Modules {
             return _values.TryGetValue(key, out object? value) ? value : @default;
         }
 
+        public IEnumerable<ContextVar> keys() => _values.Keys;
+
+        public IEnumerable<object?> values() => _values.Values;
+
+        public IEnumerable<PythonTuple> items() {
+            foreach (KeyValuePair<ContextVar, object?> item in _values) {
+                yield return PythonTuple.MakeTuple(item.Key, item.Value);
+            }
+        }
+
         public object? run(
             CodeContext context,
             [NotNone] object callable,

@@ -95,12 +95,14 @@ namespace IronPython.Runtime.Exceptions {
         private bool _traceLines = true;
         private bool _traceOpcodes;
         private PythonGenerator _generator;
+        private AsyncFrameState _asyncState;
 
         internal TraceBackFrame(CodeContext/*!*/ context, PythonDictionary globals, object locals, FunctionCode code) {
             _globals = globals;
             _locals = locals;
             _code = code;
             _context = context;
+            _asyncState = AsyncFrameState.TryGet(locals);
             PythonGenerator current = PythonGenerator.Current;
             if (current is not null && current.gi_code == code) {
                 _generator = current;
@@ -113,10 +115,19 @@ namespace IronPython.Runtime.Exceptions {
             _code = code;
             _context = context;
             _back = back;
+            _asyncState = AsyncFrameState.TryGet(locals);
             PythonGenerator current = PythonGenerator.Current;
             if (current is not null && current.gi_code == code) {
                 _generator = current;
             }
+        }
+
+        internal TraceBackFrame(CodeContext/*!*/ context, PythonDictionary globals, object locals, FunctionCode code, AsyncFrameState asyncState) {
+            _globals = globals;
+            _locals = locals;
+            _code = code;
+            _context = context;
+            _asyncState = asyncState;
         }
 
         internal TraceBackFrame(PythonTracebackListener traceAdapter, FunctionCode code, TraceBackFrame back, PythonDebuggingPayload debugProperties, Func<IDictionary<object, object>> scopeCallback, bool pushedByCaller) {
@@ -166,6 +177,10 @@ namespace IronPython.Runtime.Exceptions {
             if (IsExecuting()) {
                 throw PythonOps.RuntimeError(
                     "cannot clear an executing frame");
+            }
+            if (_asyncState?.IsActive == true) {
+                throw PythonOps.RuntimeError(
+                    "cannot clear a suspended frame");
             }
             if (_generator is not null && !_generator.IsFinished) {
                 throw PythonOps.RuntimeError(
@@ -478,6 +493,22 @@ namespace IronPython.Runtime.Exceptions {
                 }
             }
             return PythonOps.ValueError("can't jump into 'for loop'");
+        }
+    }
+
+    internal sealed class AsyncFrameState {
+        private static readonly ConditionalWeakTable<object, AsyncFrameState> s_states = new();
+
+        internal bool IsActive { get; set; }
+
+        internal static void Register(object locals, AsyncFrameState state) {
+            s_states.AddOrUpdate(locals, state);
+        }
+
+        internal static AsyncFrameState TryGet(object locals) {
+            return locals is not null && s_states.TryGetValue(locals, out AsyncFrameState state)
+                ? state
+                : null;
         }
     }
 

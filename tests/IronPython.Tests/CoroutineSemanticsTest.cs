@@ -288,6 +288,36 @@ asyncio.run(main())
         }
 
         [Test]
+        public void TracebackClearDoesNotClearSuspendedAsyncLocals() {
+            var options = new Dictionary<string, object> {
+                ["NoSite"] = true
+            };
+            ScriptEngine engine = Python.CreateEngine(options);
+            ScriptScope scope = engine.CreateScope();
+            engine.Execute(@"
+import asyncio
+import unittest
+
+class AwaitFailureTest(unittest.IsolatedAsyncioTestCase):
+    async def test_await_failure(self):
+        async def runner():
+            await asyncio.sleep(0)
+            raise ValueError('expected')
+
+        with self.assertRaises(ValueError) as caught:
+            await asyncio.create_task(runner())
+
+        result = (repr(self).startswith('<'), str(caught.exception))
+        self.assertEqual(result, (True, 'expected'))
+
+case = AwaitFailureTest('test_await_failure')
+case_result = asyncio.run(case.test_await_failure())
+", scope);
+
+            Assert.That(scope.GetVariable<object>("case_result"), Is.Null);
+        }
+
+        [Test]
         public void AwaitInFinallyResumesBeforePropagatingHandledException() {
             var options = new Dictionary<string, object> {
                 ["NoSite"] = true

@@ -247,12 +247,7 @@ namespace IronPythonTest.Cases {
             if (testcase.Options.Tracing)
                 arguments.Add("-X:Tracing");
             string configuredArguments = testcase.Options.Arguments;
-            if (configuredArguments is null
-                && testcase.Name.StartsWith("CPython.", StringComparison.Ordinal)) {
-                arguments.Add("-m");
-                arguments.Add("unittest");
-                arguments.Add(GetModuleName(testcase.Path));
-            } else if (configuredArguments is null && IsPackageTestCase(testcase.Path)) {
+            if (configuredArguments is null && IsPackageTestCase(testcase.Path)) {
                 arguments.Add("-m");
                 arguments.Add(GetModuleName(testcase.Path));
             } else {

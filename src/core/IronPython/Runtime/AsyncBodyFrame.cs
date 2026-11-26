@@ -11,6 +11,7 @@ using System.Diagnostics;
 
 using Microsoft.Scripting.Runtime;
 
+using IronPython.Runtime.Exceptions;
 using IronPython.Runtime.Operations;
 
 namespace IronPython.Runtime {
@@ -34,6 +35,7 @@ namespace IronPython.Runtime {
 
         // Whether the entry is on the frame stack of the thread running the body.
         private bool _onStack;
+        private readonly AsyncFrameState _traceState = new();
 
         /// <summary>
         ///   Called by the body when it starts, to push its entry on the current thread's frame stack and hand the entry over.
@@ -45,22 +47,37 @@ namespace IronPython.Runtime {
         internal void PushFrame(CodeContext context, FunctionCode code) {
             Debug.Assert(_entry is null, "the body of an async function starts only once");
 
+            AsyncFrameState.Register(context.Dict, _traceState);
+
             // The entry never keeps a frame object, since the frame's f_back changes whenever the body resumes.
-            var entry = new FunctionStack(context, code);
+            var frame = new TraceBackFrame(
+                context,
+                context.GlobalDict,
+                context.Dict,
+                code,
+                _traceState);
+            var entry = new FunctionStack(frame);
             PythonOps.GetFunctionStack().Add(entry);
             _entry = entry;
             _onStack = true;
+            _traceState.IsActive = true;
         }
 
         void IObserver<AsyncBodyEvent>.OnNext(AsyncBodyEvent value) {
             switch (value.Kind) {
                 case AsyncBodyEventKind.Awaiting:
                 case AsyncBodyEventKind.Yielding:
-                case AsyncBodyEventKind.Returning:
+                    _traceState.IsActive = true;
                     RemoveEntry();
                     break;
 
+                case AsyncBodyEventKind.Returning:
+                    RemoveEntry();
+                    _traceState.IsActive = false;
+                    break;
+
                 case AsyncBodyEventKind.Resumed:
+                    _traceState.IsActive = true;
                     AddEntry();
                     break;
             }
@@ -68,10 +85,15 @@ namespace IronPython.Runtime {
 
         // The body has raised. Also called when the body fails before it starts, or when an interrupt pending at its end fails it,
         // and then the entry isn't on the stack.
-        void IObserver<AsyncBodyEvent>.OnError(Exception error) => RemoveEntry();
+        void IObserver<AsyncBodyEvent>.OnError(Exception error) {
+            RemoveEntry();
+            _traceState.IsActive = false;
+        }
 
         // Comes after Returning, or after Yielding when the consumer abandons an async generator: the entry has been removed already.
-        void IObserver<AsyncBodyEvent>.OnCompleted() { }
+        void IObserver<AsyncBodyEvent>.OnCompleted() {
+            _traceState.IsActive = false;
+        }
 
 
         private void AddEntry() {
