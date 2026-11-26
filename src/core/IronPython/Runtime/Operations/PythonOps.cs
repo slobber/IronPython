@@ -253,6 +253,21 @@ namespace IronPython.Runtime.Operations {
             }
         }
 
+        internal static void UnregisterEncoding(CodeContext/*!*/ context, object? search_function) {
+            if (!PythonOps.IsCallable(context, search_function))
+                throw PythonOps.TypeError("search_function must be callable");
+
+            List<object> searchFunctions = context.LanguageContext.SearchFunctions;
+            lock (searchFunctions) {
+                int index = searchFunctions.FindIndex(candidate =>
+                    ReferenceEquals(candidate, search_function));
+                if (index < 0) {
+                    throw PythonOps.ValueError("search function not registered");
+                }
+                searchFunctions.RemoveAt(index);
+            }
+        }
+
         internal static string GetPythonTypeName(object? obj) {
             // IronPython uses Int32 objects as "int" for performance reasons (GH #52)
             if (obj is int) return "int";

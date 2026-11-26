@@ -61,6 +61,9 @@ namespace IronPython.Modules {
         public static void register(CodeContext/*!*/ context, object? search_function)
             => PythonOps.RegisterEncoding(context, search_function);
 
+        public static void unregister(CodeContext context, object? search_function)
+            => PythonOps.UnregisterEncoding(context, search_function);
+
         public static void register_error(CodeContext/*!*/ context, [NotNone] string name, object? handler)
             => PythonOps.RegisterEncodingError(context, name, handler);
 

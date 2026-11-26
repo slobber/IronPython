@@ -1016,7 +1016,8 @@ namespace IronPython.Runtime {
             if (context.RecursionLimit != Int32.MaxValue) {
                 if (finalTarget is Func<CodeContext, CodeContext> ||
                     finalTarget is Func<FunctionCode, object> ||
-                    finalTarget is LookupCompilationDelegate) {
+                    finalTarget is LookupCompilationDelegate ||
+                    finalTarget.Method.ReturnType == typeof(CodeContext)) {
                     // no recursion enforcement on classes or modules
                     return finalTarget;
                 }
