@@ -1274,7 +1274,7 @@ namespace IronPython.Modules {
                         module,
                         sourceText);
                 }
-                NormalizeAstSpansRecursive(ast);
+                NormalizeAstSpansRecursive(ast, sourceText);
                 if (optimizeLevel > 0) {
                     OptimizeAst(ast, optimizeLevel);
                 }
@@ -1545,25 +1545,30 @@ namespace IronPython.Modules {
             }
         }
 
-        private static void NormalizeAstSpansRecursive(AST node) {
+        private static void NormalizeAstSpansRecursive(
+            AST node,
+            string source) {
             foreach (object field in node._fields) {
                 if (field is not string name
                     || !node.TryGetFieldValue(name, out object value)) {
                     continue;
                 }
                 if (value is AST child) {
-                    NormalizeAstSpansRecursive(child);
+                    NormalizeAstSpansRecursive(child, source);
                 } else if (value is IEnumerable values
                     && value is not string
                     && value is not byte[]) {
                     foreach (object item in values) {
                         if (item is AST itemNode) {
-                            NormalizeAstSpansRecursive(itemNode);
+                            NormalizeAstSpansRecursive(
+                                itemNode,
+                                source);
                         }
                     }
                 }
             }
             NormalizeAstSpan(node);
+            NormalizeAstSpanFromSource(node, source);
             if (node is Constant constant
                 && constant._isParsedAst
                 && constant.value is PythonList bytes
@@ -1994,6 +1999,241 @@ namespace IronPython.Modules {
             }
         }
 
+        private static void NormalizeAstSpanFromSource(
+            AST node,
+            string source) {
+            if (string.IsNullOrEmpty(source)) {
+                return;
+            }
+            node.GetLocation(
+                out int? line,
+                out int? column,
+                out int? endLine,
+                out int? endColumn);
+            if (line is null
+                || column is null
+                || endLine is null
+                || endColumn is null) {
+                return;
+            }
+
+            int[] lineStarts = GetLineStarts(source);
+            if (line < 1
+                || endLine < 1
+                || line > lineStarts.Length
+                || endLine > lineStarts.Length) {
+                return;
+            }
+
+            int startOffset = OffsetOf(
+                source,
+                lineStarts,
+                line.Value,
+                column.Value);
+            int endOffset = OffsetOf(
+                source,
+                lineStarts,
+                endLine.Value,
+                endColumn.Value);
+
+            if (node is Call or Subscript or Attribute) {
+                string nodeText = source.Substring(
+                    startOffset,
+                    Math.Max(0, endOffset - startOffset));
+                if (nodeText.Contains(')')) {
+                    int cursor = startOffset - 1;
+                    int earliestParen = -1;
+                    while (cursor >= 0
+                        && (source[cursor] is '(' or ')'
+                            || char.IsWhiteSpace(source[cursor]))) {
+                        if (source[cursor] == '(') {
+                            earliestParen = cursor;
+                        }
+                        cursor--;
+                    }
+                    if (earliestParen >= 0) {
+                        GetLineColumn(
+                            lineStarts,
+                            earliestParen,
+                            out int newLine,
+                            out int newColumn);
+                        node.lineno = newLine;
+                        node.col_offset = newColumn;
+                        node.__dict__["lineno"] = newLine;
+                        node.__dict__["col_offset"] = newColumn;
+                        startOffset = earliestParen;
+                    }
+                }
+            }
+
+            if (node is BinOp or BoolOp or ImportFrom) {
+                bool wrappedInParentheses = false;
+                int prefix = startOffset - 1;
+                while (prefix >= 0
+                    && char.IsWhiteSpace(source[prefix])) {
+                    prefix--;
+                }
+                if (prefix >= 0 && source[prefix] == '(') {
+                    wrappedInParentheses = true;
+                }
+                int cursor = endOffset;
+                while (cursor < source.Length
+                    && char.IsWhiteSpace(source[cursor])) {
+                    cursor++;
+                }
+                int closeCount = 0;
+                int closeCursor = cursor;
+                while (closeCursor < source.Length
+                    && source[closeCursor] is ')' or ']') {
+                    closeCount++;
+                    closeCursor++;
+                }
+                if (!wrappedInParentheses
+                    && closeCount == 1
+                    || node is BoolOp
+                        && closeCount > 0
+                    || node is ImportFrom
+                        && closeCount > 0) {
+                        cursor++;
+                        GetLineColumn(
+                            lineStarts,
+                            cursor,
+                            out int newEndLine,
+                            out int newEndColumn);
+                        node.end_lineno = newEndLine;
+                        node.end_col_offset = newEndColumn;
+                        node.__dict__["end_lineno"] = newEndLine;
+                        node.__dict__["end_col_offset"] = newEndColumn;
+                        endOffset = cursor;
+                }
+            }
+
+            if (node is Subscript) {
+                int cursor = endOffset;
+                while (cursor < source.Length
+                    && char.IsWhiteSpace(source[cursor])) {
+                    cursor++;
+                }
+                if (cursor < source.Length
+                    && source[cursor] == ']') {
+                    cursor++;
+                    GetLineColumn(
+                        lineStarts,
+                        cursor,
+                        out int newEndLine,
+                        out int newEndColumn);
+                    node.end_lineno = newEndLine;
+                    node.end_col_offset = newEndColumn;
+                    node.__dict__["end_lineno"] = newEndLine;
+                    node.__dict__["end_col_offset"] = newEndColumn;
+                    endOffset = cursor;
+                }
+            }
+
+            if (node is Tuple tuple
+                && tuple.elts.Count != 0) {
+                if (startOffset < source.Length
+                    && source[startOffset] == '(') {
+                    int depth = 0;
+                    for (int i = startOffset; i < source.Length; i++) {
+                        if (source[i] == '(') {
+                            depth++;
+                        } else if (source[i] == ')') {
+                            depth--;
+                            if (depth == 0) {
+                                GetLineColumn(
+                                    lineStarts,
+                                    i + 1,
+                                    out int newEndLine,
+                                    out int newEndColumn);
+                                node.end_lineno = newEndLine;
+                                node.end_col_offset = newEndColumn;
+                                node.__dict__["end_lineno"] =
+                                    newEndLine;
+                                node.__dict__["end_col_offset"] =
+                                    newEndColumn;
+                                break;
+                            }
+                        }
+                    }
+                } else {
+                    if (tuple.elts[tuple.elts.Count - 1] is AST lastElement) {
+                        lastElement.GetLocation(
+                            out _,
+                            out _,
+                            out int? lastLine,
+                            out int? lastColumn);
+                        if (lastLine is not null
+                            && lastColumn is not null) {
+                            int cursor = OffsetOf(
+                                source,
+                                lineStarts,
+                                lastLine.Value,
+                                lastColumn.Value);
+                            int elementEnd = cursor;
+                            while (cursor < source.Length
+                                && source[cursor] is ' ' or '\t') {
+                                cursor++;
+                            }
+                            if (cursor < source.Length
+                                && source[cursor] == ',') {
+                                cursor++;
+                            } else {
+                                cursor = elementEnd;
+                            }
+                        GetLineColumn(
+                            lineStarts,
+                            cursor,
+                            out int newEndLine,
+                            out int newEndColumn);
+                        node.end_lineno = newEndLine;
+                        node.end_col_offset = newEndColumn;
+                        node.__dict__["end_lineno"] = newEndLine;
+                        node.__dict__["end_col_offset"] = newEndColumn;
+                        }
+                    }
+                }
+            }
+        }
+
+        private static int[] GetLineStarts(string source) {
+            var starts = new List<int> { 0 };
+            for (int i = 0; i < source.Length; i++) {
+                if (source[i] == '\r') {
+                    if (i + 1 < source.Length
+                        && source[i + 1] == '\n') {
+                        i++;
+                    }
+                    starts.Add(i + 1);
+                } else if (source[i] == '\n') {
+                    starts.Add(i + 1);
+                }
+            }
+            return starts.ToArray();
+        }
+
+        private static int OffsetOf(
+            string source,
+            int[] lineStarts,
+            int line,
+            int column) =>
+            Math.Min(
+                source.Length,
+                lineStarts[line - 1] + Math.Max(0, column));
+
+        private static void GetLineColumn(
+            int[] lineStarts,
+            int offset,
+            out int line,
+            out int column) {
+            int index = Array.BinarySearch(lineStarts, offset);
+            if (index < 0) {
+                index = ~index - 1;
+            }
+            line = index + 1;
+            column = offset - lineStarts[index];
+        }
+
         private static void SetNodeEnd(
             AST node,
             int length,
@@ -2091,7 +2331,11 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class AST : IPythonObject, IDynamicMetaObjectProvider {
-            private static readonly object DeletedField = new object();
+            private sealed class DeletedFieldValue : IDeletedValueMarker {
+            }
+
+            private static readonly object DeletedField =
+                new DeletedFieldValue();
 
             internal static readonly HashSet<string> SequenceFieldNames =
                 new HashSet<string>(StringComparer.Ordinal) {
@@ -2157,15 +2401,26 @@ namespace IronPython.Modules {
                 CodeContext context,
                 [ParamDictionary] IDictionary<object, object> changes) {
                 var values = new Dictionary<object, object>();
-                foreach (object field in _fields) {
+                PythonTuple fields = GetSchemaTuple(
+                    context,
+                    "_fields");
+                PythonTuple attributes = GetSchemaTuple(
+                    context,
+                    "_attributes");
+                foreach (object field in fields) {
                     if (field is string name
                         && TryGetFieldValue(name, out object value)) {
                         values[name] = value;
                     }
                 }
-                foreach (object attribute in _attributes) {
+                foreach (object attribute in attributes) {
                     if (attribute is string name
-                        && TryGetFieldValue(name, out object value)) {
+                        && (TryGetFieldValue(name, out object value)
+                            || PythonOps.TryGetBoundAttr(
+                                context,
+                                this,
+                                name,
+                                out value))) {
                         values[name] = value;
                     }
                 }
@@ -2180,8 +2435,8 @@ namespace IronPython.Modules {
                             "got an unexpected keyword argument {0}",
                             PythonOps.Repr(context, change.Key));
                     }
-                    if (!_fields.Contains(name)
-                        && !_attributes.Contains(name)) {
+                    if (!fields.Contains(name)
+                        && !attributes.Contains(name)) {
                         throw PythonOps.TypeError(
                             "{0}.__init__ got an unexpected keyword argument '{1}'",
                             GetDisplayTypeName(context),
@@ -2190,16 +2445,46 @@ namespace IronPython.Modules {
                     values[name] = change.Value;
                 }
 
+                foreach (object field in fields) {
+                    if (field is not string name
+                        || values.ContainsKey(name)
+                        || AST.SequenceFieldNames.Contains(name)
+                        || IsOptionalField(name)) {
+                        continue;
+                    }
+                    throw PythonOps.TypeError(
+                        "{0}.__init__ missing 1 required positional argument: '{1}'",
+                        GetDisplayTypeName(context),
+                        name);
+                }
                 var result = (AST)DynamicHelpers.GetPythonType(this)
                     .CreateInstance(context);
-                result.__init__(
-                    context,
-                    values,
-                    Array.Empty<object>());
                 foreach (KeyValuePair<object, object> value in values) {
-                    result.EnsureCustomAttributes()[value.Key] = value.Value;
+                    result.SetFieldValue(
+                        context,
+                        (string)value.Key,
+                        value.Value);
                 }
                 return result;
+            }
+
+            private PythonTuple GetSchemaTuple(
+                CodeContext context,
+                string name) {
+                PythonType type = DynamicHelpers.GetPythonType(this);
+                if (!type.IsSystemType
+                    && PythonOps.TryGetBoundAttr(
+                        context,
+                        type,
+                        name,
+                        out object value)
+                    && value is IEnumerable values) {
+                    return PythonTuple.MakeTuple(
+                        values.Cast<object>().ToArray());
+                }
+                return name == "_fields"
+                    ? _fields
+                    : _attributes;
             }
 
             public string __repr__(CodeContext context) {
@@ -2610,7 +2895,9 @@ namespace IronPython.Modules {
                 string name,
                 out object value) {
                 if (_customAttributes is not null
-                    && _customAttributes.TryGetValue(name, out value)) {
+                    && _customAttributes.TryGetValueNoMissing(
+                        name,
+                        out value)) {
                     if (IsDeletedField(value)) {
                         value = null;
                         return false;
@@ -2622,8 +2909,13 @@ namespace IronPython.Modules {
                     (System.Reflection.MemberInfo)GetType().GetProperty(name)
                     ?? GetType().GetField(name);
                 if (member is System.Reflection.PropertyInfo property) {
-                    value = property.GetValue(this, null);
-                    return true;
+                    try {
+                        value = property.GetValue(this, null);
+                        return true;
+                    } catch (System.Reflection.TargetInvocationException) {
+                        value = null;
+                        return false;
+                    }
                 }
                 if (member is System.Reflection.FieldInfo field) {
                     value = field.GetValue(this);
@@ -4167,6 +4459,13 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class Constant : expr {
+            public new static object __new__(
+                CodeContext context,
+                [NotNone] PythonType pythonType,
+                [ParamDictionary] IDictionary<object, object> kwargs,
+                [NotNone] params object[] args) =>
+                pythonType.CreateInstance(context);
+
             public Constant() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(value), nameof(kind) });
             }

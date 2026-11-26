@@ -1935,6 +1935,15 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 PythonDictionary dict = sdo.Dict;
 
                 hasValue = dict != null && dict.TryGetValue(name, out value);
+                if (hasValue && value is IDeletedValueMarker) {
+                    throw new AttributeErrorException(
+                        string.Format(
+                            CultureInfo.CurrentCulture,
+                            Resources.CantFindMember,
+                            name),
+                        name,
+                        instance);
+                }
             }
 
             // then check through all the descriptors.  If we have a data

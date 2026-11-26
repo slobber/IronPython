@@ -33,4 +33,7 @@ namespace IronPython.Runtime.Types {
         object[]? GetSlots();
         object[] GetSlotsCreate();
     }
+
+    internal interface IDeletedValueMarker {
+    }
 }

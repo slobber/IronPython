@@ -145,6 +145,11 @@ namespace IronPython.Runtime {
         [PythonHidden]
         public bool TryGetValue(object key, out object value) {
             if (_storage.TryGetValue(key, out value)) {
+                if (value is IDeletedValueMarker) {
+                    throw PythonOps.AttributeError(
+                        "{0}",
+                        key);
+                }
                 return true;
             }
 

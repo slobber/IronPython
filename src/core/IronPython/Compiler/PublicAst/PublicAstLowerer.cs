@@ -715,7 +715,10 @@ namespace IronPython.Compiler.PublicAst {
                 AstNodes.Name name when TryGetTypeParameterBinding(name.Id, out CompilerAst.Expression binding)
                     => binding,
                 AstNodes.Name name => new CompilerAst.NameExpression(MangleIdentifier(name.Id)),
-                AstNodes.Constant constant => new CompilerAst.ConstantExpression(constant.Value),
+                AstNodes.Constant constant => new CompilerAst.ConstantExpression(
+                    constant.Value is string text && IsInternedIdentifier(text)
+                        ? string.Intern(text)
+                        : constant.Value),
                 AstNodes.List list => new CompilerAst.ListExpression(
                     list.Elts.Select(LowerExpression).ToArray()),
                 AstNodes.Tuple tuple => new CompilerAst.TupleExpression(
@@ -1764,6 +1767,22 @@ namespace IronPython.Compiler.PublicAst {
 
         private static CompilerAst.Expression Constant(object? value) {
             return new CompilerAst.ConstantExpression(value);
+        }
+
+        private static bool IsInternedIdentifier(string text) {
+            if (text.Length == 0
+                || text.Length > 64
+                || text[0] != '_'
+                    && !char.IsLetter(text[0])) {
+                return false;
+            }
+            for (int i = 1; i < text.Length; i++) {
+                if (text[i] != '_'
+                    && !char.IsLetterOrDigit(text[i])) {
+                    return false;
+                }
+            }
+            return true;
         }
 
         private static CompilerAst.Expression And(
