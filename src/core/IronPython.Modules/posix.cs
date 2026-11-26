@@ -75,23 +75,33 @@ namespace IronPython.Modules {
             int flags,
             uint mode);
 
-        [DllImport("libc", SetLastError = true)]
+        [DllImport(
+            "libc",
+            CharSet = CharSet.Ansi,
+            BestFitMapping = false,
+            ThrowOnUnmappableChar = true,
+            SetLastError = true)]
         private static extern int posix_spawn(
             out int pid,
-            [MarshalAs(UnmanagedType.LPUTF8Str)] string file,
+            IntPtr file,
             IntPtr fileActions,
             IntPtr attributes,
-            IntPtr argv,
-            IntPtr envp);
+            IntPtr[] argv,
+            IntPtr[] envp);
 
-        [DllImport("libc", SetLastError = true)]
+        [DllImport(
+            "libc",
+            CharSet = CharSet.Ansi,
+            BestFitMapping = false,
+            ThrowOnUnmappableChar = true,
+            SetLastError = true)]
         private static extern int posix_spawnp(
             out int pid,
-            [MarshalAs(UnmanagedType.LPUTF8Str)] string file,
+            IntPtr file,
             IntPtr fileActions,
             IntPtr attributes,
-            IntPtr argv,
-            IntPtr envp);
+            IntPtr[] argv,
+            IntPtr[] envp);
 
         [SupportedOSPlatform("linux")]
         [SupportedOSPlatform("macos")]
@@ -148,23 +158,25 @@ namespace IronPython.Modules {
             try {
                 NativeStringArray nativeArgv = new NativeStringArray(argv);
                 NativeStringArray nativeEnv = new NativeStringArray(envp);
+                IntPtr nativeExecutable =
+                    Marshal.StringToCoTaskMemUTF8(executable);
                 try {
                     int pid;
                     rc = executable.Contains(Path.DirectorySeparatorChar)
                         ? posix_spawn(
                             out pid,
-                            executable,
+                            nativeExecutable,
                             actions,
                             attributes,
-                            nativeArgv.Pointer,
-                            nativeEnv.Pointer)
+                            nativeArgv.Pointers,
+                            nativeEnv.Pointers)
                         : posix_spawnp(
                             out pid,
-                            executable,
+                            nativeExecutable,
                             actions,
                             attributes,
-                            nativeArgv.Pointer,
-                            nativeEnv.Pointer);
+                            nativeArgv.Pointers,
+                            nativeEnv.Pointers);
                     if (rc != 0) {
                         throw PythonOps.OSError(
                             rc,
@@ -173,6 +185,7 @@ namespace IronPython.Modules {
                     }
                     return pid;
                 } finally {
+                    Marshal.FreeCoTaskMem(nativeExecutable);
                     nativeArgv.Dispose();
                     nativeEnv.Dispose();
                 }
@@ -366,31 +379,22 @@ namespace IronPython.Modules {
 
         private sealed class NativeStringArray : IDisposable {
             private readonly IntPtr[] _strings;
-            internal IntPtr Pointer { get; }
+            internal IntPtr[] Pointers { get; }
 
             internal NativeStringArray(string[]? values) {
                 values ??= Array.Empty<string>();
+                Pointers = new IntPtr[values.Length + 1];
                 _strings = new IntPtr[values.Length];
-                Pointer = Marshal.AllocHGlobal(
-                    (values.Length + 1) * IntPtr.Size);
                 for (int i = 0; i < values.Length; i++) {
                     _strings[i] = Marshal.StringToCoTaskMemUTF8(values[i]);
-                    Marshal.WriteIntPtr(
-                        Pointer,
-                        i * IntPtr.Size,
-                        _strings[i]);
+                    Pointers[i] = _strings[i];
                 }
-                Marshal.WriteIntPtr(
-                    Pointer,
-                    values.Length * IntPtr.Size,
-                    IntPtr.Zero);
             }
 
             public void Dispose() {
                 foreach (IntPtr value in _strings) {
                     Marshal.FreeCoTaskMem(value);
                 }
-                Marshal.FreeHGlobal(Pointer);
             }
         }
 
