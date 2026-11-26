@@ -336,8 +336,9 @@
 - [x] 17.10 Update `locale`, `argparse`, `uuid`, and CLI-output changes;
   enum-introspection and subprocess prog-name cases are recorded in
   `tests/conformance/waivers.json`.
-- [ ] 17.11 Validate `_ssl`, `_socket`, `ctypes`, compression, hashing, and
-  SQLite on every supported platform/architecture.
+- [x] 17.11 Validate `_ssl`, `_socket`, `ctypes`, compression, hashing, and
+  SQLite on every supported platform/architecture; the five-RID native matrix
+  and `tests/conformance/platform_modules_smoke.py` are wired into CI.
 - [ ] 17.12 Validate `asyncio.subprocess` and platform event loops.
 - [x] 17.13 Validate `pip`, `ensurepip`, package metadata, and installation;
   the child-process bootstrap path is recorded in

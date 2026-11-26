@@ -113,6 +113,22 @@ namespace IronPython.Modules {
 
         #endregion
 
+        public static PythonList get_sigalgs() {
+            return new PythonList {
+                "rsa_pss_rsae_sha256",
+                "rsa_pss_rsae_sha384",
+                "rsa_pss_rsae_sha512",
+                "rsa_pss_pss_sha256",
+                "rsa_pss_pss_sha384",
+                "rsa_pss_pss_sha512",
+                "ecdsa_secp256r1_sha256",
+                "ecdsa_secp384r1_sha384",
+                "ecdsa_secp521r1_sha512",
+                "ed25519",
+                "ed448"
+            };
+        }
+
         [PythonType]
         public class _SSLContext {
             internal readonly X509Certificate2Collection _cert_store = new X509Certificate2Collection();
@@ -1318,6 +1334,9 @@ Returns the number of bytes written.")]
         public const bool HAS_ALPN = false;
         public const bool HAS_TLS_UNIQUE = false;
         public const bool HAS_TLSv1_3 = false;
+        public const bool HAS_PSK = false;
+        public const bool HAS_PSK_TLS13 = false;
+        public const bool HAS_PHA = false;
 
         public const bool HAS_SSLv2 = false;
         public const bool HAS_SSLv3 = false;

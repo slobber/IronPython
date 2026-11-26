@@ -39,6 +39,7 @@ namespace IronPython.Modules {
         private static Dictionary<int, Type> _nativeTypes = new Dictionary<int, Type>();  // native types of the specified size for marshalling
         private static StringAtDelegate _stringAt = StringAt, _wstringAt = WStringAt;     // delegates for wchar/char functions we hand addresses out to (just keeping it alive)
         private static CastDelegate _cast = Cast;                                         // delegate for cast function whose address we hand out (just keeping it alive)
+        private static MemoryViewAtDelegate _memoryViewAt = MemoryViewAt;
 
         public const string __version__ = "1.1.0";
 
@@ -46,6 +47,11 @@ namespace IronPython.Modules {
         private delegate IntPtr CastDelegate(IntPtr data, IntPtr obj, IntPtr type);
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         private delegate IntPtr StringAtDelegate(IntPtr addr, int length);
+        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+        private delegate IntPtr MemoryViewAtDelegate(
+            IntPtr address,
+            long length,
+            int readOnly);
 
         [SpecialName]
         public static void PerformModuleReload(PythonContext/*!*/ context, PythonDictionary/*!*/ dict) {
@@ -56,6 +62,8 @@ namespace IronPython.Modules {
             // context.SystemState.__dict__["getrefcount"] = null;
             PythonDictionary pointerTypeCache = new PythonDictionary();
             dict["_pointer_type_cache"] = pointerTypeCache;
+            dict["CField"] = DynamicHelpers.GetPythonTypeFromType(
+                typeof(Field));
             context.SetModuleState(_pointerTypeCacheKey, pointerTypeCache);
 
             if (Environment.OSVersion.Platform == PlatformID.Win32NT ||
@@ -157,6 +165,13 @@ namespace IronPython.Modules {
         public static object _wstring_at_addr {
             get {
                 return Marshal.GetFunctionPointerForDelegate(_wstringAt).ToPython();
+            }
+        }
+
+        public static object _memoryview_at_addr {
+            get {
+                return Marshal.GetFunctionPointerForDelegate(
+                    _memoryViewAt).ToPython();
             }
         }
 
@@ -503,6 +518,8 @@ namespace IronPython.Modules {
 
         public const int RTLD_GLOBAL = 0;
         public const int RTLD_LOCAL = 0;
+        public static readonly int SIZEOF_TIME_T =
+            Environment.Is64BitProcess ? 8 : 4;
 
         #endregion
 
@@ -675,6 +692,21 @@ namespace IronPython.Modules {
             }
 
             return GCHandle.ToIntPtr(GCHandle.Alloc(res));
+        }
+
+        private static IntPtr MemoryViewAt(
+            IntPtr src,
+            long len,
+            int unusedReadOnly) {
+            if (len < 0 || len > int.MaxValue) {
+                throw PythonOps.ValueError("invalid memoryview length");
+            }
+            var data = new byte[(int)len];
+            Marshal.Copy(src, data, 0, data.Length);
+            var view = new MemoryView(
+                DefaultContext.Default,
+                new Bytes(data));
+            return GCHandle.ToIntPtr(GCHandle.Alloc(view));
         }
 
         private static IntPtr GetHandleFromObject(object dll, string errorMsg) {

@@ -267,6 +267,17 @@
             ]
         },
         {
+            "id": "stdlib-315-lzma-native-extension",
+            "category": "product-boundary",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#17.11",
+            "reason": "CPython's lzma module requires the native _lzma C extension. IronPython does not implement the CPython C-extension ABI; supported compression coverage is provided by zlib, bz2, and compression.zstd.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_lzma.*"
+            ]
+        },
+        {
             "id": "profiling-cpython-deterministic-counter-layout",
             "category": "cpython-internal",
             "owner": "slobber",
