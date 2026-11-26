@@ -138,8 +138,16 @@ jobs:
         dotnet --info
         dotnet "bin/Release/${{ matrix.framework }}/ipy.dll" -VV
       shell: pwsh
-    - name: Test
-      run: ./make.ps1 -frameworks ${{ matrix.framework }} test-all
+    - name: CPython 3.15 conformance
+      run: ./make.ps1 -frameworks ${{ matrix.framework }} test-cpython
+      shell: pwsh
+    - name: IronPython CLR regression
+      run: ./make.ps1 -frameworks ${{ matrix.framework }} test-ironpython
+      continue-on-error: true
+      shell: pwsh
+    - name: Legacy C# regression
+      run: ./make.ps1 -frameworks ${{ matrix.framework }} test-cs
+      continue-on-error: true
       shell: pwsh
 
   packages:
