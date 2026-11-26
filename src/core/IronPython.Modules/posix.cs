@@ -86,7 +86,7 @@ namespace IronPython.Modules {
         [DllImport("libc", EntryPoint = "posix_spawn", SetLastError = true)]
         private static extern int posix_spawn(
             out int pid,
-            IntPtr file,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string file,
             IntPtr fileActions,
             IntPtr attributes,
             IntPtr[] argv,
@@ -95,7 +95,7 @@ namespace IronPython.Modules {
         [DllImport("libc", EntryPoint = "posix_spawnp", SetLastError = true)]
         private static extern int posix_spawnp(
             out int pid,
-            IntPtr file,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string file,
             IntPtr fileActions,
             IntPtr attributes,
             IntPtr[] argv,
@@ -156,21 +156,19 @@ namespace IronPython.Modules {
             try {
                 NativeStringArray nativeArgv = new NativeStringArray(argv);
                 NativeStringArray nativeEnv = new NativeStringArray(envp);
-                IntPtr nativeExecutable =
-                    Marshal.StringToCoTaskMemUTF8(executable);
                 try {
                     int pid;
                     rc = executable.Contains(Path.DirectorySeparatorChar)
                         ? posix_spawn(
                             out pid,
-                            nativeExecutable,
+                            executable,
                             actions,
                             attributes,
                             nativeArgv.Pointers,
                             nativeEnv.Pointers)
                         : posix_spawnp(
                             out pid,
-                            nativeExecutable,
+                            executable,
                             actions,
                             attributes,
                             nativeArgv.Pointers,
@@ -183,7 +181,6 @@ namespace IronPython.Modules {
                     }
                     return pid;
                 } finally {
-                    Marshal.FreeCoTaskMem(nativeExecutable);
                     nativeArgv.Dispose();
                     nativeEnv.Dispose();
                 }
