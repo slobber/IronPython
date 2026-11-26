@@ -20,9 +20,10 @@ $_BASEDIR = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 if (-not $stdlib) {
     $siblingStdLib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($_BASEDIR, "..", "IronPython.StdLib"))
     $submoduleStdLib = [System.IO.Path]::Combine($_BASEDIR, "src", "core", "IronPython.StdLib")
-    if (Test-Path $siblingStdLib) {
+    $stdlibSentinel = [System.IO.Path]::Combine("lib", "importlib", "_bootstrap.py")
+    if (Test-Path ([System.IO.Path]::Combine($siblingStdLib, $stdlibSentinel))) {
         $stdlib = $siblingStdLib
-    } elseif (Test-Path $submoduleStdLib) {
+    } elseif (Test-Path ([System.IO.Path]::Combine($submoduleStdLib, $stdlibSentinel))) {
         $stdlib = $submoduleStdLib
     } else {
         $stdlib = $siblingStdLib
