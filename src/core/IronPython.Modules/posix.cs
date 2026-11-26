@@ -253,6 +253,11 @@ namespace IronPython.Modules {
                             int start = ToInt(action[1]!);
                             rc = 0;
                             for (int fd = start; fd < 1024; fd++) {
+                                if (Syscall.fcntl(
+                                        fd,
+                                        FcntlCommand.F_GETFD) == -1) {
+                                    continue;
+                                }
                                 rc = posix_spawn_file_actions_addclose(
                                     actions,
                                     fd);

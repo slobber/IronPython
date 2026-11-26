@@ -19,6 +19,7 @@
       <ApplicationFiles Include="$(StageDir)/net10.0/*.exe" Condition="'$(OS)' == 'Windows_NT'" />
       <ApplicationFiles Include="$(StageDir)/net10.0/*.dll" Exclude="$(StageDir)/net10.0/IronPython.SQLite.dll;$(StageDir)/net10.0/IronPython.Wpf.dll" />
       <ExtensionFiles Include="$(StageDir)/net10.0/DLLs/*.dll" />
+      <ExtensionRuntimeFiles Include="$(StageDir)/net10.0/DLLs/runtimes/linux-*/**/*" />
       <RuntimeFiles Include="$(StageDir)/net10.0/runtimes/**/*" />
     </ItemGroup>
 
@@ -50,6 +51,7 @@
     <Copy SourceFiles="@(ScriptFiles)" DestinationFolder="$(PackageTempFolder)/usr/bin/"/>
     <Copy SourceFiles="@(ApplicationFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/%(ApplicationFiles.RecursiveDir)"/>
     <Copy SourceFiles="@(ExtensionFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/DLLs/"/>
+    <Copy SourceFiles="@(ExtensionRuntimeFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/DLLs/runtimes/%(ExtensionRuntimeFiles.RecursiveDir)"/>
     <Copy SourceFiles="@(RuntimeFiles)" DestinationFolder="$(PackageTempFolder)/usr/share/cyberstone-ironpython3.15/runtimes/%(RuntimeFiles.RecursiveDir)"/>
     <Copy SourceFiles="@(StdLibFiles)" DestinationFolder="$(PackageTempFolder)/usr/lib/cyberstone-ironpython3.15/%(StdLibFiles.RecursiveDir)"/>
 
