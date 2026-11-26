@@ -211,6 +211,43 @@ with the importer protocol.")]
                 return this;
             }
 
+            public object find_spec(CodeContext context, [NotNone] string fullname, object target = null) {
+                byte[] code;
+                bool isPackage;
+                string modulePath;
+                try {
+                    code = GetModuleCode(
+                        context,
+                        fullname,
+                        out isPackage,
+                        out modulePath);
+                } catch (ImportException) {
+                    return null;
+                }
+                if (code is null) return null;
+
+                PythonContext pythonContext = context.LanguageContext;
+                object spec = PythonCalls.CallWithKeywordArgs(
+                    context,
+                    pythonContext.ImportLibModuleSpec,
+                    [fullname, this, modulePath],
+                    ["origin"]);
+                PythonOps.SetAttr(
+                    context,
+                    spec,
+                    "has_location",
+                    ScriptingRuntimeHelpers.True);
+                if (isPackage) {
+                    PythonOps.SetAttr(
+                        context,
+                        spec,
+                        "submodule_search_locations",
+                        PythonList.FromArrayNoCopy(
+                            Path.GetDirectoryName(modulePath) ?? modulePath));
+                }
+                return spec;
+            }
+
             [Documentation(@"load_module(fullname) -> module.
 
 Load the module specified by 'fullname'. 'fullname' must be the
