@@ -840,6 +840,10 @@ namespace IronPython.Runtime.Operations {
             return self.ToLower(CasingCultureInfo);
         }
 
+        public static string casefold([NotNone] this string self) {
+            return self.ToLowerInvariant();
+        }
+
         internal static string ToLowerAsciiTriggered(this string self) {
             for (int i = 0; i < self.Length; i++) {
                 if (self[i] >= 'A' && self[i] <= 'Z') {

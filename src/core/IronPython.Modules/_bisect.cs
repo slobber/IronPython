@@ -31,9 +31,10 @@ common approach.
 
         #region Private Implementation Details
 
-        private static int InternalBisectLeft(CodeContext/*!*/ context, PythonList list, object? item, int lo, int hi) {
+        private static int InternalBisectLeft(CodeContext/*!*/ context, PythonList list, object? item, int lo, int hi, object? key = null) {
             int mid;
             object? litem;
+            object? keyedItem = ApplyKey(context, key, item);
 
             if (lo < 0) {
                 throw PythonOps.ValueError("lo must be non-negative");
@@ -46,7 +47,7 @@ common approach.
             while (lo < hi) {
                 mid = (int)(((long)lo + hi) / 2);
                 litem = list[mid];
-                if (comparer.Compare(litem, item) < 0)
+                if (comparer.Compare(ApplyKey(context, key, litem), keyedItem) < 0)
                     lo = mid + 1;
                 else
                     hi = mid;
@@ -54,9 +55,10 @@ common approach.
             return lo;
         }
 
-        private static int InternalBisectLeft(CodeContext/*!*/ context, object? list, object? item, int lo, int hi) {
+        private static int InternalBisectLeft(CodeContext/*!*/ context, object? list, object? item, int lo, int hi, object? key = null) {
             int mid;
             object litem;
+            object? keyedItem = ApplyKey(context, key, item);
 
             if (lo < 0) {
                 throw PythonOps.ValueError("lo must be non-negative");
@@ -70,7 +72,7 @@ common approach.
             while (lo < hi) {
                 mid = (int)(((long)lo + hi) / 2);
                 litem = PythonOps.GetIndex(context, list, mid);
-                if (comparer.Compare(litem, item) < 0)
+                if (comparer.Compare(ApplyKey(context, key, litem), keyedItem) < 0)
                     lo = mid + 1;
                 else
                     hi = mid;
@@ -78,9 +80,10 @@ common approach.
             return lo;
         }
 
-        private static int InternalBisectRight(CodeContext/*!*/ context, PythonList list, object? item, int lo, int hi) {
+        private static int InternalBisectRight(CodeContext/*!*/ context, PythonList list, object? item, int lo, int hi, object? key = null) {
             object? litem;
             int mid;
+            object? keyedItem = ApplyKey(context, key, item);
 
             if (lo < 0) {
                 throw PythonOps.ValueError("lo must be non-negative");
@@ -93,7 +96,7 @@ common approach.
             while (lo < hi) {
                 mid = (int)(((long)lo + hi) / 2);
                 litem = list[mid];
-                if (comparer.Compare(item, litem) < 0)
+                if (comparer.Compare(keyedItem, ApplyKey(context, key, litem)) < 0)
                     hi = mid;
                 else
                     lo = mid + 1;
@@ -101,9 +104,10 @@ common approach.
             return lo;
         }
 
-        private static int InternalBisectRight(CodeContext/*!*/ context, object list, object? item, int lo, int hi) {
+        private static int InternalBisectRight(CodeContext/*!*/ context, object list, object? item, int lo, int hi, object? key = null) {
             object litem;
             int mid;
+            object? keyedItem = ApplyKey(context, key, item);
 
             if (lo < 0) {
                 throw PythonOps.ValueError("lo must be non-negative");
@@ -117,12 +121,16 @@ common approach.
             while (lo < hi) {
                 mid = (int)(((long)lo + hi) / 2);
                 litem = PythonOps.GetIndex(context, list, mid);
-                if (comparer.Compare(item, litem) < 0)
+                if (comparer.Compare(keyedItem, ApplyKey(context, key, litem)) < 0)
                     hi = mid;
                 else
                     lo = mid + 1;
             }
             return lo;
+        }
+
+        private static object? ApplyKey(CodeContext context, object? key, object? value) {
+            return key is null ? value : PythonCalls.Call(context, key, value);
         }
 
         private static Type GetComparisonType(CodeContext/*!*/ context, object? a) {
@@ -159,12 +167,12 @@ beyond the rightmost x already there
 Optional args lo (default 0) and hi (default len(a)) bound the
 slice of a to be searched.
 ")]
-        public static object BisectRight(CodeContext/*!*/ context, object a, object x, int lo = 0, int hi = -1) {
+        public static object BisectRight(CodeContext/*!*/ context, object a, object x, int lo = 0, int hi = -1, object? key = null) {
             if (a is PythonList l && l.GetType() == typeof(PythonList)) {
-                return InternalBisectRight(context, l, x, lo, hi);
+                return InternalBisectRight(context, l, x, lo, hi, key);
             }
 
-            return InternalBisectRight(context, a, x, lo, hi);
+            return InternalBisectRight(context, a, x, lo, hi, key);
         }
 
         public static object bisect_right = BuiltinFunction.MakeFunction(
@@ -186,12 +194,12 @@ before the leftmost x already there.
 Optional args lo (default 0) and hi (default len(a)) bound the
 slice of a to be searched.
 ")]
-        public static object bisect_left(CodeContext/*!*/ context, object? a, object? x, int lo = 0, int hi = -1) {
+        public static object bisect_left(CodeContext/*!*/ context, object? a, object? x, int lo = 0, int hi = -1, object? key = null) {
             if (a is PythonList l && l.GetType() == typeof(PythonList)) {
-                return InternalBisectLeft(context, l, x, lo, hi);
+                return InternalBisectLeft(context, l, x, lo, hi, key);
             }
 
-            return InternalBisectLeft(context, a, x, lo, hi);
+            return InternalBisectLeft(context, a, x, lo, hi, key);
         }
 
         [PythonHidden]
@@ -204,13 +212,13 @@ If x is already in a, insert it to the right of the rightmost x.
 Optional args lo (default 0) and hi (default len(a)) bound the
 slice of a to be searched.
 ")]
-        public static void InsortRight(CodeContext/*!*/ context, object a, object x, int lo = 0, int hi = -1) {
+        public static void InsortRight(CodeContext/*!*/ context, object a, object x, int lo = 0, int hi = -1, object? key = null) {
             if (a is PythonList l && l.GetType() == typeof(PythonList)) {
-                l.Insert(InternalBisectRight(context, l, x, lo, hi), x);
+                l.Insert(InternalBisectRight(context, l, x, lo, hi, key), x);
                 return;
             }
 
-            PythonOps.Invoke(context, a, "insert", InternalBisectRight(context, a, x, lo, hi), x);
+            PythonOps.Invoke(context, a, "insert", InternalBisectRight(context, a, x, lo, hi, key), x);
         }
 
         public static object insort_right = BuiltinFunction.MakeFunction(
@@ -230,13 +238,13 @@ If x is already in a, insert it to the left of the leftmost x.
 Optional args lo (default 0) and hi (default len(a)) bound the
 slice of a to be searched.
 ")]
-        public static void insort_left(CodeContext/*!*/ context, object? a, object? x, int lo = 0, int hi = -1) {
+        public static void insort_left(CodeContext/*!*/ context, object? a, object? x, int lo = 0, int hi = -1, object? key = null) {
             if (a is PythonList l && l.GetType() == typeof(PythonList)) {
-                l.Insert(InternalBisectLeft(context, l, x, lo, hi), x);
+                l.Insert(InternalBisectLeft(context, l, x, lo, hi, key), x);
                 return;
             }
 
-            PythonOps.Invoke(context, a, "insert", InternalBisectLeft(context, a, x, lo, hi), x);
+            PythonOps.Invoke(context, a, "insert", InternalBisectLeft(context, a, x, lo, hi, key), x);
         }
 
         #endregion Public API Surface
