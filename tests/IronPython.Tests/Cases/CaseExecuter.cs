@@ -275,6 +275,7 @@ namespace IronPythonTest.Cases {
                         StringComparison.OrdinalIgnoreCase)) {
                     dotnetHost = Environment.ProcessPath;
                 }
+                dotnetHost ??= FindOnPath("dotnet");
                 if (!string.IsNullOrEmpty(dotnetHost)
                     && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ROOT"))) {
                     proc.StartInfo.EnvironmentVariables["DOTNET_ROOT"] = Path.GetDirectoryName(dotnetHost)!;
@@ -319,6 +320,22 @@ namespace IronPythonTest.Cases {
                     }
                 }
             }
+        }
+
+        private static string? FindOnPath(string executable) {
+            string? path = Environment.GetEnvironmentVariable("PATH");
+            if (string.IsNullOrEmpty(path)) return null;
+
+            foreach (string directory in path.Split(Path.PathSeparator)) {
+                string candidate = Path.Combine(directory, executable);
+                if (OperatingSystem.IsWindows()) {
+                    candidate += ".exe";
+                }
+                if (File.Exists(candidate)) {
+                    return candidate;
+                }
+            }
+            return null;
         }
 
         private static bool IsPackageTestCase(string path) {
