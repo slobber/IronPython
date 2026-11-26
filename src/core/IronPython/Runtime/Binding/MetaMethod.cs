@@ -6,11 +6,15 @@
 using System;
 using System.Dynamic;
 using System.Linq.Expressions;
+using System.Reflection;
 
 using Microsoft.Scripting;
 using Microsoft.Scripting.Actions;
 using Microsoft.Scripting.Runtime;
 using Microsoft.Scripting.Utils;
+
+using IronPython.Runtime.Operations;
+using IronPython.Runtime.Types;
 
 namespace IronPython.Runtime.Binding {
     using Ast = Expression;
@@ -86,6 +90,53 @@ namespace IronPython.Runtime.Binding {
                 ),
                 BindingRestrictions.Empty
             );
+            Expression callExpression = call.Expression;
+            if (Value.__func__ is BuiltinFunction
+                && !signature.HasListArgument()) {
+                PythonContext context = PythonContext.GetPythonContext(callAction);
+                var result = Ast.Variable(
+                    typeof(object),
+                    "methodProfileResult");
+                MemberExpression function = GetFunctionExpression(self);
+                callExpression = Ast.Condition(
+                    Ast.AndAlso(
+                        Ast.Property(
+                            Ast.Constant(context),
+                            nameof(PythonContext.HasActiveProfile)),
+                        Ast.Not(Ast.Property(
+                            Ast.Constant(context),
+                            nameof(PythonContext.IsBuiltinProfileScopeActive)))),
+                    Ast.Block(
+                        typeof(object),
+                        new[] { result },
+                        Ast.Call(
+                            typeof(PythonOps).GetMethod(
+                                nameof(PythonOps.ProfileBuiltinCallStart)),
+                            Ast.Constant(context),
+                            function),
+                        Ast.Call(
+                            Ast.Constant(context),
+                            typeof(PythonContext).GetMethod(
+                                nameof(PythonContext.BeginBuiltinProfileScope),
+                                BindingFlags.Instance | BindingFlags.NonPublic)),
+                        Ast.TryFinally(
+                            Ast.Assign(
+                                result,
+                                Ast.Convert(call.Expression, typeof(object))),
+                            Ast.Block(
+                                Ast.Call(
+                                    Ast.Constant(context),
+                                    typeof(PythonContext).GetMethod(
+                                        nameof(PythonContext.EndBuiltinProfileScope),
+                                        BindingFlags.Instance | BindingFlags.NonPublic)),
+                                Ast.Call(
+                                    typeof(PythonOps).GetMethod(
+                                        nameof(PythonOps.ProfileBuiltinCallEnd)),
+                                    Ast.Constant(context),
+                                    function))),
+                        result),
+                    Ast.Convert(call.Expression, typeof(object)));
+            }
 
             /*
             call = func.Invoke(
@@ -98,13 +149,13 @@ namespace IronPython.Runtime.Binding {
 
             if (call.HasValue) {
                 return new DynamicMetaObject(
-                    call.Expression,
+                    callExpression,
                     restrictions.Merge(call.Restrictions),
                     call.Value
                 );
             } else {
                 return new DynamicMetaObject(
-                    call.Expression,
+                    callExpression,
                     restrictions.Merge(call.Restrictions)
                 );
             }

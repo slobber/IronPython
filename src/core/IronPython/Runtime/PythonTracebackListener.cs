@@ -24,6 +24,8 @@ namespace IronPython.Runtime {
         private object _profileObject;
         private TracebackDelegate _profileDispatch;
         private bool _inProfileBack;
+        private readonly int _threadId =
+            Environment.CurrentManagedThreadId;
 
         internal PythonTracebackListener(PythonContext pythonContext, object traceObject, bool isDummyListener) {
             _pythonContext = pythonContext;
@@ -87,6 +89,9 @@ namespace IronPython.Runtime {
         #region ITraceCallback Members
 
         public void OnTraceEvent(Debugging.TraceEventKind kind, string name, string sourceFileName, SourceSpan sourceSpan, Func<IDictionary<object, object>> scopeCallback, object payload, object customPayload) {        
+            if (Environment.CurrentManagedThreadId != _threadId) {
+                return;
+            }
             if (kind == Debugging.TraceEventKind.ThreadExit ||                  // We don't care about thread-exit events
                 kind == Debugging.TraceEventKind.ExceptionUnwind) {             // and we always have a try/catch so we don't care about methods unwinding.
                 return;
@@ -96,6 +101,12 @@ namespace IronPython.Runtime {
             object traceDispatchObject = null;
             var thread = PythonOps.GetFunctionStack();
             TraceBackFrame pyFrame;
+            var properties = (PythonDebuggingPayload)customPayload;
+
+            if (kind == Debugging.TraceEventKind.TracePoint
+                && sourceSpan.Start.Line < properties.Code.Span.Start.Line) {
+                return;
+            }
 
             if (_inTraceBack) {
                 return;
@@ -106,20 +117,35 @@ namespace IronPython.Runtime {
                     traceDispatch = _traceDispatch;
                     traceDispatchObject = _traceObject;
 
-                    var properties = (PythonDebuggingPayload)customPayload;
-
                     // Module code has no frame push of its own: when exec or a script runner runs it, the caller has just pushed an entry
                     // for it. That entry gets the new frame, rather than a second entry being pushed for the same code.
                     bool pushedByCaller = IsPushedByCaller(thread, properties.Code);
-
-                    pyFrame = new TraceBackFrame(
-                        this,
-                        properties.Code,
-                        GetFrame(thread, pushedByCaller ? thread.Count - 2 : thread.Count - 1),
-                        properties,
-                        scopeCallback,
+                    TraceBackFrame back = GetFrame(
+                        thread,
                         pushedByCaller
-                    );
+                            ? thread.Count - 2
+                            : thread.Count - 1);
+                    PythonGenerator currentGenerator =
+                        PythonGenerator.Current;
+                    if (currentGenerator is not null
+                        && currentGenerator.gi_code == properties.Code
+                        && currentGenerator.TracedFrame is not null) {
+                        pyFrame = currentGenerator.TracedFrame;
+                        pyFrame.UpdateTraceFrame(back, scopeCallback);
+                    } else {
+                        pyFrame = new TraceBackFrame(
+                            this,
+                            properties.Code,
+                            back,
+                            properties,
+                            scopeCallback,
+                            pushedByCaller);
+                        if (currentGenerator is not null
+                            && currentGenerator.gi_code
+                                == properties.Code) {
+                            currentGenerator.TracedFrame = pyFrame;
+                        }
+                    }
 
                     if (pushedByCaller) {
                         FunctionStack entry = thread[thread.Count - 1];

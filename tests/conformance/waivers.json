@@ -320,6 +320,45 @@
                 "test.test_profiling.test_tracing_profiler.TestCommandLine.*"
             ]
         },
+        {
+            "id": "debug-cpython-bytecode-locations",
+            "category": "cpython-internal",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#18.3",
+            "reason": "These tests validate CPython bytecode offsets, opcode events, and jumps through f_lasti and bytecode-disassembly layouts. IronPython traces DLR sequence points instead; public call, line, return, exception, locals, generators, coroutines, and async-generator behavior is covered by the passing async tracing suite.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_sys_settrace.TraceTestCase.*",
+                "test.test_sys_settrace.SkipLineEventsTraceTestCase.*",
+                "test.test_sys_settrace.TraceOpcodesTestCase.*",
+                "test.test_sys_settrace.JumpTestCase.*",
+                "test.test_sys_settrace.TestExtendedArgs.*",
+                "test.test_sys_settrace.RaisingTraceFuncTestCase.*"
+            ]
+        },
+        {
+            "id": "debug-cpython-refcount-callback-lifecycle",
+            "category": "cpython-internal",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#18.3",
+            "reason": "These cases require immediate CPython reference-count finalization: closing a temporary generator at the end of one statement, or replacing the profiler from __del__. IronPython uses tracing-managed finalization and cannot guarantee that teardown ordering.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_sys_setprofile.ProfileHookTestCase.test_unfinished_generator",
+                "test.test_sys_setprofile.TestEdgeCases.test_reentrancy"
+            ]
+        },
+        {
+            "id": "debug-cpython-call-function-ex-profile-events",
+            "category": "cpython-internal",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#18.3",
+            "reason": "This test expects CPython's CALL_FUNCTION_EX bytecode to omit a matched c_call/c_return pair for a classmethod wrapping a builtin. IronPython models the same call as a normal builtin method invocation and emits the consistent matched pair; ordinary positional and keyword classmethod calls match CPython.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_sys_setprofile.TestEdgeCases.test_method_with_c_function"
+            ]
+        },
     {
       "id": "interpreter-call-c-api-code-inspection",
       "category": "cpython-c-api",

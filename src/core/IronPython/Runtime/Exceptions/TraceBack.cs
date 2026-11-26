@@ -82,7 +82,7 @@ namespace IronPython.Runtime.Exceptions {
         private object _traceObject;
         internal int _lineNo;
         private readonly PythonDebuggingPayload _debugProperties;
-        private readonly Func<IDictionary<object, object>> _scopeCallback;
+        private Func<IDictionary<object, object>> _scopeCallback;
 
         private readonly PythonDictionary _globals;
         private readonly object _locals;
@@ -136,6 +136,13 @@ namespace IronPython.Runtime.Exceptions {
         ///   no frame push of its own (see <see cref="PythonTracebackListener"/>).
         /// </remarks>
         internal bool PushedByCaller { get; }
+
+        internal void UpdateTraceFrame(
+            TraceBackFrame back,
+            Func<IDictionary<object, object>> scopeCallback) {
+            _back = back;
+            _scopeCallback = scopeCallback;
+        }
 
         [SpecialName, PropertyMethod]
         public object Getf_trace() => _traceObject;

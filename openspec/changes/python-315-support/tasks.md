@@ -344,7 +344,9 @@
 
 - [x] 18.1 Preserve `clr` and .NET type/object interop.
 - [x] 18.2 Preserve hosting APIs.
-- [ ] 18.3 Preserve debugging and tracing APIs.
+- [x] 18.3 Preserve debugging and tracing APIs; CPython bytecode-location,
+  refcount-finalization, and `CALL_FUNCTION_EX` event-layout cases are
+  recorded in `tests/conformance/waivers.json`.
 - [x] 18.4 Preserve `IronPython.SQLite`.
 - [ ] 18.5 Preserve WPF extension support on Windows.
 - [x] 18.6 Preserve CLR-specific tests as a separate regression track.

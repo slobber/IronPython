@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
 using Microsoft.Scripting;
+using Microsoft.Scripting.Runtime;
 
 namespace IronPython.Runtime {
     /// <summary>
@@ -38,7 +39,12 @@ namespace IronPython.Runtime {
         public override void AddNoLock(ref DictionaryStorage storage, object key, object value) {
             _hidden.Remove(key);
 
-            _data[key] = value;
+            if (_data.TryGetValue(key, out object current)
+                && current is ClosureCell cell) {
+                cell.Value = value;
+            } else {
+                _data[key] = value;
+            }
         }
 
         public override bool Contains(object key) {
@@ -46,7 +52,11 @@ namespace IronPython.Runtime {
                 return false;
             }
 
-            return _data.ContainsKey(key);
+            if (!_data.TryGetValue(key, out object value)) {
+                return false;
+            }
+            return value is not ClosureCell cell
+                || cell.Value != Uninitialized.Instance;
         }
 
         public override bool Remove(ref DictionaryStorage storage, object key) {
@@ -65,7 +75,17 @@ namespace IronPython.Runtime {
                 return false;
             }
 
-            return _data.TryGetValue(key, out value);
+            if (!_data.TryGetValue(key, out value)) {
+                return false;
+            }
+            if (value is ClosureCell cell) {
+                value = cell.Value;
+                if (value == Uninitialized.Instance) {
+                    value = null;
+                    return false;
+                }
+            }
+            return true;
         }
 
         public override int Count {
@@ -83,7 +103,16 @@ namespace IronPython.Runtime {
             List<KeyValuePair<object, object>> res = new List<KeyValuePair<object, object>>(Count);
             foreach (var kvp in _data) {
                 if (!_hidden.Contains(kvp.Key)) {
-                    res.Add(kvp);
+                    object value = kvp.Value;
+                    if (value is ClosureCell cell) {
+                        value = cell.Value;
+                        if (value == Uninitialized.Instance) {
+                            continue;
+                        }
+                    }
+                    res.Add(new KeyValuePair<object, object>(
+                        kvp.Key,
+                        value));
                 }
             }
             return res;

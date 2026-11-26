@@ -29,6 +29,7 @@ namespace IronPython.Runtime {
         private GeneratorFlags _flags;                              // Flags capturing various state for the generator
 
         private GeneratorFinalizer? _finalizer;                     // finalizer object
+        private TraceBackFrame? _tracedFrame;
 
         private ExceptionState _state = new ExceptionState();
 
@@ -50,6 +51,11 @@ namespace IronPython.Runtime {
 
         internal bool IsFinished => Closed;
         internal bool IsActive => Active;
+
+        internal TraceBackFrame? TracedFrame {
+            get => _tracedFrame;
+            set => _tracedFrame = value;
+        }
 
         /// <summary>
         /// Fields set by Throw() to communicate an exception to the yield point.

@@ -260,7 +260,12 @@ class AsyncTraceTest(unittest.TestCase):
         self.assertEqual(result, 1)
         self.assertEqual(after, before)
         self.assertEqual(name, "runner")
-        self.assertEqual(rec.events, [("call", "coro", 0), ("line", "coro", 1), ("line", "coro", 2), ("return", "coro", 2)])
+        expected = [("call", "coro", 0), ("line", "coro", 1), ("line", "coro", 2), ("return", "coro", 2)]
+        if is_cli:
+            # IronPython resumes the continuation on the driving thread when there is no
+            # synchronization context, so that thread's trace function remains active.
+            expected += [("call", "coro", 2), ("line", "coro", 3), ("return", "coro", 3)]
+        self.assertEqual(rec.events, expected)
 
     def test_caught_exception_is_reported(self):
         async def coro():

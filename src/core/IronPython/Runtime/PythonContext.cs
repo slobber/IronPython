@@ -144,6 +144,8 @@ namespace IronPython.Runtime {
 
         // tracing / in-proc debugging support
         private DebugContext _debugContext;
+        [ThreadStatic]
+        private static int _builtinProfileScopeDepth;
         private Debugging.TracePipeline _tracePipeline;
         private readonly Microsoft.Scripting.Utils.ThreadLocal<PythonTracebackListener> _tracebackListeners = new Microsoft.Scripting.Utils.ThreadLocal<PythonTracebackListener>();
         private int _tracebackListenersCount;
@@ -3996,10 +3998,14 @@ namespace IronPython.Runtime {
 
         internal void SetProfile(object o) {
             if (o == null && _debugContext == null) {
+                _builtinProfileScopeDepth = 0;
                 return;
             }
 
             EnsureDebugContext();
+            if (o == null) {
+                _builtinProfileScopeDepth = 0;
+            }
 
             var oldListener = _tracebackListeners.Value;
             var newListener = oldListener;
@@ -4047,6 +4053,17 @@ namespace IronPython.Runtime {
         internal bool HasActiveProfile
             => _debugContext != null
                 && _tracebackListeners.Value?.ProfileObject != null;
+
+        internal bool IsBuiltinProfileScopeActive
+            => _builtinProfileScopeDepth != 0;
+
+        internal void BeginBuiltinProfileScope() {
+            _builtinProfileScopeDepth++;
+        }
+
+        internal void EndBuiltinProfileScope() {
+            _builtinProfileScopeDepth--;
+        }
 
         internal void DispatchBuiltinProfileEvent(
             string eventName,

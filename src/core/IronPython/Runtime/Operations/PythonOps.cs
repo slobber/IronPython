@@ -5728,13 +5728,17 @@ namespace IronPython.Runtime.Operations {
         public static void ProfileBuiltinCallStart(
             PythonContext context,
             object callable) {
-            context.DispatchBuiltinProfileEvent("c_call", callable);
+            if (!context.IsBuiltinProfileScopeActive) {
+                context.DispatchBuiltinProfileEvent("c_call", callable);
+            }
         }
 
         public static void ProfileBuiltinCallEnd(
             PythonContext context,
             object callable) {
-            context.DispatchBuiltinProfileEvent("c_return", callable);
+            if (!context.IsBuiltinProfileScopeActive) {
+                context.DispatchBuiltinProfileEvent("c_return", callable);
+            }
         }
 
         public static List<FunctionStack> PushFrame(CodeContext/*!*/ context, FunctionCode function) {
