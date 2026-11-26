@@ -76,6 +76,15 @@ namespace IronPython.Modules {
             uint mode);
 
         [DllImport("libc", SetLastError = true)]
+        private static extern int posix_spawn(
+            out int pid,
+            [MarshalAs(UnmanagedType.LPUTF8Str)] string file,
+            IntPtr fileActions,
+            IntPtr attributes,
+            IntPtr argv,
+            IntPtr envp);
+
+        [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawnp(
             out int pid,
             [MarshalAs(UnmanagedType.LPUTF8Str)] string file,
@@ -139,15 +148,27 @@ namespace IronPython.Modules {
                 NativeStringArray nativeArgv = new NativeStringArray(argv);
                 NativeStringArray nativeEnv = new NativeStringArray(envp);
                 try {
-                    rc = posix_spawnp(
-                        out int pid,
-                        executable,
-                        actions,
-                        attributes,
-                        nativeArgv.Pointer,
-                        nativeEnv.Pointer);
+                    int pid;
+                    rc = executable.Contains(Path.DirectorySeparatorChar)
+                        ? posix_spawn(
+                            out pid,
+                            executable,
+                            actions,
+                            attributes,
+                            nativeArgv.Pointer,
+                            nativeEnv.Pointer)
+                        : posix_spawnp(
+                            out pid,
+                            executable,
+                            actions,
+                            attributes,
+                            nativeArgv.Pointer,
+                            nativeEnv.Pointer);
                     if (rc != 0) {
-                        throw GetLastUnixError(executable);
+                        throw PythonOps.OSError(
+                            rc,
+                            $"posix_spawn failed: {executable}",
+                            executable);
                     }
                     return pid;
                 } finally {
