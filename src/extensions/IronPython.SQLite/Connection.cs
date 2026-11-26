@@ -441,7 +441,7 @@ namespace IronPython.SQLite
             ~Connection()
             {
                 if(this.db != null)
-                    Sqlite3.sqlite3_close(this.db);
+                    Sqlite3.sqlite3_close_v2(this.db);
             }
 
             [Documentation("Closes the connection.")]
@@ -457,19 +457,8 @@ namespace IronPython.SQLite
 
                 if(this.db != null)
                 {
-                    int rc = Sqlite3.SQLITE_OK, i = 0;
-                    
-                    do
-                    {
-                        rc = Sqlite3.sqlite3_close(this.db);
-                        if(rc == Sqlite3.SQLITE_BUSY)
-                        {
-                            GC.Collect();
-                            GC.WaitForPendingFinalizers();
-                        }
-                    } while(rc == Sqlite3.SQLITE_BUSY && i++ < 3);
-
-                    if(rc != Sqlite3.SQLITE_OK && rc != Sqlite3.SQLITE_BUSY)
+                    int rc = Sqlite3.sqlite3_close_v2(this.db);
+                    if(rc != Sqlite3.SQLITE_OK)
                         throw GetSqliteError(this.db, null);
 
                     this.db = null;

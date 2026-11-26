@@ -65,6 +65,17 @@ internal static class Sqlite3
             Handle = null;
             return rc;
         }
+
+        internal int ManualCloseV2()
+        {
+            if (Handle is null)
+            {
+                return SQLITE_OK;
+            }
+            int rc = Handle.manual_close_v2();
+            Handle = null;
+            return rc;
+        }
     }
 
     internal sealed class Vdbe : IDisposable
@@ -363,6 +374,16 @@ internal static class Sqlite3
         }
 
         return db.ManualClose();
+    }
+
+    public static int sqlite3_close_v2(sqlite3 db)
+    {
+        if (db is null || db.IsClosed)
+        {
+            return SQLITE_OK;
+        }
+
+        return db.ManualCloseV2();
     }
 
     public static int sqlite3_prepare(
