@@ -187,7 +187,10 @@ namespace IronPythonTest.Cases {
 
         // the module name of a StdLib file, for packages with relative imports to run with -m
         private static string GetModuleName(string path) {
-            return Path.GetRelativePath(IRONPYTHONPATH, Path.ChangeExtension(path, null)).Replace(Path.DirectorySeparatorChar, '.');
+            string root = string.IsNullOrEmpty(IRONPYTHONPATH)
+                ? GetStdLibPath()
+                : IRONPYTHONPATH;
+            return Path.GetRelativePath(root, Path.ChangeExtension(path, null)).Replace(Path.DirectorySeparatorChar, '.');
         }
 
         private string ReplaceVariables(string input, Dictionary<string, string> replacements) {
@@ -243,7 +246,13 @@ namespace IronPythonTest.Cases {
                 arguments.Add($"-X:MaxRecursion {testcase.Options.MaxRecursion}");
             if (testcase.Options.Tracing)
                 arguments.Add("-X:Tracing");
-            arguments.Add(ReplaceVariables(testcase.Options.Arguments ?? "\"$(TEST_FILE)\"", argReplacements));
+            string? configuredArguments = testcase.Options.Arguments;
+            if (configuredArguments is null && IsPackageTestCase(testcase.Path)) {
+                arguments.Add("-m");
+                arguments.Add(GetModuleName(testcase.Path));
+            } else {
+                arguments.Add(ReplaceVariables(configuredArguments ?? "\"$(TEST_FILE)\"", argReplacements));
+            }
 
             using (Process proc = new Process()) {
                 proc.StartInfo.FileName = Executable;
@@ -257,6 +266,18 @@ namespace IronPythonTest.Cases {
                     if (!string.IsNullOrEmpty(value)) {
                         proc.StartInfo.EnvironmentVariables[variable] = value;
                     }
+                }
+                string? dotnetHost = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+                if (string.IsNullOrEmpty(dotnetHost)
+                    && string.Equals(
+                        Path.GetFileNameWithoutExtension(Environment.ProcessPath),
+                        "dotnet",
+                        StringComparison.OrdinalIgnoreCase)) {
+                    dotnetHost = Environment.ProcessPath;
+                }
+                if (!string.IsNullOrEmpty(dotnetHost)
+                    && string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DOTNET_ROOT"))) {
+                    proc.StartInfo.EnvironmentVariables["DOTNET_ROOT"] = Path.GetDirectoryName(dotnetHost)!;
                 }
 
                 if (!string.IsNullOrEmpty(testcase.Options.WorkingDirectory)) {
@@ -298,6 +319,21 @@ namespace IronPythonTest.Cases {
                     }
                 }
             }
+        }
+
+        private static bool IsPackageTestCase(string path) {
+            string root = string.IsNullOrEmpty(IRONPYTHONPATH)
+                ? GetStdLibPath()
+                : IRONPYTHONPATH;
+            string? directory = Path.GetDirectoryName(path);
+            while (!string.IsNullOrEmpty(directory)
+                   && directory.StartsWith(root, StringComparison.Ordinal)) {
+                if (File.Exists(Path.Combine(directory, "__init__.py"))) {
+                    return true;
+                }
+                directory = Path.GetDirectoryName(directory);
+            }
+            return false;
         }
 
         private int GetScopeTest(TestInfo testcase) {
