@@ -1374,6 +1374,8 @@ internal static class Sqlite3
 
         string assemblyDirectory =
             Path.GetDirectoryName(typeof(Sqlite3).Assembly.Location)!;
+        string applicationDirectory =
+            Path.GetDirectoryName(assemblyDirectory) ?? assemblyDirectory;
         string runtimeIdentifier = GetRuntimeIdentifier();
         string[] candidates =
         [
@@ -1386,6 +1388,15 @@ internal static class Sqlite3
                     "native",
                     fileName),
             Path.Combine(assemblyDirectory, fileName),
+            runtimeIdentifier is null
+                ? string.Empty
+                : Path.Combine(
+                    applicationDirectory,
+                    "runtimes",
+                    runtimeIdentifier,
+                    "native",
+                    fileName),
+            Path.Combine(applicationDirectory, fileName),
         ];
 
         foreach (string candidate in candidates)

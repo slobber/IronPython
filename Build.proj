@@ -131,9 +131,23 @@
       <ExtensionDependencyFiles
           Include="$(BinDir)\$(Configuration)\*\DLLs\*.dll"
           Exclude="$(BinDir)\$(Configuration)\*\DLLs\IronPython.*.dll" />
+      <ExtensionDependencyNet10Files
+          Include="$(BinDir)\$(Configuration)\net10.0\DLLs\*.dll"
+          Exclude="$(BinDir)\$(Configuration)\net10.0\DLLs\IronPython.*.dll" />
+      <ExtensionDependencyNet11Files
+          Include="$(BinDir)\$(Configuration)\net11.0\DLLs\*.dll"
+          Exclude="$(BinDir)\$(Configuration)\net11.0\DLLs\IronPython.*.dll" />
+      <ExtensionDependencyRuntimeFiles
+          Include="$(BinDir)\$(Configuration)\*\DLLs\runtimes\**\*" />
     </ItemGroup>
 
     <Copy SourceFiles="@(ExtensionDependencyFiles)"
+          DestinationFolder="$(StageDir)\%(RecursiveDir)" />
+    <Copy SourceFiles="@(ExtensionDependencyNet10Files)"
+          DestinationFolder="$(StageDir)\net10.0" />
+    <Copy SourceFiles="@(ExtensionDependencyNet11Files)"
+          DestinationFolder="$(StageDir)\net11.0" />
+    <Copy SourceFiles="@(ExtensionDependencyRuntimeFiles)"
           DestinationFolder="$(StageDir)\%(RecursiveDir)" />
   </Target>
 

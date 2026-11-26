@@ -48,7 +48,7 @@ CONSUMER_PROJECT = """
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFramework>__FRAMEWORK__</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
   </PropertyGroup>
@@ -93,24 +93,35 @@ def verify_nupkg_contents(package_dir: Path, version: str, framework: str) -> No
         raise SystemExit(f"{package.name} is missing: {', '.join(missing)}")
 
 
-def verify_consumer(package_dir: Path, version: str, dotnet: str) -> None:
+def verify_consumer(
+    package_dir: Path,
+    version: str,
+    framework: str,
+    dotnet: str,
+) -> None:
     with tempfile.TemporaryDirectory(prefix="ironpython-package-consumer-") as temp:
         root = Path(temp)
         (root / "Program.cs").write_text(CONSUMER_PROGRAM, encoding="utf-8")
         (root / "consumer.csproj").write_text(
-            CONSUMER_PROJECT.replace("__VERSION__", version),
+            CONSUMER_PROJECT
+            .replace("__VERSION__", version)
+            .replace("__FRAMEWORK__", framework),
             encoding="utf-8",
         )
         (root / "NuGet.Config").write_text(
             NUGET_CONFIG.replace("__PACKAGE_DIR__", package_dir.as_posix()).strip() + "\n",
             encoding="utf-8",
         )
-        run([dotnet, "run", "-c", "Release"], root)
+        env = os.environ.copy()
+        env["NUGET_PACKAGES"] = str(root / ".nuget" / "packages")
+        run([dotnet, "run", "-c", "Release"], root, env)
 
 
 def verify_tool(package_dir: Path, version: str, dotnet: str) -> None:
     with tempfile.TemporaryDirectory(prefix="ironpython-tool-") as temp:
         root = Path(temp)
+        env = os.environ.copy()
+        env["NUGET_PACKAGES"] = str(root / ".nuget" / "packages")
         run(
             [
                 dotnet,
@@ -127,6 +138,7 @@ def verify_tool(package_dir: Path, version: str, dotnet: str) -> None:
                 "--no-cache",
             ],
             root,
+            env,
         )
         executable = root / ("ipy.exe" if os.name == "nt" else "ipy")
         run(
@@ -140,6 +152,7 @@ def verify_tool(package_dir: Path, version: str, dotnet: str) -> None:
                 "print('CONSOLE_TOOL_OK')",
             ],
             root,
+            env,
         )
 
 
@@ -194,7 +207,7 @@ def main() -> int:
 
     package_dir = Path(args.package_dir).resolve()
     verify_nupkg_contents(package_dir, args.version, args.framework)
-    verify_consumer(package_dir, args.version, args.dotnet)
+    verify_consumer(package_dir, args.version, args.framework, args.dotnet)
     verify_tool(package_dir, args.version, args.dotnet)
     verify_zip(package_dir, args.version, args.dotnet, args.framework)
     if sys.platform.startswith("linux"):
