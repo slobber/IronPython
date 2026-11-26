@@ -89,6 +89,20 @@ def main():
     native_posix_spawn()
     synchronous()
     print("SYNCHRONOUS_OK", flush=True)
+    if sys.platform != "win32":
+        spawn = os.posix_spawn
+
+        def traced_spawn(path, args, env, **kwargs):
+            print(
+                "POSIX_SPAWN_REQUEST",
+                path,
+                args,
+                kwargs,
+                flush=True,
+            )
+            return spawn(path, args, env, **kwargs)
+
+        os.posix_spawn = traced_spawn
     asyncio.run(asynchronous())
     print("ASYNC_SUBPROCESS_OK", flush=True)
     if sys.platform == "win32":
