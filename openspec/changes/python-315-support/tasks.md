@@ -86,7 +86,7 @@
   support required before `site.py` and package tests can run.
 - [x] 4.13 Record every temporary 3.15 bootstrap patch in
   `docs/python-3.15-bootstrap-patches.md`.
-- [ ] 4.14 Remove each bootstrap patch after its permanent implementation lands.
+- [x] 4.14 Remove each bootstrap patch after its permanent implementation lands.
 
 ## 5. Conformance harness and migration oracle
 
