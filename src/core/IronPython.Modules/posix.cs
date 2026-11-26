@@ -37,6 +37,7 @@ namespace IronPython.Modules {
         public const int POSIX_SPAWN_DUP2 = 2;
         public const int POSIX_SPAWN_CLOSEFROM = 3;
 
+        private const short POSIX_SPAWN_CLOEXEC_DEFAULT = 0x4000;
         private const int SpawnFileActionsBufferSize = 256;
         private const int SpawnAttributesBufferSize = 4096;
 
@@ -55,6 +56,16 @@ namespace IronPython.Modules {
         [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawnattr_destroy(
             IntPtr attributes);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int posix_spawnattr_setflags(
+            IntPtr attributes,
+            short flags);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int posix_spawn_file_actions_addinherit_np(
+            IntPtr fileActions,
+            int descriptor);
 
         [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawn_file_actions_addclose(
@@ -130,6 +141,7 @@ namespace IronPython.Modules {
 
             IntPtr actions = IntPtr.Zero;
             bool actionsInitialized = false;
+            bool useCloseOnExecDefault = false;
             int rc;
             if (kwargs is not null
                 && kwargs.TryGetValue("file_actions", out object? value)
@@ -142,7 +154,11 @@ namespace IronPython.Modules {
                 }
                 actionsInitialized = true;
                 try {
-                    ApplySpawnFileActions(context, actions, value);
+                    ApplySpawnFileActions(
+                        context,
+                        actions,
+                        value,
+                        out useCloseOnExecDefault);
                 } catch {
                     posix_spawn_file_actions_destroy(actions);
                     Marshal.FreeHGlobal(actions);
@@ -152,6 +168,32 @@ namespace IronPython.Modules {
 
             IntPtr attributes = IntPtr.Zero;
             bool attributesInitialized = false;
+            if (useCloseOnExecDefault) {
+                attributes = Marshal.AllocHGlobal(
+                    SpawnAttributesBufferSize);
+                rc = posix_spawnattr_init(attributes);
+                if (rc != 0) {
+                    Marshal.FreeHGlobal(attributes);
+                    if (actionsInitialized) {
+                        posix_spawn_file_actions_destroy(actions);
+                        Marshal.FreeHGlobal(actions);
+                    }
+                    throw GetLastUnixError(executable);
+                }
+                attributesInitialized = true;
+                rc = posix_spawnattr_setflags(
+                    attributes,
+                    POSIX_SPAWN_CLOEXEC_DEFAULT);
+                if (rc != 0) {
+                    posix_spawnattr_destroy(attributes);
+                    Marshal.FreeHGlobal(attributes);
+                    if (actionsInitialized) {
+                        posix_spawn_file_actions_destroy(actions);
+                        Marshal.FreeHGlobal(actions);
+                    }
+                    throw GetLastUnixError(executable);
+                }
+            }
 
             try {
                 NativeStringArray nativeArgv = new NativeStringArray(argv);
@@ -238,7 +280,8 @@ namespace IronPython.Modules {
         private static void ApplySpawnFileActions(
             CodeContext context,
             IntPtr actions,
-            object fileActions) {
+            object fileActions,
+            out bool useCloseOnExecDefault) {
             IEnumerator? enumerator;
             if (!PythonOps.TryGetEnumerator(
                     context,
@@ -251,6 +294,8 @@ namespace IronPython.Modules {
 
             try {
                 var closedDescriptors = new HashSet<int>();
+                var namedDescriptors = new HashSet<int>();
+                useCloseOnExecDefault = false;
                 while (enumerator.MoveNext()) {
                     if (enumerator.Current is not PythonTuple action
                         || action.Count == 0) {
@@ -264,9 +309,11 @@ namespace IronPython.Modules {
                     int rc;
                     switch (kind) {
                         case POSIX_SPAWN_OPEN:
+                            int openDescriptor = ToInt(action[1]!);
+                            namedDescriptors.Add(openDescriptor);
                             rc = posix_spawn_file_actions_addopen(
                                 actions,
-                                ToInt(action[1]!),
+                                openDescriptor,
                                 ConvertToFsString(
                                     context,
                                     action[2]!,
@@ -277,6 +324,7 @@ namespace IronPython.Modules {
                             break;
                         case POSIX_SPAWN_CLOSE:
                             int descriptor = ToInt(action[1]!);
+                            namedDescriptors.Add(descriptor);
                             rc = posix_spawn_file_actions_addclose(
                                 actions,
                                 descriptor);
@@ -285,6 +333,7 @@ namespace IronPython.Modules {
                             }
                             break;
                         case POSIX_SPAWN_DUP2:
+                            namedDescriptors.Add(ToInt(action[2]!));
                             rc = posix_spawn_file_actions_adddup2(
                                 actions,
                                 ToInt(action[1]!),
@@ -292,6 +341,11 @@ namespace IronPython.Modules {
                             break;
                         case POSIX_SPAWN_CLOSEFROM:
                             int start = ToInt(action[1]!);
+                            if (OperatingSystem.IsMacOS()) {
+                                useCloseOnExecDefault = true;
+                                rc = 0;
+                                break;
+                            }
                             try {
                                 rc = posix_spawn_file_actions_addclosefrom_np(
                                     actions,
@@ -316,6 +370,22 @@ namespace IronPython.Modules {
 
                     if (rc != 0) {
                         throw GetLastUnixError();
+                    }
+                }
+                if (useCloseOnExecDefault) {
+                    for (int fd = 0; fd <= 2; fd++) {
+                        if (namedDescriptors.Contains(fd)
+                            || Syscall.fcntl(
+                                fd,
+                                FcntlCommand.F_GETFD) == -1) {
+                            continue;
+                        }
+                        int rc = posix_spawn_file_actions_addinherit_np(
+                            actions,
+                            fd);
+                        if (rc != 0) {
+                            throw GetLastUnixError();
+                        }
                     }
                 }
             } finally {
