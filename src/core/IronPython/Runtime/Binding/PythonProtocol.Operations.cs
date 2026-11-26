@@ -444,7 +444,17 @@ namespace IronPython.Runtime.Binding {
 
         private static DynamicMetaObject MakeEnumeratorOperation(PythonOperationBinder operation, DynamicMetaObject self) {
             PythonContext state = PythonContext.GetPythonContext(operation);
-            if (self.GetLimitType() == typeof(string)) {
+            if (self.Value is UnionType) {
+                self = self.Restrict(self.GetLimitType());
+                return new DynamicMetaObject(
+                    Ast.Block(
+                        Ast.Throw(
+                            Ast.Call(
+                                typeof(PythonOps).GetMethod(nameof(PythonOps.TypeErrorForNotIterable)),
+                                Ast.Convert(self.Expression, typeof(object)))),
+                        Ast.Default(typeof(KeyValuePair<IEnumerator, IDisposable>))),
+                    self.Restrictions);
+            } else if (self.GetLimitType() == typeof(string)) {
                 self = self.Restrict(self.GetLimitType());
 
                 return new DynamicMetaObject(

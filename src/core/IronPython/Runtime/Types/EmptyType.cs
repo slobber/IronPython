@@ -105,5 +105,13 @@ namespace IronPython.Runtime.Types {
         public static string __repr__(DynamicNull self) {
             return "None";
         }
+
+        public static object __or__(DynamicNull self, object other) {
+            return UnionType.MakeUnion(null, other);
+        }
+
+        public static object __ror__(DynamicNull self, object other) {
+            return UnionType.MakeUnion(other, null);
+        }
     }
 }

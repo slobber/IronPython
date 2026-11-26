@@ -487,7 +487,7 @@ namespace IronPython.Modules {
                         }
                         _groups = d;
                     }
-                    return new MappingProxy(_groups);
+                    return new MappingProxy(DefaultContext.Default, _groups);
                 }
             }
 

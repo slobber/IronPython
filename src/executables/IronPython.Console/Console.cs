@@ -48,7 +48,16 @@ internal sealed class PythonConsoleHost : ConsoleHost {
 
     protected override IConsole CreateConsole(ScriptEngine engine, CommandLine commandLine, ConsoleOptions options) {
         PythonConsoleOptions pyoptions = (PythonConsoleOptions)options;
-        return pyoptions.BasicConsole ? new BasicConsole(options) : new SuperConsole(commandLine, options);
+        bool useBasicConsole = pyoptions.BasicConsole
+            || Console.IsInputRedirected
+            || Console.IsOutputRedirected
+            || string.Equals(
+                Environment.GetEnvironmentVariable("TERM"),
+                "dumb",
+                StringComparison.OrdinalIgnoreCase);
+        return useBasicConsole
+            ? new BasicConsole(options)
+            : new SuperConsole(commandLine, options);
     }
 
     protected override ConsoleOptions ParseOptions(string[] args, ScriptRuntimeSetup runtimeSetup, LanguageSetup languageSetup) {

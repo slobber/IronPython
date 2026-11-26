@@ -665,6 +665,12 @@ namespace IronPython.Runtime.Types {
             return value;
         }
 
+        internal static object? SubstituteTypeArgument(
+            object? value,
+            PythonTuple parameters,
+            PythonTuple replacements)
+            => Substitute(value, parameters, replacements);
+
         private static PythonTuple BindReplacements(
             PythonTuple parameters,
             PythonTuple arguments) {
@@ -831,17 +837,23 @@ namespace IronPython.Runtime.Types {
     }
 
     [PythonType("UnionType")]
-    public sealed class UnionType : ICodeFormattable {
-        public static object __class_getitem__([NotNone] PythonTuple parameters) {
-            if (parameters.Count == 2) {
-                return MakeUnion(parameters[0], parameters[1]);
+    public sealed class UnionType : ICodeFormattable, IPythonMembersList {
+        private readonly PythonTuple _hashableArgs;
+        private readonly PythonTuple _unhashableArgs;
+
+        public static object __class_getitem__([NotNone] object parameters) {
+            if (parameters is not PythonTuple tuple) {
+                return parameters;
             }
-            if (parameters.Count == 0) {
+            if (tuple.Count == 2) {
+                return MakeUnion(tuple[0], tuple[1]);
+            }
+            if (tuple.Count == 0) {
                 throw PythonOps.TypeError("UnionType requires at least two arguments");
             }
-            object result = parameters[0]!;
-            for (int i = 1; i < parameters.Count; i++) {
-                result = MakeUnion(result, parameters[i]);
+            object result = tuple[0]!;
+            for (int i = 1; i < tuple.Count; i++) {
+                result = MakeUnion(result, tuple[i]);
             }
             return result;
         }
@@ -853,11 +865,22 @@ namespace IronPython.Runtime.Types {
                 : union;
         }
 
-        public UnionType(object? left, object? right) {
+        private UnionType(object? left, object? right) {
             var members = new List<object>();
-            AddMembers(members, left);
-            AddMembers(members, right);
+            var hashable = new List<object>();
+            var unhashable = new List<object>();
+            AddMembers(members, hashable, unhashable, left);
+            AddMembers(members, hashable, unhashable, right);
             __args__ = PythonTuple.MakeTuple(members.ToArray());
+            _hashableArgs = PythonTuple.MakeTuple(hashable.ToArray());
+            _unhashableArgs = PythonTuple.MakeTuple(unhashable.ToArray());
+        }
+
+        public static object __new__(
+            [NotNone] PythonType cls,
+            [NotNone] params object[] args) {
+            throw PythonOps.TypeError(
+                "cannot create 'types.UnionType' instances");
         }
 
         public PythonTuple __args__ { get; }
@@ -868,11 +891,44 @@ namespace IronPython.Runtime.Types {
 
         public string __module__ => "typing";
 
+        public PythonType __origin__ => DynamicHelpers.GetPythonType(this);
+
+        [SpecialName]
+        public object? GetCustomMember(CodeContext context, [NotNone] string name) {
+            if (name == "__origin__") {
+                return DynamicHelpers.GetPythonType(this);
+            }
+            return OperationFailed.Value;
+        }
+
+        public object __mro_entries__(
+            CodeContext context,
+            [NotNone] object bases) {
+            throw PythonOps.TypeError(
+                "Cannot subclass {0}",
+                PythonOps.Repr(context, this));
+        }
+
+        IList<object?> IPythonMembersList.GetMemberNames(
+            CodeContext context) {
+            var names = DynamicHelpers.GetPythonType(this)
+                .GetMemberNames(context, this);
+            if (!names.Contains("__origin__")) {
+                names.Add("__origin__");
+            }
+            if (!names.Contains("__mro_entries__")) {
+                names.Add("__mro_entries__");
+            }
+            return names;
+        }
+
+        IList<string> IMembersList.GetMemberNames()
+            => PythonOps.GetStringMemberList(this);
+
         public bool _typing_is_non_iterable => true;
 
         public object? __iter__() => throw PythonOps.TypeError(
-            "'{0}' object is not iterable",
-            PythonOps.GetPythonTypeName(this));
+            "'UnionType' object is not iterable");
 
         public PythonTuple __parameters__ {
             get {
@@ -883,25 +939,29 @@ namespace IronPython.Runtime.Types {
         }
 
         public object __getitem__(CodeContext context, [NotNone] object item) {
+            PythonTuple parameters = __parameters__;
+            if (parameters.Count == 0) {
+                throw PythonOps.TypeError(
+                    "{0} is not a generic class",
+                    PythonOps.Repr(context, this));
+            }
+            PythonTuple replacements = item is PythonTuple tuple
+                ? tuple
+                : PythonTuple.MakeTuple(item);
+            if (replacements.Count != parameters.Count) {
+                throw PythonOps.TypeError(
+                    "Too {0} arguments for {1}; actual {2}, expected {3}",
+                    replacements.Count > parameters.Count ? "many" : "few",
+                    PythonOps.Repr(context, this),
+                    replacements.Count,
+                    parameters.Count);
+            }
             object? result = null;
             foreach (object? member in __args__) {
-                object specialized = member!;
-                if (member is not null
-                    && PythonOps.TryGetBoundAttr(
-                        context,
-                        member,
-                        "__parameters__",
-                        out object? parameters)
-                    && parameters is PythonTuple parameterTuple
-                    && parameterTuple.Count != 0
-                    && PythonOps.TryGetBoundAttr(
-                        context,
-                        member,
-                        "__getitem__",
-                        out object? getItem)
-                    && getItem is not null) {
-                    specialized = PythonCalls.Call(context, getItem, item)!;
-                }
+                object specialized = GenericAlias.SubstituteTypeArgument(
+                    member,
+                    parameters,
+                    replacements)!;
                 result = result is null
                     ? specialized
                     : MakeUnion(result, specialized);
@@ -923,12 +983,18 @@ namespace IronPython.Runtime.Types {
                 __args__.Select(item => FormatUnionMember(context, item)));
         }
 
-        public int __hash__() {
-            int result = 0;
-            foreach (object? argument in __args__) {
-                result ^= argument?.GetHashCode() ?? 0;
+        public int __hash__(CodeContext context) {
+            if (_unhashableArgs.Count != 0) {
+                foreach (object? argument in _unhashableArgs) {
+                    PythonOps.Hash(context, argument!);
+                }
+                throw PythonOps.TypeError(
+                    "union contains {0} unhashable elements",
+                    _unhashableArgs.Count);
             }
-            return result;
+            return PythonOps.Hash(
+                context,
+                FrozenSetCollection.Make(_hashableArgs));
         }
 
         public PythonTuple __reduce_ex__(int protocol) {
@@ -960,36 +1026,223 @@ namespace IronPython.Runtime.Types {
         public PythonTuple __reduce__() => __reduce_ex__(0);
 
         public object __eq__([NotNone] object other) {
-            var members = new List<object>();
-            foreach (object? member in __args__) AddMembers(members, member);
             IReadOnlyList<object?> otherMembers = GetUnionMembers(other);
-            return otherMembers.Count != 0
-                && members.Count == otherMembers.Count
-                && members.All(argument =>
-                    otherMembers.Any(candidate => PythonOps.EqualRetBool(argument, candidate)));
+            if (otherMembers.Count == 0) return false;
+            var otherHashable = new List<object>();
+            var otherUnhashable = new List<object>();
+            foreach (object? member in otherMembers) {
+                ClassifyMember(member, otherHashable, otherUnhashable);
+            }
+            return _hashableArgs.Count == otherHashable.Count
+                && _unhashableArgs.Count == otherUnhashable.Count
+                && ContainsAll(_hashableArgs, otherHashable)
+                && ContainsAll(_unhashableArgs, otherUnhashable);
         }
 
         public object __ne__([NotNone] object other) {
-            var members = new List<object>();
-            foreach (object? member in __args__) AddMembers(members, member);
-            IReadOnlyList<object?> otherMembers = GetUnionMembers(other);
-            return !(otherMembers.Count != 0
-                && members.Count == otherMembers.Count
-                && members.All(argument =>
-                    otherMembers.Any(candidate => PythonOps.EqualRetBool(argument, candidate))));
+            return !PythonOps.IsTrue(__eq__(other));
         }
 
-        private static void AddMembers(List<object> members, object? value) {
+        public bool __instancecheck__(
+            CodeContext context,
+            object? instance) {
+            foreach (object? member in _hashableArgs) {
+                EnsureRuntimeType(member!);
+                if (InstanceMatches(context, instance, member!)) {
+                    return true;
+                }
+            }
+            foreach (object? member in _unhashableArgs) {
+                EnsureRuntimeType(member!);
+                if (InstanceMatches(context, instance, member!)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static bool InstanceMatches(
+            CodeContext context,
+            object? instance,
+            object member) {
+            if (member is PythonType type) {
+                return PythonOps.IsInstance(instance, type);
+            }
+            if (PythonOps.TryGetBoundAttr(
+                    context,
+                    member,
+                    "__instancecheck__",
+                    out object? instanceCheck)
+                && instanceCheck is not null) {
+                return PythonOps.IsTrue(
+                    PythonCalls.Call(context, instanceCheck, instance));
+            }
+            throw PythonOps.TypeError(
+                "isinstance() arg 2 must be a type, a tuple of types, or a union");
+        }
+
+        public bool __subclasscheck__(
+            CodeContext context,
+            object? instance) {
+            PythonType cls = instance as PythonType
+                ?? DynamicHelpers.GetPythonType(instance);
+            foreach (object? member in _hashableArgs) {
+                EnsureRuntimeType(member!);
+                if (PythonOps.IsSubClass(context, cls, member)) {
+                    return true;
+                }
+            }
+            foreach (object? member in _unhashableArgs) {
+                EnsureRuntimeType(member!);
+                if (PythonOps.IsSubClass(context, cls, member)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        private static void EnsureRuntimeType(object member) {
+            if (member is GenericAlias) {
+                throw PythonOps.TypeError(
+                    "Subscripted generics cannot be used with class and instance checks");
+            }
+        }
+
+        private static void AddMembers(
+            List<object> members,
+            List<object> hashable,
+            List<object> unhashable,
+            object? value) {
+            value = TypeCheck(value);
             IReadOnlyList<object?> nestedMembers = GetUnionMembers(value);
             if (nestedMembers.Count != 0) {
-                foreach (object? member in nestedMembers) AddMembers(members, member);
-            } else if (
-                DynamicHelpers.GetPythonType(value).Name == "_Stringifier"
-                || !members.Any(member =>
-                    DynamicHelpers.GetPythonType(member).Name != "_Stringifier"
-                    && PythonOps.EqualRetBool(member, value))) {
-                members.Add(value!);
+                foreach (object? member in nestedMembers) {
+                    AddMembers(members, hashable, unhashable, member);
+                }
+                return;
             }
+            bool isHashable;
+            try {
+                PythonOps.Hash(DefaultContext.Default, value!);
+                isHashable = true;
+            } catch (Exception) {
+                isHashable = false;
+            }
+            List<object> category = isHashable ? hashable : unhashable;
+            if (category.Any(existing =>
+                    PythonOps.EqualRetBool(existing, value))) {
+                return;
+            }
+            category.Add(value!);
+            members.Add(value!);
+        }
+
+        private static object TypeCheck(object? value) {
+            if (value is null) {
+                return TypeCache.Null;
+            }
+            if (value is PythonType
+                or GenericAlias
+                or UnionType
+                or TypeAliasObject) {
+                return value;
+            }
+            if (PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        value,
+                        "__typing_subst__",
+                        out _)
+                    || PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        value,
+                        "__origin__",
+                        out _)
+                    || PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        value,
+                        "__supertype__",
+                        out _)
+                    || PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        value,
+                        "__forward_arg__",
+                        out _)) {
+                return value;
+            }
+            PythonType runtimeType = DynamicHelpers.GetPythonType(value);
+            PythonOps.GetBoundAttr(
+                DefaultContext.Default,
+                runtimeType,
+                "__module__");
+            if (runtimeType.Name == "_SpecialForm"
+                && PythonType.Get__module__(
+                    DefaultContext.Default,
+                    runtimeType) is "typing" or "typing_extensions") {
+                return value;
+            }
+            object typing = Importer.ImportModule(
+                DefaultContext.Default,
+                null,
+                "typing",
+                false,
+                0);
+            object typeCheck = PythonOps.GetBoundAttr(
+                DefaultContext.Default,
+                typing,
+                "_type_check");
+            object checkedValue = PythonCalls.Call(
+                DefaultContext.Default,
+                typeCheck,
+                value,
+                "Union[arg, ...]: each arg must be a type.")!;
+            if (checkedValue is PythonType
+                or GenericAlias
+                or UnionType
+                or TypeAliasObject
+                || PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    checkedValue,
+                    "__typing_subst__",
+                    out _)
+                || PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    checkedValue,
+                    "__origin__",
+                    out _)
+                || PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    checkedValue,
+                    "__supertype__",
+                    out _)
+                || PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    checkedValue,
+                    "__forward_arg__",
+                    out _)) {
+                return checkedValue;
+            }
+            throw PythonOps.TypeError(
+                "Union[arg, ...]: each arg must be a type.");
+        }
+
+        private static void ClassifyMember(
+            object? value,
+            List<object> hashable,
+            List<object> unhashable) {
+            try {
+                PythonOps.Hash(DefaultContext.Default, value!);
+                hashable.Add(value!);
+            } catch (Exception) {
+                unhashable.Add(value!);
+            }
+        }
+
+        private static bool ContainsAll(
+            IReadOnlyList<object?> left,
+            IReadOnlyList<object> right) {
+            return left.All(argument =>
+                right.Any(candidate =>
+                    PythonOps.EqualRetBool(argument, candidate)));
         }
 
         private static IReadOnlyList<object?> GetUnionMembers(object? value) {

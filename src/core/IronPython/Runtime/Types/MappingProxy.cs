@@ -19,8 +19,20 @@ using IronPython.Runtime.Operations;
 
 namespace IronPython.Runtime.Types {
     [PythonType("mappingproxy")]
-    public sealed class MappingProxy : IDictionary<object?, object?>, IDictionary {
-        internal PythonDictionary GetDictionary(CodeContext context) => dictionary ?? type!.GetMemberDictionary(context, false);
+    public sealed class MappingProxy {
+        internal PythonDictionary GetDictionary(CodeContext context) {
+            if (dictionary is not null) return dictionary;
+            if (type is not null) return type.GetMemberDictionary(context, false);
+            var result = new PythonDictionary();
+            result.update(context, source!);
+            return result;
+        }
+
+        private object GetMapping(CodeContext context) {
+            if (dictionary is not null) return dictionary;
+            if (type is not null) return type.GetMemberDictionary(context, false);
+            return source!;
+        }
 
         private bool TryGetValue(CodeContext context, object? key, out object? value) {
             if (dictionary is not null) {
@@ -39,23 +51,60 @@ namespace IronPython.Runtime.Types {
 
         private readonly PythonDictionary? dictionary;
         private readonly PythonType? type;
+        private readonly object? source;
 
         internal MappingProxy(CodeContext context, PythonType/*!*/ dt) {
             Debug.Assert(dt != null);
             type = dt;
         }
 
-        public MappingProxy([NotNone] PythonDictionary dict) {
-            dictionary = dict;
+        public MappingProxy(CodeContext context, [NotNone] object value) {
+            if (value is PythonDictionary dict) {
+                dictionary = dict;
+                return;
+            }
+            if (!PythonOps.TryGetBoundAttr(
+                    context,
+                    value,
+                    "keys",
+                    out object? keys)
+                || keys is null) {
+                throw PythonOps.TypeError(
+                    "mappingproxy() argument must be a mapping, not '{0}'",
+                    PythonOps.GetPythonTypeName(value));
+            }
+            source = value;
         }
 
         #region Python Public API Surface
 
-        public int __len__(CodeContext context) => GetDictionary(context).Count;
+        public int __len__(CodeContext context)
+            => PythonOps.Length(GetMapping(context));
 
-        public bool __contains__(CodeContext/*!*/ context, object? value) => TryGetValue(context, value, out _);
+        public bool __contains__(CodeContext/*!*/ context, object? value) {
+            return PythonTypeOps.TryInvokeBinaryOperator(
+                    context,
+                    GetMapping(context),
+                    value!,
+                    "__contains__",
+                    out object? result)
+                && PythonOps.IsTrue(result);
+        }
 
-        public string/*!*/ __str__(CodeContext/*!*/ context) => DictionaryOps.__repr__(context, this);
+        public object? __getitem__(CodeContext context, object? key) {
+            object mapping = GetMapping(context);
+            if (PythonOps.TryGetBoundAttr(
+                    context,
+                    mapping,
+                    "__getitem__",
+                    out object? getItem)
+                && getItem is not null) {
+                return PythonCalls.Call(context, getItem, key);
+            }
+            return PythonOps.GetIndex(context, mapping, key!);
+        }
+
+        public string/*!*/ __str__(CodeContext/*!*/ context) => __repr__(context);
 
         public string __repr__(CodeContext/*!*/ context) {
             var dict = GetDictionary(context);
@@ -75,6 +124,15 @@ namespace IronPython.Runtime.Types {
         }
 
         public object? get(CodeContext/*!*/ context, object? k, object? d = null) {
+            object mapping = GetMapping(context);
+            if (PythonOps.TryGetBoundAttr(
+                    context,
+                    mapping,
+                    "get",
+                    out object? getMethod)
+                && getMethod is not null) {
+                return PythonCalls.Call(context, getMethod, k, d);
+            }
             if (TryGetValue(context, k, out object? res)) {
                 return res;
             }
@@ -83,159 +141,213 @@ namespace IronPython.Runtime.Types {
         }
 
         public object keys(CodeContext context) {
-            var dict = GetDictionary(context);
-            if (dict.GetType() == typeof(PythonDictionary)) return dict.keys();
-            PythonTypeOps.TryInvokeUnaryOperator(context, dict, nameof(dict.keys), out object keys);
-            return keys;
+            object mapping = GetMapping(context);
+            return PythonTypeOps.TryInvokeUnaryOperator(
+                    context,
+                    mapping,
+                    "keys",
+                    out object? result)
+                ? result!
+                : throw PythonOps.TypeError("'mappingproxy' object has no attribute 'keys'");
         }
 
         public object values(CodeContext context) {
-            var dict = GetDictionary(context);
-            if (dict.GetType() == typeof(PythonDictionary)) return dict.values();
-            PythonTypeOps.TryInvokeUnaryOperator(context, dict, nameof(dict.values), out object values);
-            return values;
+            object mapping = GetMapping(context);
+            return PythonTypeOps.TryInvokeUnaryOperator(
+                    context,
+                    mapping,
+                    "values",
+                    out object? result)
+                ? result!
+                : throw PythonOps.TypeError("'mappingproxy' object has no attribute 'values'");
         }
 
         public object items(CodeContext context) {
-            var dict = GetDictionary(context);
-            if (dict.GetType() == typeof(PythonDictionary)) return dict.items();
-            PythonTypeOps.TryInvokeUnaryOperator(context, dict, nameof(dict.items), out object items);
-            return items;
+            object mapping = GetMapping(context);
+            return PythonTypeOps.TryInvokeUnaryOperator(
+                    context,
+                    mapping,
+                    "items",
+                    out object? result)
+                ? result!
+                : throw PythonOps.TypeError("'mappingproxy' object has no attribute 'items'");
         }
 
-        public PythonDictionary copy(CodeContext/*!*/ context) => GetDictionary(context).copy(context);
+        public object copy(CodeContext/*!*/ context) {
+            object mapping = GetMapping(context);
+            if (mapping is PythonDictionary dictionary
+                && DynamicHelpers.GetPythonType(mapping).Name == "dict") {
+                return dictionary.copy(context);
+            }
+            if (PythonOps.TryGetBoundAttr(
+                    context,
+                    mapping,
+                    "copy",
+                    out object? copyMethod)
+                && copyMethod is not null) {
+                return PythonOps.Invoke(context, mapping, "copy")!;
+            }
+            return GetDictionary(context).copy(context);
+        }
 
-        public const object __hash__ = null;
+        public int __hash__(CodeContext context)
+            => PythonOps.Hash(context, GetMapping(context));
 
         public object __eq__(CodeContext/*!*/ context, object? other) {
             if (other is MappingProxy proxy) {
-                if (type == null) {
-                    return __eq__(context, proxy.GetDictionary(context));
+                other = proxy.GetMapping(context);
+            }
+            if (other is null) {
+                return false;
+            }
+            if (PythonTypeOps.TryInvokeBinaryOperator(
+                    context,
+                    GetMapping(context),
+                    other,
+                    "__eq__",
+                    out object? result)) {
+                if (!ReferenceEquals(result, NotImplementedType.Value)) {
+                    return result!;
                 }
-
-                return type == proxy.type;
             }
-
-            if (other is PythonDictionary) {
-                return ((IStructuralEquatable)GetDictionary(context)).Equals(other, DefaultContext.DefaultPythonContext.EqualityComparerNonGeneric);
+            object mapping = GetMapping(context);
+            object copy = DynamicHelpers.GetPythonType(mapping).Name == "dict"
+                ? ShallowCopy(context, mapping)
+                : mapping;
+            if (PythonTypeOps.TryInvokeBinaryOperator(
+                    context,
+                    other,
+                    copy,
+                    "__eq__",
+                    out result)
+                && !ReferenceEquals(result, NotImplementedType.Value)) {
+                return result!;
             }
-
             return false;
         }
 
-        #endregion
-
-        #region IDictionary Members
-
-        public object? this[object? key] {
-            get => TryGetValue(DefaultContext.Default, key, out object? value) ? value : throw PythonOps.KeyError(key);
-            [PythonHidden]
-            set => throw PythonOps.TypeError("'mappingproxy' object does not support item assignment");
+        public object __ne__(CodeContext context, object? other) {
+            object result = __eq__(context, other);
+            return !PythonOps.IsTrue(result);
         }
 
-        bool IDictionary.Contains(object key) => __contains__(DefaultContext.Default, key);
-
-        #endregion              
-
-        #region IEnumerable Members
-
-        IEnumerator IEnumerable.GetEnumerator() => GetDictionary(DefaultContext.Default).keys().GetEnumerator();
-
-        #endregion
-
-        #region IDictionary Members
-
-        [PythonHidden]
-        public void Add(object? key, object? value) {
-            this[key] = value;
-        }
-
-        [PythonHidden]
-        public void Clear() => throw new InvalidOperationException("mappingproxy is read-only");
-
-        IDictionaryEnumerator IDictionary.GetEnumerator() => ((IDictionary)GetDictionary(DefaultContext.Default)).GetEnumerator();
-
-        bool IDictionary.IsFixedSize => true;
-
-        bool IDictionary.IsReadOnly => true;
-
-        ICollection IDictionary.Keys {
-            get {
-                ICollection<object> res = GetDictionary(DefaultContext.Default).Keys;
-                if (res is ICollection coll) {
-                    return coll;
-                }
-
-                return new List<object>(res);
+        public object __or__(CodeContext context, object? other) {
+            object value = other is MappingProxy proxy
+                ? proxy.GetMapping(context)
+                : other!;
+            if (PythonTypeOps.TryInvokeBinaryOperator(
+                    context,
+                    GetMapping(context),
+                    value,
+                    "__or__",
+                    out object? result)
+                && !ReferenceEquals(result, NotImplementedType.Value)) {
+                return result!;
             }
+            throw PythonOps.TypeError(
+                "unsupported operand type(s) for |: 'mappingproxy' and '{0}'",
+                PythonOps.GetPythonTypeName(other));
         }
 
-        void IDictionary.Remove(object key) => throw new InvalidOperationException("mappingproxy is read-only");
-
-        ICollection IDictionary.Values {
-            get {
-                var res = new List<object>();
-                foreach (KeyValuePair<object, object> kvp in GetDictionary(DefaultContext.Default)) {
-                    res.Add(kvp.Value);
-                }
-                return res;
+        public object __ror__(CodeContext context, object? other) {
+            object value = other is MappingProxy proxy
+                ? proxy.GetMapping(context)
+                : other!;
+            if (PythonTypeOps.TryInvokeBinaryOperator(
+                    context,
+                    value,
+                    GetDictionary(context),
+                    "__or__",
+                    out object? result)
+                && !ReferenceEquals(result, NotImplementedType.Value)) {
+                return result!;
             }
+            throw PythonOps.TypeError(
+                "unsupported operand type(s) for |: '{0}' and 'mappingproxy'",
+                PythonOps.GetPythonTypeName(other));
         }
 
-        #endregion
-
-        #region ICollection Members
-
-        void ICollection.CopyTo(Array array, int index) => throw new NotImplementedException("The method or operation is not implemented.");
-
-        int ICollection.Count => __len__(DefaultContext.Default);
-
-        bool ICollection.IsSynchronized => false;
-
-        object ICollection.SyncRoot => this;
-
-        #endregion
-
-        #region IDictionary<object,object> Members
-
-        bool IDictionary<object?, object?>.ContainsKey(object? key) => __contains__(DefaultContext.Default, key);
-
-        ICollection<object?> IDictionary<object?, object?>.Keys => GetDictionary(DefaultContext.Default).Keys;
-
-        bool IDictionary<object?, object?>.Remove(object? key) => throw new InvalidOperationException("mappingproxy is read-only");
-
-        bool IDictionary<object?, object?>.TryGetValue(object? key, out object? value) => TryGetValue(DefaultContext.Default, key, out value);
-
-        ICollection<object?> IDictionary<object?, object?>.Values => GetDictionary(DefaultContext.Default).Values;
-
-        #endregion
-
-        #region ICollection<KeyValuePair<object,object>> Members
-
-        void ICollection<KeyValuePair<object?, object?>>.Add(KeyValuePair<object?, object?> item) {
-            this[item.Key] = item.Value;
+        public object __ior__(CodeContext context, object? other) {
+            throw PythonOps.TypeError(
+                "unsupported operand type(s) for |=: 'mappingproxy' and '{0}'",
+                PythonOps.GetPythonTypeName(other));
         }
 
-        bool ICollection<KeyValuePair<object?, object?>>.Contains(KeyValuePair<object?, object?> item) => __contains__(DefaultContext.Default, item.Key);
-
-        void ICollection<KeyValuePair<object?, object?>>.CopyTo(KeyValuePair<object?, object?>[] array, int arrayIndex) {
-            foreach (KeyValuePair<object?, object?> de in (IEnumerable<KeyValuePair<object?, object?>>)this) {
-                array.SetValue(de, arrayIndex++);
+        public object __iter__(CodeContext context) {
+            object mapping = GetMapping(context);
+            if (PythonTypeOps.TryInvokeUnaryOperator(
+                    context,
+                    mapping,
+                    "__iter__",
+                    out object? result)) {
+                return result!;
             }
+            return PythonOps.GetEnumerator(context, mapping);
         }
 
-        int ICollection<KeyValuePair<object?, object?>>.Count => __len__(DefaultContext.Default);
+        public IEnumerator __reversed__(CodeContext context) {
+            var keys = new List<object?>();
+            IEnumerator enumerator = PythonOps.GetEnumerator(
+                context,
+                GetMapping(context));
+            while (enumerator.MoveNext()) {
+                keys.Add(enumerator.Current);
+            }
+            keys.Reverse();
+            return keys.GetEnumerator();
+        }
 
-        bool ICollection<KeyValuePair<object?, object?>>.IsReadOnly => true;
+        public static GenericAlias __class_getitem__(
+            [NotNone] PythonTuple parameters) {
+            return new GenericAlias(
+                DynamicHelpers.GetPythonTypeFromType(typeof(MappingProxy)),
+                parameters.ToArray());
+        }
 
-        bool ICollection<KeyValuePair<object?, object?>>.Remove(KeyValuePair<object?, object?> item) => ((IDictionary<object?, object?>)this).Remove(item.Key);
+        public object __lt__(CodeContext context, object? other)
+            => ThrowUnsupportedComparison(context, other);
+
+        public object __le__(CodeContext context, object? other)
+            => ThrowUnsupportedComparison(context, other);
+
+        public object __gt__(CodeContext context, object? other)
+            => ThrowUnsupportedComparison(context, other);
+
+        public object __ge__(CodeContext context, object? other)
+            => ThrowUnsupportedComparison(context, other);
+
+        private static object ThrowUnsupportedComparison(
+            CodeContext context,
+            object? other) {
+            throw PythonOps.TypeError(
+                "not supported between instances of 'mappingproxy' and '{0}'",
+                GetQualifiedTypeName(other));
+        }
+
+        private static object ShallowCopy(CodeContext context, object value) {
+            object copyModule = Importer.ImportModule(
+                context,
+                null,
+                "copy",
+                false,
+                0);
+            object copy = PythonOps.GetBoundAttr(
+                context,
+                copyModule,
+                "copy");
+            return PythonCalls.Call(context, copy, value)!;
+        }
+
+        private static string GetQualifiedTypeName(object? value) {
+            if (value is MappingProxy) return "mappingproxy";
+            PythonType type = DynamicHelpers.GetPythonType(value);
+            string? module = PythonType.Get__module__(DefaultContext.Default, type) as string;
+            return module == "collections"
+                ? module + "." + type.Name
+                : type.Name;
+        }
 
         #endregion
 
-        #region IEnumerable<KeyValuePair<object,object>> Members
-
-        IEnumerator<KeyValuePair<object?, object?>> IEnumerable<KeyValuePair<object?, object?>>.GetEnumerator() => GetDictionary(DefaultContext.Default).GetEnumerator();
-
-        #endregion
     }
 }

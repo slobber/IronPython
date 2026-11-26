@@ -433,6 +433,9 @@ namespace IronPython.Hosting {
 
         protected override string Prompt {
             get {
+                if (System.Console.IsInputRedirected) {
+                    return string.Empty;
+                }
                 if (Engine.GetSysModule().TryGetVariable("ps1", out object? value)) {
                     var context = ((PythonScopeExtension)Scope.GetExtension(Language.ContextId)!).ModuleContext.GlobalContext;
 
@@ -445,6 +448,9 @@ namespace IronPython.Hosting {
 
         public override string PromptContinuation {
             get {
+                if (System.Console.IsInputRedirected) {
+                    return string.Empty;
+                }
                 if (Engine.GetSysModule().TryGetVariable("ps2", out object? value)) {
                     var context = ((PythonScopeExtension)Scope.GetExtension(Language.ContextId)!).ModuleContext.GlobalContext;
 

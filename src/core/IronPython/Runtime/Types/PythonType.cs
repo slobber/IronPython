@@ -52,6 +52,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         // commonly calculatable
         private List<PythonType> _resolutionOrder;          // the search order for methods in the type
         private PythonType/*!*/[]/*!*/ _bases;              // the base classes of the type
+        private object _basesStorage;
         private BuiltinFunction _ctor;                      // the built-in function which allocates an instance - a .NET ctor
         private Type _finalSystemType;                      // base .NET type if we're inherited from another Python-like type.
 
@@ -374,6 +375,10 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             _dict[name] = ToTypeSlot(value);
         }
 
+        internal void SetModuleName(string moduleName) {
+            _moduleName = moduleName;
+        }
+
         [SpecialName, PropertyMethod, WrapperDescriptor]
         public static PythonTuple Get__type_params__([NotNone] PythonType self) {
             if (self._dict is not null
@@ -390,20 +395,79 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             return PythonTuple.EMPTY;
         }
 
-        public static object? __new__(CodeContext/*!*/ context, [NotNone] PythonType cls, [NotNone] string typeName, [NotNone] PythonTuple typeBases, [NotNone] PythonDictionary typeDict) {
-            RejectMroEntries(context, typeBases);
-            return __new__(context, cls, typeName, typeBases, typeDict, string.Empty, null);
+        public static object? __new__(CodeContext/*!*/ context, [NotNone] PythonType cls, [NotNone] string typeName, [NotNone] object typeBases, [NotNone] PythonDictionary typeDict) {
+            return CreateType(
+                context,
+                cls,
+                typeName,
+                typeBases,
+                typeDict,
+                null);
         }
 
         public static object? __new__(
             CodeContext context,
             [NotNone] PythonType cls,
             [NotNone] string typeName,
-            [NotNone] PythonTuple typeBases,
+            [NotNone] object typeBases,
             [NotNone] PythonDictionary typeDict,
             [ParamDictionary] IDictionary<object, object> keywordArguments) {
-            RejectMroEntries(context, typeBases);
-            return __new__(context, cls, typeName, typeBases, typeDict, string.Empty, keywordArguments);
+            return CreateType(
+                context,
+                cls,
+                typeName,
+                typeBases,
+                typeDict,
+                keywordArguments);
+        }
+
+        private static object? CreateType(
+            CodeContext context,
+            PythonType cls,
+            string typeName,
+            object typeBases,
+            PythonDictionary typeDict,
+            IDictionary<object, object>? keywordArguments) {
+            PythonTuple basesTuple = typeBases as PythonTuple
+                ?? ConvertBases(context, typeBases);
+            RejectMroEntries(context, basesTuple);
+            object? result = __new__(
+                context,
+                cls,
+                typeName,
+                basesTuple,
+                typeDict,
+                string.Empty,
+                keywordArguments);
+            if (result is PythonType created) {
+                created._basesStorage = basesTuple.Count == 0
+                    ? created.GetBasesTuple()
+                    : typeBases;
+            }
+            return result;
+        }
+
+        private static PythonTuple ConvertBases(
+            CodeContext context,
+            object typeBases) {
+            if (!PythonOps.TryGetEnumerator(
+                    context,
+                    typeBases,
+                    out IEnumerator? enumerator)
+                || enumerator is null) {
+                throw PythonOps.TypeError(
+                    "type.__new__() argument 4 must be tuple, not {0}",
+                    PythonOps.GetPythonTypeName(typeBases));
+            }
+            var bases = new List<object>();
+            try {
+                while (enumerator.MoveNext()) {
+                    bases.Add(enumerator.Current);
+                }
+            } finally {
+                (enumerator as IDisposable)?.Dispose();
+            }
+            return PythonTuple.MakeTuple(bases.ToArray());
         }
 
         private static void RejectMroEntries(CodeContext context, PythonTuple bases) {
@@ -516,12 +580,17 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 #nullable restore
 
         [System.Diagnostics.CodeAnalysis.SuppressMessage("Microsoft.Performance", "CA1822:MarkMembersAsStatic")]
-        public void __init__(string typeName, PythonTuple typeBases, PythonDictionary typeDict, [ParamDictionary] IDictionary<object, object> kwargs) {
+        public void __init__(string typeName, object typeBases, PythonDictionary typeDict, [ParamDictionary] IDictionary<object, object> kwargs) {
         }
 
         internal static PythonType FindMetaClass(PythonType cls, PythonTuple bases) {
             PythonType meta = cls;
             foreach (object baseObject in bases) {
+                if (baseObject is UnionType union) {
+                    throw PythonOps.TypeError(
+                        "Cannot subclass {0}",
+                        PythonOps.Repr(DefaultContext.Default, union));
+                }
                 object dt = baseObject is GenericAlias alias
                     ? alias.__origin__
                     : baseObject;
@@ -621,6 +690,10 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             if (cls == TypeCache.PythonType && o?.GetType() == typeof(int)) {
                 return TypeCache.BigInteger;  // PEP 237: int/long unification (GH #52)
             }
+            if (cls != TypeCache.PythonType && cls is PythonType) {
+                throw PythonOps.TypeError(
+                    "type.__new__() takes exactly 3 arguments (1 given)");
+            }
             return DynamicHelpers.GetPythonType(o);
         }
 
@@ -630,7 +703,8 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
         [SpecialName, PropertyMethod, WrapperDescriptor]
         public static PythonTuple Get__bases__(CodeContext/*!*/ context, PythonType/*!*/ type) {
-            return type.GetBasesTuple();
+            return type._basesStorage as PythonTuple
+                ?? type.GetBasesTuple();
         }
 
         private PythonTuple GetBasesTuple() {
@@ -791,6 +865,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
             type.BaseTypes = ldt;
             type._resolutionOrder = mro;
+            type._basesStorage = t;
         }
 
         private static List<PythonType> CalculateMro(PythonType type, IList<PythonType> ldt) {

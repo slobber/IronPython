@@ -15,7 +15,7 @@ using IronPython.Runtime.Types;
 namespace IronPython.Runtime.Operations {
     public static class TypeTrackerOps {
         [SpecialName, PropertyMethod]
-        public static IDictionary Get__dict__(CodeContext context, TypeTracker self) {
+        public static object Get__dict__(CodeContext context, TypeTracker self) {
             return new MappingProxy(context, DynamicHelpers.GetPythonTypeFromType(self.Type));
         }
     }

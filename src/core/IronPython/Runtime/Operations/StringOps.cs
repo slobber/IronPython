@@ -1390,10 +1390,41 @@ namespace IronPython.Runtime.Operations {
         }
 
         [SpecialName]
-        public static string Add([NotNone] string self, object? other) {
+        [return: MaybeNotImplemented]
+        public static object BitwiseOr(
+            CodeContext context,
+            [NotNone] string self,
+            object? other) {
+            if (other is not null
+                && PythonTypeOps.TryInvokeBinaryOperator(
+                    context,
+                    other,
+                    self,
+                    "__ror__",
+                    out object result)) {
+                return result;
+            }
+            return NotImplementedType.Value;
+        }
+
+        [SpecialName]
+        [return: MaybeNotImplemented]
+        public static object Add(
+            CodeContext context,
+            [NotNone] string self,
+            object? other) {
             if (other is string s) return Add(self, s);
             if (other is char c) return Add(self, c);
-            throw PythonOps.TypeError($"can only concatenate str (not \"{PythonOps.GetPythonTypeName(other)}\") to str");
+            if (other is not null
+                && PythonTypeOps.TryInvokeBinaryOperator(
+                    context,
+                    other,
+                    self,
+                    "__radd__",
+                    out object result)) {
+                return result;
+            }
+            return NotImplementedType.Value;
         }
 
         [SpecialName]

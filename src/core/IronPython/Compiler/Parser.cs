@@ -7,6 +7,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 
@@ -529,7 +530,7 @@ namespace IronPython.Compiler {
             return new PegParser(
                 PythonGrammarDescriptors.Rules,
                 tokenizer,
-                new PythonAstBuilder(),
+                new PythonAstBuilder(source),
                 options: options);
         }
 
@@ -541,10 +542,22 @@ namespace IronPython.Compiler {
             string source = _sourceUnit.GetCode() ?? string.Empty;
             int failurePosition = failure?.Position ?? result.Position;
             string message = failure?.Message ?? "invalid syntax";
+            PythonToken lexicalError = tokenizer.Tokens
+                .LastOrDefault(token => token.Kind == PythonTokenKind.Error);
+            if (lexicalError is not null) {
+                message = lexicalError.LiteralValue;
+            }
 
             Exception rangeError = TryCreateRangeSyntaxError(source);
             if (rangeError is not null) {
                 return rangeError;
+            }
+
+            Exception tstringError = TryCreateTStringSyntaxError(
+                source,
+                tokenizer);
+            if (tstringError is not null) {
+                return tstringError;
             }
 
             if (Regex.IsMatch(
@@ -572,6 +585,375 @@ namespace IronPython.Compiler {
                     tokenizer,
                     failurePosition),
                 ErrorCodes.SyntaxError);
+        }
+
+        private Exception TryCreateTStringSyntaxError(
+            string source,
+            PythonTokenizer tokenizer) {
+            IReadOnlyList<PythonToken> tokens = tokenizer.Tokens;
+            PythonToken tstringStart = tokens.FirstOrDefault(
+                token => token.Kind == PythonTokenKind.TStringStart);
+            if (tstringStart is null) {
+                return null;
+            }
+
+            if (HasAdjacentMixedTStringLiteral(tokens)) {
+                return CreateRangeSyntaxError(
+                    source,
+                    "cannot mix t-string literals with string or bytes literals",
+                    tstringStart.StartOffset,
+                    tstringStart.EndOffset);
+            }
+
+            PythonToken tstringEnd = tokens.FirstOrDefault(
+                token => token.Kind == PythonTokenKind.TStringEnd
+                    && token.StartOffset >= tstringStart.EndOffset);
+            if (tstringEnd is null) {
+                int fieldStart = source.IndexOf(
+                    '{',
+                    tstringStart.EndOffset);
+                if (fieldStart < 0) {
+                    return null;
+                }
+                char quote = tstringStart.Text[
+                    tstringStart.Text.Length - 1];
+                bool hasClosingQuote = source.Length > fieldStart
+                    && source[source.Length - 1] == quote;
+                if (!hasClosingQuote) {
+                    return CreateRangeSyntaxError(
+                        source,
+                        "'{' was never closed",
+                        fieldStart,
+                        fieldStart + 1);
+                }
+                string incompleteField = source.Substring(
+                    fieldStart + 1,
+                    source.Length - fieldStart - 2);
+                string incompleteMessage = incompleteField.Contains(':')
+                        ? "t-string: expecting '}', or format specs"
+                        : "t-string: expecting '}'";
+                return CreateRangeSyntaxError(
+                    source,
+                    incompleteMessage,
+                    fieldStart,
+                    source.Length);
+            }
+
+            int contentStart = tstringStart.EndOffset;
+            int contentLength = tstringEnd.StartOffset - contentStart;
+            string content = source.Substring(
+                contentStart,
+                contentLength);
+            string fieldError = FindTStringFieldError(
+                content,
+                nested: false);
+            if (fieldError is null) {
+                return null;
+            }
+            return CreateRangeSyntaxError(
+                source,
+                fieldError,
+                contentStart,
+                tstringEnd.EndOffset);
+        }
+
+        private static bool HasAdjacentMixedTStringLiteral(
+            IReadOnlyList<PythonToken> tokens) {
+            for (int i = 0; i < tokens.Count; i++) {
+                PythonToken token = tokens[i];
+                if (token.Kind == PythonTokenKind.TStringEnd) {
+                    PythonToken next = NextLiteralToken(tokens, i + 1);
+                    if (next is not null
+                        && next.Kind is PythonTokenKind.String
+                            or PythonTokenKind.FStringStart) {
+                        return true;
+                    }
+                }
+                if (token.Kind == PythonTokenKind.TStringStart) {
+                    PythonToken previous = PreviousLiteralToken(tokens, i - 1);
+                    if (previous is not null
+                        && previous.Kind is PythonTokenKind.String
+                            or PythonTokenKind.FStringEnd) {
+                        return true;
+                    }
+                }
+            }
+            return false;
+        }
+
+        private static PythonToken NextLiteralToken(
+            IReadOnlyList<PythonToken> tokens,
+            int index) {
+            for (; index < tokens.Count; index++) {
+                PythonToken token = tokens[index];
+                if (token.Kind is PythonTokenKind.NonLogicalNewLine
+                    or PythonTokenKind.NewLine) {
+                    continue;
+                }
+                return token;
+            }
+            return null;
+        }
+
+        private static PythonToken PreviousLiteralToken(
+            IReadOnlyList<PythonToken> tokens,
+            int index) {
+            for (; index >= 0; index--) {
+                PythonToken token = tokens[index];
+                if (token.Kind is PythonTokenKind.NonLogicalNewLine
+                    or PythonTokenKind.NewLine) {
+                    continue;
+                }
+                return token;
+            }
+            return null;
+        }
+
+        private static string FindTStringFieldError(
+            string content,
+            bool nested) {
+            int index = 0;
+            while (index < content.Length) {
+                if (content[index] == '\\') {
+                    index += Math.Min(2, content.Length - index);
+                    continue;
+                }
+                if (content[index] == '{') {
+                    if (index + 1 < content.Length
+                        && content[index + 1] == '{') {
+                        index += 2;
+                        continue;
+                    }
+                    int end = FindInterpolatedFieldEnd(
+                        content,
+                        index + 1);
+                    if (end < 0) {
+                        return "t-string: expecting '}'";
+                    }
+                    string field = content.Substring(
+                        index + 1,
+                        end - index - 1);
+                    string error = ValidateTStringField(
+                        field,
+                        nested: false);
+                    if (error is not null) {
+                        return error;
+                    }
+                    index = end + 1;
+                    continue;
+                }
+                if (content[index] == '}') {
+                    return "t-string: single '}' is not allowed";
+                }
+                index++;
+            }
+            return null;
+        }
+
+        private static int FindInterpolatedFieldEnd(
+            string content,
+            int start) {
+            int depth = 0;
+            char quote = '\0';
+            bool escaped = false;
+            for (int index = start; index < content.Length; index++) {
+                char current = content[index];
+                if (quote != '\0') {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (current == '\\') {
+                        escaped = true;
+                    } else if (current == quote) {
+                        quote = '\0';
+                    }
+                    continue;
+                }
+                if (current is '\'' or '"') {
+                    quote = current;
+                } else if (current is '(' or '[' or '{') {
+                    depth++;
+                } else if (current is ')' or ']') {
+                    depth--;
+                } else if (current == '}') {
+                    if (depth == 0) {
+                        return index;
+                    }
+                    depth--;
+                }
+            }
+            return -1;
+        }
+
+        private static string ValidateTStringField(
+            string field,
+            bool nested) {
+            int first = 0;
+            while (first < field.Length
+                && field[first] is ' ' or '\t' or '\f'
+                    or '\r' or '\n' or '\\') {
+                first++;
+            }
+            if (first >= field.Length) {
+                return nested
+                    ? "t-string: expecting a valid expression after '{'"
+                    : "t-string: valid expression required before '}'";
+            }
+
+            char firstCharacter = field[first];
+            if (firstCharacter is '=' or '!' or ':') {
+                return nested
+                    ? "t-string: expecting a valid expression after '{'"
+                    : $"t-string: valid expression required before '{firstCharacter}'";
+            }
+            if (firstCharacter == ';') {
+                return "t-string: expecting a valid expression after '{'";
+            }
+            if (field.AsSpan(first).StartsWith(
+                    "lambda",
+                    StringComparison.Ordinal)
+                && (first + 6 == field.Length
+                    || !IsIdentifierPart(field[first + 6]))) {
+                return "t-string: lambda expressions are not allowed without parentheses";
+            }
+
+            int depth = 0;
+            char quote = '\0';
+            bool escaped = false;
+            bool sawConversion = false;
+            for (int index = first; index < field.Length; index++) {
+                char current = field[index];
+                if (quote != '\0') {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (current == '\\') {
+                        escaped = true;
+                    } else if (current == quote) {
+                        quote = '\0';
+                    }
+                    continue;
+                }
+                if (current is '\'' or '"') {
+                    quote = current;
+                    continue;
+                }
+                if (current is '(' or '[' or '{') {
+                    depth++;
+                    continue;
+                }
+                if (current is ')' or ']' or '}') {
+                    depth--;
+                    continue;
+                }
+                if (depth != 0) {
+                    continue;
+                }
+                if (current == ';') {
+                    return "t-string: expecting '=', or '!', or ':', or '}'";
+                }
+                if (current == '=' && !IsComparisonOperator(field, index)) {
+                    index = SkipFieldWhitespace(field, index + 1);
+                    if (index >= field.Length
+                        || field[index] is not ('!' or ':' or '}')) {
+                        return "t-string: expecting '!', or ':', or '}'";
+                    }
+                    if (field[index] == '!'
+                        && (index + 1 >= field.Length
+                            || field[index + 1] == '}')) {
+                        return "t-string: missing conversion character";
+                    }
+                    if (field[index] == '}') {
+                        return null;
+                    }
+                    continue;
+                }
+                if (current == '!') {
+                    if (sawConversion) {
+                        return "t-string: expecting ':' or '}'";
+                    }
+                    sawConversion = true;
+                    if (index + 1 >= field.Length
+                        || field[index + 1] == '}') {
+                        return "t-string: missing conversion character";
+                    }
+                    int conversionStart = index + 1;
+                    int conversionEnd = conversionStart;
+                    while (conversionEnd < field.Length
+                        && IsIdentifierPart(field[conversionEnd])) {
+                        conversionEnd++;
+                    }
+                    string conversion = field.Substring(
+                        conversionStart,
+                        conversionEnd - conversionStart);
+                    if (conversion.Length == 0) {
+                        return "t-string: missing conversion character";
+                    }
+                    if (conversion.Length != 1
+                        || conversion[0] is not ('s' or 'r' or 'a')) {
+                        return $"t-string: invalid conversion character '{conversion}': expected 's', 'r', or 'a'";
+                    }
+                    index = conversionEnd - 1;
+                    index = SkipFieldWhitespace(field, index + 1);
+                    if (index < field.Length
+                        && field[index] == '}') {
+                        return null;
+                    }
+                    if (index < field.Length
+                        && field[index] != ':') {
+                        return "t-string: expecting ':' or '}'";
+                    }
+                    continue;
+                }
+                if (current == ':') {
+                    string format = field.Substring(index + 1);
+                    if (format.Contains('\n')
+                        || format.Contains('\r')) {
+                        return "t-string: newlines are not allowed in format specifiers";
+                    }
+                    string nestedError = FindTStringFieldError(
+                        format,
+                        nested: true);
+                    return nestedError;
+                }
+            }
+            return null;
+        }
+
+        private static int SkipFieldWhitespace(
+            string field,
+            int index) {
+            while (index < field.Length) {
+                if (field[index] is ' ' or '\t' or '\f') {
+                    index++;
+                    continue;
+                }
+                if (field[index] == '\\'
+                    && index + 1 < field.Length
+                    && (field[index + 1] == '\r'
+                        || field[index + 1] == '\n')) {
+                    index += 2;
+                    if (field[index - 1] == '\r'
+                        && index < field.Length
+                        && field[index] == '\n') {
+                        index++;
+                    }
+                    continue;
+                }
+                break;
+            }
+            return index;
+        }
+
+        private static bool IsComparisonOperator(
+            string field,
+            int index) {
+            return (index > 0
+                    && field[index - 1] is '=' or '!' or '<' or '>' or ':')
+                || (index + 1 < field.Length
+                    && field[index + 1] == '=');
+        }
+
+        private static bool IsIdentifierPart(char value) {
+            return char.IsLetterOrDigit(value) || value == '_';
         }
 
         private Exception TryCreateRangeSyntaxError(string source) {

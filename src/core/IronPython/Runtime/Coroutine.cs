@@ -90,9 +90,12 @@ namespace IronPython.Runtime {
             PythonCoroutine? previous = _current;
             _current = this;
             try {
-                if (_task is not null) _coordinator.ResumeAndWait(_task);
+                if (_task is not null) _coordinator.ResumeAndWait(_task, value);
                 var task = EnsureTask();
                 if (!task.IsCompleted) {
+                    if (_coordinator.TryConsumeYield(out object? yielded)) {
+                        return yielded;
+                    }
                     if (_coordinator.TryGetAwait(out Task? awaited)) {
                         if (AsyncSuspensionCoordinator.IsYield(awaited)) return null;
                         return WaitForCoroutine(awaited);
@@ -306,7 +309,7 @@ namespace IronPython.Runtime {
 
         // A not-yet-driven coroutine reports 0 (not running) without materializing the Task.
         // Merely inspecting cr_running must not start the body.
-        public int cr_running => _task is null || _task.IsCompleted ? 0 : 1;
+        public bool cr_running => _task is not null && !_task.IsCompleted;
 
         public TraceBackFrame? cr_frame => null;
 
@@ -370,7 +373,7 @@ namespace IronPython.Runtime {
 
         public FunctionCode cr_code => _generator.gi_code;
 
-        public int cr_running => _generator.gi_running;
+        public bool cr_running => _generator.gi_running;
 
         public TraceBackFrame cr_frame => _generator.gi_frame;
 

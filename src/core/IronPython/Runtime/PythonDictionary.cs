@@ -380,6 +380,15 @@ namespace IronPython.Runtime {
 
         [return: MaybeNotImplemented]
         public object __or__(CodeContext context, object other) {
+            if (other is Types.MappingProxy proxy) {
+                var proxyResult = new PythonDictionary(this);
+                foreach (KeyValuePair<object, object> pair in proxy.GetDictionary(context)) {
+                    if (pair.Key is not null) {
+                        proxyResult[pair.Key] = pair.Value;
+                    }
+                }
+                return proxyResult;
+            }
             if (other is not IDictionary<object, object>) {
                 return NotImplementedType.Value;
             }
@@ -392,6 +401,13 @@ namespace IronPython.Runtime {
 
         [return: MaybeNotImplemented]
         public object __ror__(CodeContext context, object other) {
+            if (other is Types.MappingProxy proxy) {
+                var proxyResult = new PythonDictionary(proxy.GetDictionary(context));
+                foreach (KeyValuePair<object, object> pair in this) {
+                    proxyResult[pair.Key] = pair.Value;
+                }
+                return proxyResult;
+            }
             if (other is not IDictionary<object, object>) {
                 return NotImplementedType.Value;
             }

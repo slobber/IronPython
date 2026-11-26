@@ -1923,7 +1923,12 @@ namespace IronPython.Runtime.Operations {
                         classdict = PythonCalls.CallWithKeywordArgs(context, prepareFunc, args, keywords);
                     }
                     if (!PythonOps.IsMappingType(context, classdict)) {
-                        throw PythonOps.TypeErrorForBadInstance("<metaclass>.__prepare__() must return a mapping, not {0}", classdict);
+                        string metaName = meta is PythonType metaType
+                            ? metaType.Name
+                            : "<metaclass>";
+                        throw PythonOps.TypeErrorForBadInstance(
+                            metaName + ".__prepare__() must return a mapping, not {0}",
+                            classdict);
                     }
                 }
 
@@ -2772,6 +2777,9 @@ namespace IronPython.Runtime.Operations {
         }
 
         private static bool TryGetEnumeratorObject(CodeContext/*!*/ context, object? o, [NotNullWhen(true)] out object? enumerator) {
+            if (o is Types.UnionType union) {
+                union.__iter__();
+            }
             if (o is PythonType classObject) {
                 if (TryGetMetaClassIterator(context, classObject, out enumerator)) {
                     return true;
@@ -2828,6 +2836,10 @@ namespace IronPython.Runtime.Operations {
 
         internal static bool TryGetEnumerator(CodeContext/*!*/ context, [NotNullWhen(true)] object? enumerable, [NotNullWhen(true)] out IEnumerator? enumerator) {
             enumerator = null;
+
+            if (enumerable is Types.UnionType) {
+                throw TypeErrorForNotIterable(enumerable);
+            }
 
             if (enumerable is PythonType classObject) {
                 if (!TryGetMetaClassIterator(context, classObject, out object? iterator)) {
@@ -4246,8 +4258,19 @@ namespace IronPython.Runtime.Operations {
         /// that the DLR async runner can drive.
         /// </summary>
         public static Task<object?> AsTaskForAwait(object? value) {
+            if (TryAsTaskForAwait(value, out Task<object?>? task)) {
+                return task;
+            }
 
-            Task<object?>? task = value switch {
+            throw TypeError(
+                "'{0}' object can't be awaited",
+                PythonOps.GetPythonTypeName(value));
+        }
+
+        private static bool TryAsTaskForAwait(
+            object? value,
+            [NotNullWhen(true)] out Task<object?>? task) {
+            task = value switch {
                 null                    => Task.FromResult<object?>(null),
                 PythonCoroutine coro    => coro.AsTask(),
                 Task<object?> to        => to,
@@ -4259,7 +4282,7 @@ namespace IronPython.Runtime.Operations {
 #endif
                 _                       => null,
             };
-            if (task is not null) return task;
+            if (task is not null) return true;
 
             if (value is PythonGenerator generator &&
                 (generator.gi_code.co_flags & (int)CompileFlags.CO_ITERABLE_COROUTINE) != 0) {
@@ -4269,12 +4292,14 @@ namespace IronPython.Runtime.Operations {
                     sawBareYield,
                     Microsoft.Scripting.Runtime.AsyncHelpers.CurrentCoordinator);
                 if (sawBareYield.Value) AsyncSuspensionCoordinator.MarkYield(iteratorTask);
-                return iteratorTask;
+                task = iteratorTask;
+                return true;
             }
 
             if (TryGetBoundAttr(value, "add_done_callback", out object? addDoneCallback) &&
                 TryGetBoundAttr(value, "result", out object? resultMethod)) {
-                return ObservePythonFuture(value!, addDoneCallback!, resultMethod!);
+                task = ObservePythonFuture(value!, addDoneCallback!, resultMethod!);
+                return true;
             }
 
 #if NETCOREAPP
@@ -4282,7 +4307,8 @@ namespace IronPython.Runtime.Operations {
             Type valueType = value!.GetType();
             if (valueType.IsGenericType && valueType.GetGenericTypeDefinition() == typeof(ValueTask<>)) {
                 var asTask = (Task)valueType.GetMethod("AsTask")!.Invoke(value, null)!;
-                return BoxTaskResult(asTask);
+                task = BoxTaskResult(asTask);
+                return true;
             }
 #endif
 
@@ -4291,14 +4317,13 @@ namespace IronPython.Runtime.Operations {
             // The native Task/coroutine/ValueTask fast paths above mean a plain `await Task` never reaches here.
             if (TryGetBoundAttr(value, "__await__", out object? awaitMethod)) {
                 object? iterator = PythonCalls.Call(DefaultContext.Default, awaitMethod);
-                return DriveAwaitIterator(
+                task = DriveAwaitIterator(
                     iterator,
                     coordinator: Microsoft.Scripting.Runtime.AsyncHelpers.CurrentCoordinator);
+                return true;
             }
 
-            throw TypeError(
-                "'{0}' object can't be awaited",
-                PythonOps.GetPythonTypeName(value));
+            return false;
         }
 
         private sealed class ObservedFutureState {
@@ -4427,7 +4452,17 @@ namespace IronPython.Runtime.Operations {
                     }
                 } else {
                     // The yielded value is itself awaitable — drive it and feed the result back in.
-                    sendValue = await AsTaskForAwait(yielded);
+                    if (TryAsTaskForAwait(yielded, out Task<object?>? awaited)) {
+                        sendValue = await awaited;
+                    } else if (coordinator is not null) {
+                        // Preserve a yielded generator-based coroutine value until send(value).
+                        if (sawBareYield is not null) sawBareYield.Value = true;
+                        sendValue = await coordinator.WaitForYield(yielded);
+                    } else {
+                        throw TypeError(
+                            "'{0}' object can't be awaited",
+                            PythonOps.GetPythonTypeName(yielded));
+                    }
                 }
             }
 
@@ -4517,6 +4552,13 @@ namespace IronPython.Runtime.Operations {
             }
             parts.Add(strings[strings.Length - 1]);
             return new TemplateObject(parts.ToArray());
+        }
+
+        public static void InitializeTemplateTypes() {
+            DynamicHelpers.GetPythonTypeFromType(typeof(TemplateObject))
+                .SetModuleName("string.templatelib");
+            DynamicHelpers.GetPythonTypeFromType(typeof(InterpolationObject))
+                .SetModuleName("string.templatelib");
         }
 
         public static FunctionCode MakeFunctionCode(CodeContext/*!*/ context, string name, string documentation, string[] parameterNames, int argCount, int positionalOnlyArgCount, FunctionAttributes flags, int startIndex, int endIndex, string path, Delegate code, string[] freeVars, string[] names, string[] cellVars, string[] varNames, int localCount) {

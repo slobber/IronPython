@@ -62,9 +62,30 @@ namespace IronPython.Runtime {
             FunctionCode code,
             PythonDictionary globals,
             string name = null,
-            PythonTuple argdefs = null,
-            PythonDictionary kwdefaults = null,
-            PythonTuple closure = null) {
+            object argdefs = null,
+            object closure = null,
+            object kwdefaults = null) {
+            PythonTuple defaultsTuple = argdefs switch {
+                null => null,
+                PythonTuple tuple => tuple,
+                _ => throw PythonOps.TypeError(
+                    "arg 4 must be tuple, not {0}",
+                    PythonOps.GetPythonTypeName(argdefs))
+            };
+            PythonTuple closureTuple = closure switch {
+                null => null,
+                PythonTuple tuple => tuple,
+                _ => throw PythonOps.TypeError(
+                    "arg 5 must be tuple, not {0}",
+                    PythonOps.GetPythonTypeName(closure))
+            };
+            PythonDictionary keywordDefaults = kwdefaults switch {
+                null => null,
+                PythonDictionary dictionary => dictionary,
+                _ => throw PythonOps.TypeError(
+                    "arg 6 must be dict, not {0}",
+                    PythonOps.GetPythonTypeName(kwdefaults))
+            };
             if (globals == context.GlobalDict) {
                 _module = context.Module.GetName();
                 _context = context;
@@ -73,33 +94,57 @@ namespace IronPython.Runtime {
                 _context = new CodeContext(new PythonDictionary(), new ModuleContext(globals, DefaultContext.DefaultPythonContext));
             }
 
-            _defaults = argdefs == null ? [] : argdefs.ToArray();
-            _kwdefaults = kwdefaults;
+            _defaults = defaultsTuple == null ? [] : defaultsTuple.ToArray();
+            _kwdefaults = keywordDefaults;
             _code = code;
             _doc = code._initialDoc;
             _name = name ?? code.PythonCode.Name;
             _qualname = _name;
             _annotations = new PythonDictionary();
 
-            Closure = closure is null || closure.Count == 0
-                ? null
-                : MutableTuple.MakeTuple(
-                    MutableTuple.MakeTupleType(
-                        Enumerable.Repeat(typeof(ClosureCell), closure.Count).ToArray()),
-                    closure.ToArray());
-
             var scopeStatement = _code.PythonCode;
+            int closureCellCount = Math.Max(
+                scopeStatement.NumTupleCells,
+                closureTuple?.Count ?? 0);
+            if (closureCellCount == 0) {
+                Closure = null;
+            } else {
+                var closureCells = new List<object>(
+                    closureCellCount);
+                if (closureTuple is not null) {
+                    closureCells.AddRange(closureTuple);
+                }
+                while (closureCells.Count < closureCellCount) {
+                    closureCells.Add(new ClosureCell());
+                }
+                Closure = MutableTuple.MakeTuple(
+                    MutableTuple.MakeTupleType(
+                        Enumerable.Repeat(
+                            typeof(ClosureCell),
+                            closureCellCount).ToArray()),
+                    closureCells.ToArray());
+            }
+
             if (scopeStatement.IsClosure && Closure is not null) {
-                string[] freeVarNames = Enumerable.Range(0, closure!.Count)
-                    .Select(index => index < scopeStatement.FreeVariables.Count
-                        ? scopeStatement.FreeVariables[index].Name
-                        : null)
+                int freeVarCount =
+                    scopeStatement.FreeVariables.Count;
+                string[] freeVarNames = Enumerable.Range(
+                        0,
+                        closureCellCount)
+                    .Select(index =>
+                        index < freeVarCount
+                            ? scopeStatement.FreeVariables[index].Name
+                            : index - freeVarCount
+                                < (scopeStatement.CellVariables?.Count ?? 0)
+                                ? scopeStatement.CellVariables[
+                                    index - freeVarCount]
+                                : null)
                     .ToArray();
                 _context = new CodeContext(
                     new PythonDictionary(new RuntimeVariablesDictionaryStorage(
                         Closure,
                         freeVarNames,
-                        freeVarNames.Length,
+                        freeVarCount,
                         -1,
                         globals._storage)),
                     new ModuleContext(
@@ -241,11 +286,16 @@ namespace IronPython.Runtime {
         public object __closure__ {
             get {
                 if (Context.Dict._storage is RuntimeVariablesDictionaryStorage storage) {
-                    object[] res = new object[storage.Names.Length];
-                    for (int i = 0; i < res.Length; i++) {
-                        res[i] = storage.GetCell(i);
+                    var cells = new List<object>();
+                    foreach (object name in _code.co_freevars) {
+                        if (name is string freeVariable
+                            && storage.TryGetCell(
+                                freeVariable,
+                                out ClosureCell cell)) {
+                            cells.Add(cell);
+                        }
                     }
-                    return PythonTuple.MakeTuple(res);
+                    return PythonTuple.MakeTuple(cells.ToArray());
                 }
 
                 return null;

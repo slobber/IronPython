@@ -970,11 +970,12 @@ namespace IronPython.Compiler.PublicAst {
                     continue;
                 }
                 if (value is AstNodes.Interpolation interpolation) {
-                    string? expression = GetReplacementFieldExpression(
-                        GetSourceText(interpolation));
+                    string? expression = interpolation.Str as string
+                        ?? GetReplacementFieldExpression(
+                            GetSourceText(interpolation));
                     interpolations.Add(new CompilerAst.TemplateInterpolation(
                         LowerExpression(interpolation.Value),
-                        expression ?? (interpolation.Str as string) ?? string.Empty,
+                        expression ?? string.Empty,
                         interpolation.Conversion < 0
                             ? null
                             : ((char)interpolation.Conversion).ToString(),

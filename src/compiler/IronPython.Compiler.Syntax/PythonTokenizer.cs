@@ -513,21 +513,45 @@ namespace IronPython.Compiler.Syntax {
                     || _source[start + 1] == 'O'
                     || _source[start + 1] == 'b'
                     || _source[start + 1] == 'B');
+            bool seenDecimalPoint = _source[start] == '.';
+            bool seenExponent = false;
             AdvanceChar();
             while (_index < _source.Length) {
                 char current = _source[_index];
-                char previous = _source[_index - 1];
-                if (char.IsLetterOrDigit(current) || current == '_') {
+                if (char.IsDigit(current) || current == '_') {
                     AdvanceChar();
                     continue;
                 }
-                if (current == '.' && !isBasedInteger && !IsExponent(previous)) {
+                if (isBasedInteger
+                    && (current is >= 'a' and <= 'f'
+                        or >= 'A' and <= 'F'
+                        || current is 'x' or 'X' or 'o' or 'O'
+                            or 'b' or 'B')) {
                     AdvanceChar();
                     continue;
                 }
-                if ((current == '+' || current == '-') && IsExponent(previous)) {
+                if (!isBasedInteger
+                    && current == '.'
+                    && !seenDecimalPoint
+                    && !seenExponent) {
+                    seenDecimalPoint = true;
                     AdvanceChar();
                     continue;
+                }
+                if (!isBasedInteger
+                    && IsExponent(current)
+                    && !seenExponent) {
+                    seenExponent = true;
+                    AdvanceChar();
+                    if (_index < _source.Length
+                        && _source[_index] is '+' or '-') {
+                        AdvanceChar();
+                    }
+                    continue;
+                }
+                if (!isBasedInteger
+                    && current is 'j' or 'J') {
+                    AdvanceChar();
                 }
                 break;
             }
@@ -671,6 +695,21 @@ namespace IronPython.Compiler.Syntax {
                     AdvanceChar();
                     continue;
                 }
+                if (current == '}') {
+                    int closingStart = _index;
+                    int closingLine = _line;
+                    int closingColumn = _column;
+                    AdvanceChar();
+                    AddToken(
+                        PythonTokenKind.Error,
+                        closingStart,
+                        closingLine,
+                        closingColumn,
+                        template
+                            ? "t-string: single '}' is not allowed"
+                            : "f-string: single '}' is not allowed");
+                    continue;
+                }
                 if (current == '{') {
                     FlushInterpolatedMiddle(template, raw, middleStart, middleLine, middleColumn);
                     int braceStart = _index;
@@ -694,7 +733,13 @@ namespace IronPython.Compiler.Syntax {
                 _index,
                 _line,
                 _column,
-                "unterminated interpolated string");
+                template
+                    ? triple
+                        ? "unterminated triple-quoted t-string literal"
+                        : "unterminated t-string literal"
+                    : triple
+                        ? "unterminated triple-quoted f-string literal"
+                        : "unterminated f-string literal");
         }
 
         private void ScanInterpolationExpression(bool template, bool raw) {
@@ -755,6 +800,12 @@ namespace IronPython.Compiler.Syntax {
                         endByteColumn: newlineByteColumn + Encoding.UTF8.GetByteCount(newlineText)));
                     continue;
                 }
+                if (current == '\\'
+                    && (Peek(1) == '\r' || Peek(1) == '\n')) {
+                    AdvanceChar();
+                    ConsumeNewLine();
+                    continue;
+                }
                 if (TryLexInterpolatedString()) continue;
                 if (TryLexString()) continue;
                 if (IsIdentifierStart(current)) {
@@ -766,22 +817,29 @@ namespace IronPython.Compiler.Syntax {
                     continue;
                 }
                 if (current == '=' && Peek(1) != '=' && depth == 1) {
-                    int debugEnd = _index + 1;
-                    while (debugEnd < _source.Length
-                        && (_source[debugEnd] == ' ' || _source[debugEnd] == '\t'
-                            || _source[debugEnd] == '\f')) {
-                        debugEnd++;
+                    int debugStart = _index;
+                    int debugLine = _line;
+                    int debugColumn = _column;
+                    int debugEnd = SkipDebugContinuations(_index + 1);
+                    string debugText = _source.Substring(
+                        expressionStart,
+                        debugEnd - expressionStart);
+                    while (_index < debugEnd) {
+                        if (_source[_index] == '\\'
+                            && (Peek(1) == '\r' || Peek(1) == '\n')) {
+                            AdvanceChar();
+                            ConsumeNewLine();
+                        } else {
+                            AdvanceChar();
+                        }
                     }
                     AddToken(
                         PythonTokenKind.Operator,
-                        _index,
-                        _line,
-                        _column,
+                        debugStart,
+                        debugLine,
+                        debugColumn,
                         "=",
-                        textOverride: _source.Substring(
-                            expressionStart,
-                            debugEnd - expressionStart));
-                    AdvanceChar();
+                        textOverride: debugText);
                     continue;
                 }
                 if (LexOperator()) continue;
@@ -793,6 +851,29 @@ namespace IronPython.Compiler.Syntax {
                 AddToken(PythonTokenKind.Error, start, startLine, startColumn, "invalid interpolation character");
             }
             NeedsMoreInput = true;
+        }
+
+        private int SkipDebugContinuations(int index) {
+            while (index < _source.Length) {
+                if (_source[index] is ' ' or '\t' or '\f') {
+                    index++;
+                    continue;
+                }
+                if (_source[index] == '\\'
+                    && index + 1 < _source.Length
+                    && (_source[index + 1] == '\r'
+                        || _source[index + 1] == '\n')) {
+                    index += 2;
+                    if (_source[index - 1] == '\r'
+                        && index < _source.Length
+                        && _source[index] == '\n') {
+                        index++;
+                    }
+                    continue;
+                }
+                break;
+            }
+            return index;
         }
 
         private void ScanInterpolatedFormatSpec(bool template, bool raw) {
@@ -829,6 +910,24 @@ namespace IronPython.Compiler.Syntax {
                     middleColumn = _column;
                     continue;
                 }
+                if (IsNewLine(current)) {
+                    int newlineStart = _index;
+                    int newlineLine = _line;
+                    int newlineColumn = _column;
+                    ConsumeNewLine();
+                    AddToken(
+                        PythonTokenKind.Error,
+                        newlineStart,
+                        newlineLine,
+                        newlineColumn,
+                        template
+                            ? "t-string: newlines are not allowed in format specifiers"
+                            : "f-string: newlines are not allowed in format specifiers");
+                    middleStart = _index;
+                    middleLine = _line;
+                    middleColumn = _column;
+                    continue;
+                }
                 AdvanceChar();
             }
 
@@ -844,7 +943,8 @@ namespace IronPython.Compiler.Syntax {
             int column,
             bool includeEmpty = false) {
             if (_index < start || (_index == start && !includeEmpty)) return;
-            string value = _source.Substring(start, _index - start);
+            string sourceValue = _source.Substring(start, _index - start);
+            string value = NormalizeInterpolatedNewlines(sourceValue);
             AddToken(
                 template ? PythonTokenKind.TStringMiddle : PythonTokenKind.FStringMiddle,
                 start,
@@ -853,7 +953,15 @@ namespace IronPython.Compiler.Syntax {
                 raw && !template
                     ? RawInterpolatedMiddleMarker + value
                     : value,
-                textOverride: value);
+                textOverride: sourceValue);
+        }
+
+        private static string NormalizeInterpolatedNewlines(string value) {
+            if (value.IndexOf('\r') < 0) {
+                return value;
+            }
+            return value.Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n');
         }
 
         private bool ScanOrdinaryString() {

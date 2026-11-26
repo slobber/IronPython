@@ -20,6 +20,12 @@ using Microsoft.Scripting.Runtime;
 namespace IronPython.Runtime {
     [PythonType("Interpolation")]
     public sealed class InterpolationObject : ICodeFormattable {
+        public static readonly PythonTuple __match_args__ = PythonTuple.MakeTuple(
+            "value",
+            "expression",
+            "conversion",
+            "format_spec");
+
         public InterpolationObject(
             object? value,
             [NotNone] string expression,
@@ -74,12 +80,19 @@ namespace IronPython.Runtime {
         }
 
         private static string? ConversionName(object? conversion) {
-            return conversion switch {
+            string? name = conversion switch {
                 null => null,
-                string name => name,
+                string value => value,
                 _ => throw PythonOps.TypeError(
-                    "Interpolation() argument 'conversion' must be str or None")
+                    "Interpolation() argument 'conversion' must be str, not {0}",
+                    DynamicHelpers.GetPythonType(conversion).Name)
             };
+            if (name is not null
+                && (name.Length != 1 || name[0] is not ('a' or 'r' or 's'))) {
+                throw PythonOps.ValueError(
+                    "Interpolation() argument 'conversion' must be one of 's', 'a' or 'r'");
+            }
+            return name;
         }
 
         public object? value => Value;
@@ -101,10 +114,23 @@ namespace IronPython.Runtime {
                 $"{PythonOps.Repr(context, Conversion)}, " +
                 $"{PythonOps.Repr(context, FormatSpec)})";
         }
+
+        public object __reduce__() {
+            return PythonTuple.MakeTuple(
+                DynamicHelpers.GetPythonType(this),
+                PythonTuple.MakeTuple(
+                    Value,
+                    Expression,
+                    Conversion,
+                    FormatSpec));
+        }
     }
 
     [PythonType("Template")]
-    public sealed class TemplateObject : ICodeFormattable, IStructuralEquatable {
+    public sealed class TemplateObject :
+        ICodeFormattable,
+        IStructuralEquatable,
+        IEnumerable<object> {
         private readonly object[] _parts;
         private readonly PythonTuple _strings;
         private readonly PythonTuple _interpolations;
@@ -144,7 +170,7 @@ namespace IronPython.Runtime {
 
         public PythonTuple values => _values;
 
-        public IEnumerator<object> __iter__() {
+        public TemplateIterator __iter__() {
             var values = new List<object>();
             for (int i = 0; i < _interpolations.Count; i++) {
                 string text = (string)_strings[i]!;
@@ -155,8 +181,14 @@ namespace IronPython.Runtime {
             if (tail.Length != 0) {
                 values.Add(tail);
             }
-            return values.GetEnumerator();
+            return new TemplateIterator(values);
         }
+
+        IEnumerator<object> IEnumerable<object>.GetEnumerator()
+            => __iter__();
+
+        IEnumerator IEnumerable.GetEnumerator()
+            => __iter__();
 
         public int __hash__(CodeContext context) {
             return System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(this);
@@ -180,6 +212,22 @@ namespace IronPython.Runtime {
             return ReferenceEquals(result, NotImplementedType.Value) ? result : !(bool)result;
         }
 
+        public TemplateObject __add__(CodeContext context, [NotNone] object other) {
+            if (other is not TemplateObject template) {
+                throw PythonOps.TypeError(
+                    "can only concatenate string.templatelib.Template (not \"{0}\") to string.templatelib.Template",
+                    DynamicHelpers.GetPythonType(other).Name);
+            }
+            return new TemplateObject(_parts.Concat(template._parts).ToArray());
+        }
+
+        public object __radd__(CodeContext context, [NotNone] object other) {
+            string name = DynamicHelpers.GetPythonType(other).Name;
+            throw PythonOps.TypeError(
+                "can only concatenate {0} (not \"string.templatelib.Template\") to {0}",
+                name);
+        }
+
         public string __repr__(CodeContext context) {
             var result = new StringBuilder("Template(strings=");
             result.Append(PythonOps.Repr(context, _strings));
@@ -187,6 +235,12 @@ namespace IronPython.Runtime {
             result.Append(PythonOps.Repr(context, _interpolations));
             result.Append(')');
             return result.ToString();
+        }
+
+        public object __reduce__() {
+            return PythonTuple.MakeTuple(
+                DynamicHelpers.GetPythonType(this),
+                PythonTuple.MakeTuple(_parts));
         }
 
         bool IStructuralEquatable.Equals(object? other, System.Collections.IEqualityComparer comparer) {
@@ -201,6 +255,50 @@ namespace IronPython.Runtime {
                 hash = unchecked(hash * 31 + (part is null ? 0 : comparer.GetHashCode(part)));
             }
             return hash;
+        }
+
+        [PythonType("template_iterator")]
+        public sealed class TemplateIterator :
+            IEnumerator<object>,
+            IEnumerable<object> {
+            private readonly IReadOnlyList<object> _values;
+            private int _index = -1;
+
+            internal TemplateIterator(IReadOnlyList<object> values) {
+                _values = values;
+            }
+
+            public object Current => _values[_index];
+
+            object IEnumerator.Current => Current;
+
+            public bool MoveNext() {
+                if (_index + 1 >= _values.Count) {
+                    return false;
+                }
+                _index++;
+                return true;
+            }
+
+            public object __next__() {
+                if (!MoveNext()) {
+                    throw PythonOps.StopIteration();
+                }
+                return Current;
+            }
+
+            public TemplateIterator __iter__() => this;
+
+            public IEnumerator<object> GetEnumerator() => this;
+
+            IEnumerator IEnumerable.GetEnumerator() => this;
+
+            public void Reset() {
+                _index = -1;
+            }
+
+            public void Dispose() {
+            }
         }
     }
 }

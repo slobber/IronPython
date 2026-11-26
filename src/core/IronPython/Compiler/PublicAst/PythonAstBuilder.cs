@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
 using System.Numerics;
+using System.Text;
 using IronPython.Compiler.Generated;
 using IronPython.Compiler.Syntax;
 using IronPython.Runtime.Operations;
@@ -12,6 +13,12 @@ using AstNodes = IronPython.Compiler.Syntax.Ast;
 
 namespace IronPython.Compiler.PublicAst {
     public sealed class PythonAstBuilder : PythonGrammarActionHandler {
+        private readonly string _source;
+
+        public PythonAstBuilder(string? source = null) {
+            _source = source ?? string.Empty;
+        }
+
         public override object Handle_star_atom_0(
             PegActionContext context,
             PegActionArguments arguments) {
@@ -2380,7 +2387,9 @@ namespace IronPython.Compiler.PublicAst {
             int conversion = -1;
             if (arguments.TryGetValue("conversion", out object? rawConversion)
                 && rawConversion is FStringConversion fstringConversion) {
-                conversion = fstringConversion.Value;
+                conversion = ValidateConversion(
+                    fstringConversion.Value,
+                    "f-string");
             }
             AstNodes.ExprBase? formatSpec = arguments.TryGetValue("format", out object? rawFormat)
                 && rawFormat is not null
@@ -2422,10 +2431,7 @@ namespace IronPython.Compiler.PublicAst {
             PegActionContext context,
             PegActionArguments arguments) {
             string conversion = ToText(Required(arguments, "conv"));
-            if (conversion.Length != 1 || "sra".IndexOf(conversion[0]) < 0) {
-                throw new InvalidOperationException($"Unsupported f-string conversion '{conversion}'.");
-            }
-            return new FStringConversion(conversion[0]);
+            return new FStringConversion(conversion);
         }
 
         public override object Handle_fstring_full_format_spec_0(
@@ -2471,7 +2477,9 @@ namespace IronPython.Compiler.PublicAst {
             int conversion = -1;
             if (arguments.TryGetValue("conversion", out object? rawConversion)
                 && rawConversion is FStringConversion fstringConversion) {
-                conversion = fstringConversion.Value;
+                conversion = ValidateConversion(
+                    fstringConversion.Value,
+                    "t-string");
             }
             AstNodes.ExprBase? formatSpec = arguments.TryGetValue("format", out object? rawFormat)
                 && rawFormat is not null
@@ -2480,7 +2488,10 @@ namespace IronPython.Compiler.PublicAst {
             bool hasDebugExpression = arguments.TryGetValue("debug_expr", out object? rawDebug)
                 && rawDebug is not null;
             AstSpan span = SpanOf(arguments);
-            string expression = GetInterpolationExpressionText(value, rawDebug);
+            string expression = GetInterpolationExpressionText(
+                value,
+                rawDebug,
+                span);
             if (hasDebugExpression && conversion < 0 && formatSpec is null) {
                 conversion = 'r';
             }
@@ -2498,13 +2509,10 @@ namespace IronPython.Compiler.PublicAst {
             string debugText = rawDebug is PegToken debugToken
                 ? debugToken.SourceText
                 : expression + "=";
-            if (!debugText.TrimEnd().EndsWith('=')) {
-                debugText += "=";
-            }
             return new AstNodes.TemplateStr(
                 new AstNodes.ExprBase[] {
                     new AstNodes.Constant(
-                        debugText,
+                        NormalizeInterpolationExpression(debugText),
                         null,
                         span.Line,
                         span.Column,
@@ -2565,7 +2573,41 @@ namespace IronPython.Compiler.PublicAst {
             AstNodes.ExprBase[] strings = Sequence(arguments["a"])
                 .Select(ToExpression)
                 .ToArray();
-            return strings.Length == 1 ? strings[0] : strings;
+            if (strings.Length == 1) return strings[0];
+
+            AstNodes.ExprBase[] flattened = FlattenTemplateValues(strings);
+            var values = new List<AstNodes.ExprBase>();
+            foreach (AstNodes.ExprBase value in flattened) {
+                if (value is AstNodes.Constant constant
+                    && constant.Value is string text
+                    && text.Length == 0) {
+                    continue;
+                }
+                if (value is AstNodes.Constant current
+                    && current.Value is string currentText
+                    && values.Count > 0
+                    && values[values.Count - 1] is AstNodes.Constant previous
+                    && previous.Value is string previousText) {
+                    AstSpan mergedSpan = SpanOf(previous, current);
+                    values[values.Count - 1] = new AstNodes.Constant(
+                        previousText + currentText,
+                        null,
+                        mergedSpan.Line,
+                        mergedSpan.Column,
+                        mergedSpan.EndLine,
+                        mergedSpan.EndColumn);
+                } else {
+                    values.Add(value);
+                }
+            }
+
+            AstSpan span = SpanOf(strings);
+            return new AstNodes.TemplateStr(
+                values.ToArray(),
+                span.Line,
+                span.Column,
+                span.EndLine,
+                span.EndColumn);
         }
 
         public override object Handle_string_0(
@@ -3461,6 +3503,19 @@ namespace IronPython.Compiler.PublicAst {
                 span.EndColumn);
         }
 
+        private static int ValidateConversion(
+            string conversion,
+            string kind) {
+            if (conversion.Length == 1
+                && conversion[0] is 's' or 'r' or 'a') {
+                return conversion[0];
+            }
+            throw PythonOps.SyntaxError(
+                "{0}: invalid conversion character '{1}': expected 's', 'r', or 'a'",
+                kind,
+                conversion);
+        }
+
         private static AstNodes.Constant BuildFStringMiddle(PegActionArguments arguments) {
             object? rawValue = arguments.TryGetValue("t", out object? namedValue)
                 ? namedValue
@@ -3511,22 +3566,243 @@ namespace IronPython.Compiler.PublicAst {
             return flattened.ToArray();
         }
 
-        private static string GetInterpolationExpressionText(
+        private string GetInterpolationExpressionText(
             AstNodes.ExprBase value,
-            object? rawDebug) {
+            object? rawDebug,
+            AstSpan fieldSpan) {
             if (rawDebug is PegToken debugToken) {
                 string source = debugToken.SourceText.TrimEnd();
                 if (source.EndsWith('=')) {
-                    return source.Substring(0, source.Length - 1).TrimEnd();
+                    return NormalizeInterpolationExpression(
+                        source.Substring(0, source.Length - 1));
                 }
             }
-            return value switch {
-                AstNodes.Name name => name.Id,
-                AstNodes.Constant constant when constant.Value is not null =>
-                    Convert.ToString(constant.Value, CultureInfo.InvariantCulture) ?? string.Empty,
-                _ => string.Empty
-            };
+            AstSpan? valueSpan = TryGetSpan(value);
+            if (valueSpan is not null
+                && _source.Length > 0) {
+                int[] lineStarts = GetLineStarts(_source);
+                int fieldStart = OffsetOf(
+                    lineStarts,
+                    fieldSpan.Line,
+                    fieldSpan.Column);
+                int openBrace = fieldStart >= 0
+                    && fieldStart < _source.Length
+                    && _source[fieldStart] == '{'
+                        ? fieldStart
+                        : -1;
+                if (openBrace < 0) {
+                    int start = OffsetOf(
+                        lineStarts,
+                        valueSpan.Value.Line,
+                        valueSpan.Value.Column);
+                    openBrace = FindOpeningBrace(
+                        _source,
+                        start);
+                }
+                int closeBrace = openBrace >= 0
+                    ? FindClosingBrace(
+                        _source,
+                        openBrace)
+                    : -1;
+                if (openBrace >= 0
+                    && closeBrace > openBrace) {
+                    string field = _source.Substring(
+                        openBrace + 1,
+                        closeBrace - openBrace - 1);
+                    int expressionEnd =
+                        FindInterpolationExpressionEnd(field);
+                    return NormalizeInterpolationExpression(
+                        field.Substring(
+                            0,
+                            expressionEnd));
+                }
+            }
+            return string.Empty;
         }
+
+        private static string NormalizeInterpolationExpression(
+            string expression) {
+            var result = new StringBuilder(expression.Length);
+            char quote = '\0';
+            int quoteLength = 0;
+            bool escaped = false;
+            for (int i = 0; i < expression.Length; i++) {
+                char current = expression[i];
+                if (quote != '\0') {
+                    result.Append(current);
+                    if (escaped) {
+                        escaped = false;
+                    } else if (current == '\\') {
+                        escaped = true;
+                    } else if (current == quote
+                        && IsStringQuoteRun(expression, i, quote, quoteLength)) {
+                        i += quoteLength - 1;
+                        result.Append(quote, quoteLength - 1);
+                        quote = '\0';
+                        quoteLength = 0;
+                    }
+                    continue;
+                }
+                if (current is '\'' or '"') {
+                    quote = current;
+                    quoteLength = i + 2 < expression.Length
+                        && expression[i + 1] == current
+                        && expression[i + 2] == current
+                            ? 3
+                            : 1;
+                    result.Append(current);
+                    if (quoteLength == 3) {
+                        result.Append(current, 2);
+                        i += 2;
+                    }
+                    continue;
+                }
+                if (current == '#') {
+                    while (i + 1 < expression.Length
+                        && expression[i + 1] is not ('\r' or '\n')) {
+                        i++;
+                    }
+                    continue;
+                }
+                result.Append(current);
+            }
+            return result.ToString()
+                .Replace("\r\n", "\n", StringComparison.Ordinal)
+                .Replace('\r', '\n');
+        }
+
+        private static bool IsStringQuoteRun(
+            string source,
+            int index,
+            char quote,
+            int length) {
+            if (index + length > source.Length) {
+                return false;
+            }
+            for (int offset = 0; offset < length; offset++) {
+                if (source[index + offset] != quote) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        private static int FindOpeningBrace(
+            string source,
+            int expressionStart) {
+            for (int i = expressionStart - 1; i >= 0; i--) {
+                if (source[i] == '{') {
+                    return i;
+                }
+                if (!char.IsWhiteSpace(source[i])) {
+                    break;
+                }
+            }
+            return -1;
+        }
+
+        private static int FindClosingBrace(
+            string source,
+            int openBrace) {
+            int depth = 0;
+            char quote = '\0';
+            bool escaped = false;
+            for (int i = openBrace; i < source.Length; i++) {
+                char current = source[i];
+                if (quote != '\0') {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (current == '\\') {
+                        escaped = true;
+                    } else if (current == quote) {
+                        quote = '\0';
+                    }
+                    continue;
+                }
+                if (current is '\'' or '"') {
+                    quote = current;
+                } else if (current == '{') {
+                    depth++;
+                } else if (current == '}') {
+                    depth--;
+                    if (depth == 0) {
+                        return i;
+                    }
+                }
+            }
+            return -1;
+        }
+
+        private static int FindInterpolationExpressionEnd(
+            string field) {
+            int depth = 0;
+            char quote = '\0';
+            bool escaped = false;
+            for (int i = 0; i < field.Length; i++) {
+                char current = field[i];
+                if (quote != '\0') {
+                    if (escaped) {
+                        escaped = false;
+                    } else if (current == '\\') {
+                        escaped = true;
+                    } else if (current == quote) {
+                        quote = '\0';
+                    }
+                    continue;
+                }
+                if (current is '\'' or '"') {
+                    quote = current;
+                } else if (current is '(' or '[' or '{') {
+                    depth++;
+                } else if (current is ')' or ']' or '}') {
+                    depth--;
+                } else if (depth == 0) {
+                    if (current == '!'
+                        && (i + 1 >= field.Length
+                            || field[i + 1] != '=')) {
+                        return i;
+                    }
+                    if (current == ':'
+                        && (i + 1 >= field.Length
+                            || field[i + 1] != '=')) {
+                        return i;
+                    }
+                    if (current == '='
+                        && (i + 1 >= field.Length
+                            || field[i + 1] != '=')
+                        && (i == 0
+                            || field[i - 1] is not
+                                ('=' or '!' or '<' or '>' or ':'))) {
+                        return i;
+                    }
+                }
+            }
+            return field.Length;
+        }
+
+        private static int[] GetLineStarts(string source) {
+            var starts = new List<int> { 0 };
+            for (int i = 0; i < source.Length; i++) {
+                if (source[i] == '\r') {
+                    if (i + 1 < source.Length
+                        && source[i + 1] == '\n') {
+                        i++;
+                    }
+                    starts.Add(i + 1);
+                } else if (source[i] == '\n') {
+                    starts.Add(i + 1);
+                }
+            }
+            return starts.ToArray();
+        }
+
+        private static int OffsetOf(
+            int[] lineStarts,
+            int line,
+            int column) =>
+            line < 1 || line > lineStarts.Length
+                ? 0
+                : lineStarts[line - 1] + Math.Max(0, column);
 
         private static AstNodes.Comprehension BuildComprehension(
             PegActionArguments arguments,
@@ -4117,11 +4393,11 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         private sealed class FStringConversion {
-            public FStringConversion(char value) {
+            public FStringConversion(string value) {
                 Value = value;
             }
 
-            public char Value { get; }
+            public string Value { get; }
         }
 
         private sealed class CompareEntry {

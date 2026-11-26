@@ -30,6 +30,7 @@ namespace IronPython.Runtime {
 
         private GeneratorFinalizer? _finalizer;                     // finalizer object
         private TraceBackFrame? _tracedFrame;
+        private TraceBackFrame? _generatorFrame;
 
         private ExceptionState _state = new ExceptionState();
 
@@ -268,25 +269,26 @@ namespace IronPython.Runtime {
             }
         }
 
-        public int gi_running {
+        public bool gi_running {
             get {
-                if (Active) {
-                    return 1;
-                }
-
-                return 0;
+                return Active;
             }
         }
 
-        public TraceBackFrame gi_frame {
+        public TraceBackFrame? gi_frame {
             get {
-                var frame = new TraceBackFrame(
-                    _function.Context,
-                    _function.Context.GlobalDict,
-                    _function.Context.Dict,
-                    gi_code);
-                frame.SetGenerator(this);
-                return frame;
+                if (Active || Closed) {
+                    return null;
+                }
+                if (_generatorFrame is null) {
+                    _generatorFrame = new TraceBackFrame(
+                        _function.Context,
+                        _function.Context.GlobalDict,
+                        _function.Context.Dict,
+                        gi_code);
+                    _generatorFrame.SetGenerator(this);
+                }
+                return _generatorFrame;
             }
         }
 
@@ -296,6 +298,18 @@ namespace IronPython.Runtime {
         public string __name__ {
             get {
                 return _function.__name__;
+            }
+        }
+
+        public string __qualname__ {
+            get {
+                return _function.__qualname__;
+            }
+        }
+
+        public bool gi_suspended {
+            get {
+                return State != GeneratorRewriter.NotStarted && !Closed && !Active;
             }
         }
 

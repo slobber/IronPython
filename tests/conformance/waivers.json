@@ -371,6 +371,43 @@
       ]
     },
     {
+      "id": "types-cpython-runtime-layout",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#19.2",
+      "reason": "These tests inspect CPython's process-wide small-int cache, PyTypeObject size fields, and wrapper-descriptor signature metadata. IronPython uses managed numeric objects and DLR descriptors, so the corresponding public type and call semantics are covered by the remaining passing test_types cases.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_types.TypesTests.test_normal_integers",
+        "test.test_types.TypesTests.test_internal_sizes",
+        "test.test_types.TypesTests.test_dunder_get_signature"
+      ]
+    },
+    {
+      "id": "types-cpython-native-bridges",
+      "category": "cpython-c-api",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#19.2",
+      "reason": "These cases require CPython acceleration modules and ABI values that have no managed equivalent: the private _types module, a datetime C-API capsule, and the _queue extension type. IronPython's public types and queue APIs remain covered by the passing cases.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_types.TypesTests.test_names",
+        "test.test_types.TypesTests.test_capsule_type",
+        "test.test_types.TypesTests.test_method_descriptor_crash"
+      ]
+    },
+    {
+      "id": "types-cpython-interpreter-channels",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#19.2",
+      "reason": "This class imports CPython's private _interpchannels implementation and validates CPython built-in type object identity across interpreters. IronPython implements concurrent.interpreters with isolated DLR runtimes and covers the public API separately.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_types.SubinterpreterTests.*"
+      ]
+    },
+    {
       "id": "private-interpreter-engine-lifecycle",
       "category": "cpython-internal",
       "owner": "slobber",

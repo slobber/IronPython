@@ -7,10 +7,14 @@
 using System.Collections.Generic;
 
 using IronPython.Runtime;
+using IronPython.Runtime.Operations;
 
 [assembly: PythonModule("_string", typeof(IronPython.Modules.PythonString))]
 namespace IronPython.Modules {
     public static class PythonString {
+        public static void _initialize_template_types() {
+            PythonOps.InitializeTemplateTypes();
+        }
         public static IEnumerable<PythonTuple>/*!*/ formatter_parser([NotNone] string/*!*/ self)
             => NewStringFormatter.GetFormatInfo(self);
 
