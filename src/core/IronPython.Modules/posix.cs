@@ -307,24 +307,38 @@ namespace IronPython.Modules {
         private static string[] ConvertSpawnEnvironment(
             CodeContext context,
             object env) {
-            if (env is not IEnumerable<KeyValuePair<object?, object?>> values) {
+            if (!PythonTypeOps.TryInvokeUnaryOperator(
+                    context,
+                    env,
+                    "keys",
+                    out object? keys)) {
                 throw PythonOps.TypeError("env must be a mapping");
             }
 
             var result = new List<string>();
-            foreach (KeyValuePair<object?, object?> item in values) {
-                result.Add(
-                    ConvertToFsString(
-                        context,
-                        item.Key,
-                        "environment key",
-                        "posix_spawn")
-                    + "="
-                    + ConvertToFsString(
-                        context,
-                        item.Value,
-                        "environment value",
-                        "posix_spawn"));
+            IEnumerator? enumerator;
+            if (!PythonOps.TryGetEnumerator(context, keys, out enumerator)
+                || enumerator is null) {
+                throw PythonOps.TypeError("env keys must be iterable");
+            }
+            try {
+                while (enumerator.MoveNext()) {
+                    object? key = enumerator.Current;
+                    result.Add(
+                        ConvertToFsString(
+                            context,
+                            key,
+                            "environment key",
+                            "posix_spawn")
+                        + "="
+                        + ConvertToFsString(
+                            context,
+                            PythonOps.GetIndex(context, env, key),
+                            "environment value",
+                            "posix_spawn"));
+                }
+            } finally {
+                (enumerator as IDisposable)?.Dispose();
             }
             return result.ToArray();
         }

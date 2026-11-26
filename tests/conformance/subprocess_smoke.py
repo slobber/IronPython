@@ -11,14 +11,15 @@ def native_posix_spawn():
         return
 
     command = ["/bin/sh", "-c", "exit 0"]
-    pid = os.posix_spawn(command[0], command, os.environ)
+    env = dict(os.environ)
+    pid = os.posix_spawn(command[0], command, env)
     assert os.waitpid(pid, 0)[1] == 0
 
     if hasattr(os, "POSIX_SPAWN_CLOSEFROM"):
         pid = os.posix_spawn(
             command[0],
             command,
-            os.environ,
+            env,
             file_actions=[(os.POSIX_SPAWN_CLOSEFROM, 3)],
         )
         assert os.waitpid(pid, 0)[1] == 0
