@@ -21,6 +21,7 @@ __pycache__/
 # Generated files
 tests/IronPython.Tests/TestResults/
 tests/IronPython.Tests/runsettings.*.xml
+@test_*_tmp*
 
 # created by CPython tests
 src/core/IronPython.StdLib/lib/lib2to3/Grammar*.pickle
