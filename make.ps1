@@ -18,7 +18,15 @@ $ErrorActionPreference="Continue"
 
 $_BASEDIR = Split-Path -Path $MyInvocation.MyCommand.Definition -Parent
 if (-not $stdlib) {
-    $stdlib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($_BASEDIR, "..", "IronPython.StdLib"))
+    $siblingStdLib = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($_BASEDIR, "..", "IronPython.StdLib"))
+    $submoduleStdLib = [System.IO.Path]::Combine($_BASEDIR, "src", "core", "IronPython.StdLib")
+    if (Test-Path $siblingStdLib) {
+        $stdlib = $siblingStdLib
+    } elseif (Test-Path $submoduleStdLib) {
+        $stdlib = $submoduleStdLib
+    } else {
+        $stdlib = $siblingStdLib
+    }
 }
 $env:CYBERSTONE_IRONPYTHON_STDLIB = $stdlib
 
