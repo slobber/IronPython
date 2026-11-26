@@ -41,7 +41,9 @@
   `EnableWindowsTargeting`.
 - [x] 2.17 Verify clean `net10.0` and `net11.0` builds after the standard library
   baseline is updated.
-- [ ] 2.18 Verify x64 and arm64 native dependencies on each supported platform.
+- [x] 2.18 Verify x64 and arm64 native dependencies on each supported platform;
+  `docs/python-3.15-native-matrix.md` records the net10/net11 RID matrix and
+  `tests/NativeDependencySmoke` runs on every CI platform.
 - [x] 2.19 Configure main-repository build and tests to consume the sibling
   `IronPython.StdLib` checkout.
 - [x] 2.20 Standardize the standalone repository directory as

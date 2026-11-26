@@ -79,6 +79,11 @@ jobs:
     - name: ReadyToRun
       run: ./make.ps1 -frameworks ${{ matrix.framework }} readytorun
       shell: pwsh
+    - name: Native dependency smoke
+      run: >-
+        dotnet run --project tests/NativeDependencySmoke
+        -f ${{ matrix.framework }}
+      shell: pwsh
     - name: Version Information
       run: |
         dotnet --info
