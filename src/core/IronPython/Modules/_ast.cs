@@ -10,13 +10,18 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Dynamic;
 using System.Linq;
 using System.Numerics;
 using System.Runtime.InteropServices;
+using System.Text;
 
 using IronPython.Compiler;
 using IronPython.Compiler.Ast;
+using IronPython.Compiler.PublicAst;
 using IronPython.Runtime;
+using IronPython.Runtime.Binding;
+using IronPython.Runtime.Exceptions;
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
@@ -26,12 +31,134 @@ using Microsoft.Scripting.Utils;
 
 using AstExpression = IronPython.Compiler.Ast.Expression;
 using Generic = System.Collections.Generic;
+using LinqExpression = System.Linq.Expressions.Expression;
+using PublicAstNode = IronPython.Compiler.Syntax.Ast.PythonAstNode;
 
 [assembly: PythonModule("_ast", typeof(IronPython.Modules._ast))]
 namespace IronPython.Modules {
     public static class _ast {
         public const string __version__ = "62047";
+        public const int PyCF_IGNORE_COOKIE = 0x800;
+        public const int PyCF_TYPE_COMMENTS = 0x1000;
+        public const int PyCF_ALLOW_TOP_LEVEL_AWAIT = 0x2000;
+        public const int PyCF_OPTIMIZED_AST = 0x4000;
         public const int PyCF_ONLY_AST = 0x400;
+
+        static _ast() {
+            InstallSystemAnnotations();
+        }
+
+        private static void InstallSystemAnnotations() {
+            foreach (Type type in typeof(_ast).GetNestedTypes()) {
+                if (!typeof(AST).IsAssignableFrom(type)) {
+                    continue;
+                }
+
+                PythonDictionary annotations;
+                if (type.IsAbstract) {
+                    annotations = new PythonDictionary();
+                } else if (type == typeof(arguments)) {
+                    annotations = CreateArgumentsAnnotations();
+                } else {
+                    object instance = Activator.CreateInstance(
+                        type,
+                        nonPublic: true);
+                    annotations = CreateNodeAnnotations(
+                        type,
+                        (AST)instance);
+                }
+
+                DynamicHelpers.GetPythonTypeFromType(type)
+                    .SetSystemAnnotations(annotations);
+            }
+        }
+
+        private static PythonDictionary CreateNodeAnnotations(
+            Type type,
+            AST instance) {
+            var annotations = new PythonDictionary();
+            foreach (object field in instance._fields) {
+                if (field is not string name) {
+                    continue;
+                }
+                annotations[name] = AST.SequenceFieldNames.Contains(name)
+                    ? new GenericAlias(
+                        TypeCache.PythonList,
+                        PythonTuple.MakeTuple(TypeCache.Object).ToArray())
+                    : GetAnnotationType(
+                        type.GetProperty(name)?.PropertyType);
+            }
+            return annotations;
+        }
+
+        private static PythonDictionary CreateArgumentsAnnotations() {
+            PythonType argType = DynamicHelpers.GetPythonTypeFromType(
+                typeof(ArgType));
+            PythonType exprType = DynamicHelpers.GetPythonTypeFromType(
+                typeof(expr));
+            object optionalArgType = UnionType.MakeUnion(argType, null);
+            var annotations = new PythonDictionary {
+                ["posonlyargs"] = new GenericAlias(
+                    TypeCache.PythonList,
+                    PythonTuple.MakeTuple(argType).ToArray()),
+                ["args"] = new GenericAlias(
+                    TypeCache.PythonList,
+                    PythonTuple.MakeTuple(argType).ToArray()),
+                ["vararg"] = optionalArgType,
+                ["kwonlyargs"] = new GenericAlias(
+                    TypeCache.PythonList,
+                    PythonTuple.MakeTuple(argType).ToArray()),
+                ["kw_defaults"] = new GenericAlias(
+                    TypeCache.PythonList,
+                    PythonTuple.MakeTuple(exprType).ToArray()),
+                ["kwarg"] = optionalArgType,
+                ["defaults"] = new GenericAlias(
+                    TypeCache.PythonList,
+                    PythonTuple.MakeTuple(exprType).ToArray())
+            };
+            return annotations;
+        }
+
+        private static object GetAnnotationType(Type type) {
+            if (type is null || type == typeof(object)) {
+                return TypeCache.Object;
+            }
+            if (type == typeof(string)) {
+                return TypeCache.String;
+            }
+            if (type == typeof(int)) {
+                return DynamicHelpers.GetPythonType(BigInteger.Zero);
+            }
+            if (typeof(AST).IsAssignableFrom(type)) {
+                return DynamicHelpers.GetPythonTypeFromType(type);
+            }
+            if (type == typeof(PythonList)) {
+                return new GenericAlias(
+                    TypeCache.PythonList,
+                    PythonTuple.MakeTuple(TypeCache.Object).ToArray());
+            }
+            return TypeCache.Object;
+        }
+
+        public static bool _is_abstract(object cls) {
+            if (cls is not PythonType type) {
+                return false;
+            }
+            return type.Name is "AST"
+                or "mod"
+                or "stmt"
+                or "expr"
+                or "expr_context"
+                or "boolop"
+                or "operator"
+                or "unaryop"
+                or "cmpop"
+                or "excepthandler"
+                or "pattern"
+                or "type_ignore"
+                or "type_param"
+                or "slice";
+        }
 
         [ThreadStatic]
         internal static bool _skipBuildAstBinding;
@@ -56,27 +183,214 @@ namespace IronPython.Modules {
             AST source,
             string filename,
             string moduleName = null) {
-            Statement stmt;
             PythonCompilerOptions options = new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode);
             options.ModuleName = moduleName;
             SourceUnit unit = new SourceUnit(codeContext.LanguageContext, NullTextContentProvider.Null, filename, SourceCodeKind.AutoDetect);
             CompilerContext compilerContext = new CompilerContext(unit, options, ErrorSink.Default);
-            bool printExpression = false;
+            CheckForCycles(source);
+            PublicAstNode publicAst = ConvertToPublicAst(source);
+            return publicAst switch {
+                IronPython.Compiler.Syntax.Ast.Expression expression
+                    => new PythonAst(
+                        new ReturnStatement(
+                            PublicAstLowerer.LowerExpression(expression.Body)),
+                        false,
+                        ModuleOptions.ExecOrEvalCode,
+                        false,
+                        compilerContext,
+                        Array.Empty<int>()),
+                IronPython.Compiler.Syntax.Ast.Module module
+                    => PublicAstLowerer.LowerModule(
+                        module,
+                        compilerContext,
+                        true,
+                        false),
+                IronPython.Compiler.Syntax.Ast.Interactive interactive
+                    => PublicAstLowerer.LowerStatements(
+                        interactive.Body,
+                        compilerContext,
+                        true),
+                _ => throw PythonOps.TypeError(
+                    "unsupported type of AST: {0}",
+                    source.GetType())
+            };
+        }
 
-            if (source is Expression) {
-                Expression exp = (Expression)source;
-                stmt = new ReturnStatement(expr.Revert(exp.body));
-            } else if (source is Module) {
-                Module module = (Module)source;
-                stmt = _ast.stmt.RevertStmts(module.body);
-            } else if (source is Interactive) {
-                Interactive interactive = (Interactive)source;
-                stmt = _ast.stmt.RevertStmts(interactive.body);
-                printExpression = true;
-            } else
-                throw PythonOps.TypeError("unsupported type of AST: {0}", source.GetType());
+        private static PublicAstNode ConvertToPublicAst(AST source) {
+            Type astType = GetAstSystemType(source);
+            string syntaxTypeName = astType == typeof(ArgType)
+                ? "Arg"
+                : astType.Name switch {
+                    "arguments" => "Arguments",
+                    "alias" => "Alias",
+                    "keyword" => "Keyword",
+                    "withitem" => "Withitem",
+                    "match_case" => "MatchCase",
+                    "comprehension" => "Comprehension",
+                    _ => astType.Name
+                };
+            Type syntaxType = typeof(PublicAstLowerer).Assembly.GetType(
+                "IronPython.Compiler.Syntax.Ast." + syntaxTypeName);
+            if (syntaxType is null) {
+                throw PythonOps.TypeError(
+                    "unsupported type of AST: {0}",
+                    source.GetType());
+            }
 
-            return new PythonAst(stmt, false, ModuleOptions.ExecOrEvalCode, printExpression, compilerContext, Array.Empty<int>());
+            System.Reflection.ConstructorInfo constructor =
+                syntaxType.GetConstructors().Single();
+            System.Reflection.ParameterInfo[] parameters =
+                constructor.GetParameters();
+            int locationCount = HasLocationParameters(parameters) ? 4 : 0;
+            int fieldCount = parameters.Length - locationCount;
+            object[] arguments = new object[parameters.Length];
+            for (int i = 0; i < fieldCount; i++) {
+                string fieldName = i < source._fields.Count
+                    ? source._fields[i] as string
+                    : null;
+                if (fieldName is null
+                    || !source.TryGetFieldValue(
+                        fieldName,
+                        out object fieldValue)) {
+                    fieldValue = AST.SequenceFieldNames.Contains(
+                        fieldName ?? string.Empty)
+                        ? new PythonList()
+                        : null;
+                }
+                if (fieldValue is null
+                    && !source.IsOptionalField(fieldName)
+                    && !IsNullValueAllowed(astType, fieldName)) {
+                    throw PythonOps.ValueError(
+                        "field '{0}' is required for {1}",
+                        fieldName,
+                        DynamicHelpers.GetPythonType(source).Name);
+                }
+                arguments[i] = ConvertToPublicValue(
+                    fieldValue,
+                    parameters[i].ParameterType);
+            }
+
+            if (locationCount != 0) {
+                source.GetLocation(
+                    out int? line,
+                    out int? column,
+                    out int? endLine,
+                    out int? endColumn);
+                arguments[fieldCount] = line ?? 0;
+                arguments[fieldCount + 1] = column ?? 0;
+                arguments[fieldCount + 2] = endLine;
+                arguments[fieldCount + 3] = endColumn;
+            }
+
+            return (PublicAstNode)constructor.Invoke(arguments);
+        }
+
+        private static bool IsNullValueAllowed(
+            Type astType,
+            string fieldName) {
+            return astType == typeof(Constant)
+                    && fieldName == "value"
+                || astType == typeof(MatchSingleton)
+                    && fieldName == "value";
+        }
+
+        private static bool HasLocationParameters(
+            System.Reflection.ParameterInfo[] parameters) {
+            if (parameters.Length < 4) {
+                return false;
+            }
+            Type[] types = parameters
+                .Skip(parameters.Length - 4)
+                .Select(parameter => parameter.ParameterType)
+                .ToArray();
+            return types[0] == typeof(int)
+                && types[1] == typeof(int)
+                && (types[2] == typeof(int?)
+                    && types[3] == typeof(int?)
+                    || types[2] == typeof(int)
+                    && types[3] == typeof(int));
+        }
+
+        private static object ConvertToPublicValue(
+            object value,
+            Type targetType) {
+            if (value is null) {
+                return null;
+            }
+            if (value is AST node) {
+                return ConvertToPublicAst(node);
+            }
+            if (targetType.IsArray) {
+                var values = ((IEnumerable)value).Cast<object>().ToArray();
+                Array result = Array.CreateInstance(
+                    targetType.GetElementType(),
+                    values.Length);
+                for (int i = 0; i < values.Length; i++) {
+                    result.SetValue(
+                        ConvertToPublicValue(
+                            values[i],
+                            targetType.GetElementType()),
+                        i);
+                }
+                return result;
+            }
+            if (targetType.IsGenericType
+                && targetType.GetGenericTypeDefinition()
+                    == typeof(IReadOnlyList<>)) {
+                Type itemType = targetType.GetGenericArguments()[0];
+                object[] values = ((IEnumerable)value)
+                    .Cast<object>()
+                    .Select(item => ConvertToPublicValue(item, itemType))
+                    .ToArray();
+                Array result = Array.CreateInstance(itemType, values.Length);
+                for (int i = 0; i < values.Length; i++) {
+                    result.SetValue(values[i], i);
+                }
+                return result;
+            }
+            return value;
+        }
+
+        private static Type GetAstSystemType(AST source) {
+            Type type = source.GetType();
+            while (type is not null
+                && type.DeclaringType != typeof(_ast)) {
+                type = type.BaseType;
+            }
+            return type ?? source.GetType();
+        }
+
+        private static void CheckForCycles(AST source) {
+            var active = new HashSet<AST>(
+                ReferenceEqualityComparer<AST>.Instance);
+
+            void Visit(AST node) {
+                if (!active.Add(node)) {
+                    throw PythonOps.RecursionError(
+                        "maximum recursion depth exceeded");
+                }
+                foreach (object field in node._fields) {
+                    if (field is not string name) {
+                        continue;
+                    }
+                    object value = node.GetType().GetProperty(name)
+                        ?.GetValue(node, null);
+                    if (value is AST child) {
+                        Visit(child);
+                    } else if (value is IEnumerable values
+                        && value is not string
+                        && value is not byte[]) {
+                        foreach (object item in values) {
+                            if (item is AST itemNode) {
+                                Visit(itemNode);
+                            }
+                        }
+                    }
+                }
+                active.Remove(node);
+            }
+
+            Visit(source);
         }
 
         internal static AST BuildAst(CodeContext context, SourceUnit sourceUnit, PythonCompilerOptions opts, string mode) {
@@ -84,12 +398,67 @@ namespace IronPython.Modules {
                 new CompilerContext(sourceUnit, opts, ThrowingErrorSink.Default),
                 (PythonOptions)context.LanguageContext.Options)) {
 
-                PythonAst ast = parser.ParseFile(true);
-                if (!_skipBuildAstBinding) {
-                    ast.Bind();
-                }
-                return ConvertToAST(ast, mode);
+                return ConvertPublicAst(
+                    parser.ParsePublicAst(mode));
             }
+        }
+
+        private static AST ConvertPublicAst(PublicAstNode node) {
+            string typeName = node.NodeKind == "arg"
+                ? nameof(ArgType)
+                : node.NodeKind;
+            Type targetType = typeof(_ast).GetNestedTypes()
+                .FirstOrDefault(type => type.Name == typeName);
+            if (targetType is null
+                || !typeof(AST).IsAssignableFrom(targetType)) {
+                throw PythonOps.TypeError(
+                    "unsupported AST node type: {0}",
+                    node.NodeKind);
+            }
+
+            var result = (AST)Activator.CreateInstance(
+                targetType,
+                nonPublic: true);
+            foreach (IronPython.Compiler.Syntax.Ast.AstFieldValue field
+                in node.GetFields()) {
+                result.SetFieldValue(
+                    DefaultContext.Default,
+                    field.Name,
+                    field.Name == "is_lazy"
+                        && field.Value is null
+                        && node.NodeKind is "Import" or "ImportFrom"
+                        ? 0
+                        : ConvertPublicAstValue(field.Value));
+            }
+            if (node.LineNumber is int lineNumber) {
+                result.lineno = lineNumber;
+            }
+            if (node.ColumnOffset is int columnOffset) {
+                result.col_offset = columnOffset;
+            }
+            if (node.EndLineNumber is int endLineNumber) {
+                result.end_lineno = endLineNumber;
+            }
+            if (node.EndColumnOffset is int endColumnOffset) {
+                result.end_col_offset = endColumnOffset;
+            }
+            return result;
+        }
+
+        private static object ConvertPublicAstValue(object value) {
+            if (value is PublicAstNode node) {
+                return ConvertPublicAst(node);
+            }
+            if (value is string or byte[]
+                || value is not IEnumerable values) {
+                return value;
+            }
+
+            var result = new PythonList();
+            foreach (object item in values) {
+                result.AddNoLock(ConvertPublicAstValue(item));
+            }
+            return result;
         }
 
         private static mod ConvertToAST(PythonAst pythonAst, string kind) {
@@ -114,14 +483,15 @@ namespace IronPython.Modules {
         }
 
         [PythonType]
-        public abstract class AST {
-            private static readonly HashSet<string> SequenceFieldNames =
+        public class AST : IPythonObject, IDynamicMetaObjectProvider {
+            internal static readonly HashSet<string> SequenceFieldNames =
                 new HashSet<string>(StringComparer.Ordinal) {
-                    "args", "bases", "body", "cases", "comparators", "decorator_list",
-                    "defaults", "elts", "finalbody", "generators", "handlers", "ifs",
-                    "items", "keys", "keywords", "kw_defaults", "kwonlyargs", "names",
-                    "ops", "orelse", "patterns", "posonlyargs", "targets", "type_ignores",
-                    "type_params", "values"
+                    "args", "argtypes", "bases", "body", "cases", "comparators",
+                    "decorator_list", "defaults", "dims", "elts", "finalbody",
+                    "generators", "handlers", "ifs", "items", "keys", "keywords",
+                    "kw_defaults", "kwd_attrs", "kwd_patterns", "kwonlyargs",
+                    "names", "ops", "orelse", "patterns", "posonlyargs", "targets",
+                    "type_ignores", "type_params", "values"
                 };
 
             private static readonly Dictionary<string, HashSet<string>> OptionalFieldNames =
@@ -165,10 +535,96 @@ namespace IronPython.Modules {
             protected int? _col_offset;
             protected int? _end_lineno;
             protected int? _end_col_offset;
+            private PythonDictionary _customAttributes;
+            private PythonType _pythonType;
+            private object[] _slots;
 
             public PythonTuple _fields { get; protected set; } = PythonTuple.EMPTY;
 
             public PythonTuple _attributes { get; protected set; } = PythonTuple.EMPTY;
+
+            public PythonTuple __match_args__ => _fields;
+
+            public string __repr__(CodeContext context) {
+                var result = new StringBuilder();
+                AppendRepr(context, result, 3);
+                return result.ToString();
+            }
+
+            private void AppendRepr(
+                CodeContext context,
+                StringBuilder result,
+                int depth) {
+                string typeName = DynamicHelpers.GetPythonType(this).Name;
+                if (depth == 0) {
+                    result.Append(typeName);
+                    result.Append("(...)");
+                    return;
+                }
+
+                result.Append(typeName);
+                result.Append('(');
+                bool first = true;
+                foreach (object field in _fields) {
+                    if (field is not string name
+                        || !TryGetFieldValue(name, out object value)) {
+                        continue;
+                    }
+                    if (!first) {
+                        result.Append(", ");
+                    }
+                    first = false;
+                    result.Append(name);
+                    result.Append('=');
+                    AppendValueRepr(
+                        context,
+                        result,
+                        value,
+                        depth - 1);
+                }
+                result.Append(')');
+            }
+
+            private static void AppendValueRepr(
+                CodeContext context,
+                StringBuilder result,
+                object value,
+                int depth) {
+                if (value is AST node) {
+                    node.AppendRepr(context, result, depth);
+                    return;
+                }
+                if (value is PythonList list) {
+                    result.Append('[');
+                    if (list.Count > 2) {
+                        AppendValueRepr(
+                            context,
+                            result,
+                            list[0],
+                            depth);
+                        result.Append(", ..., ");
+                        AppendValueRepr(
+                            context,
+                            result,
+                            list[list.Count - 1],
+                            depth);
+                    } else {
+                        for (int i = 0; i < list.Count; i++) {
+                            if (i != 0) {
+                                result.Append(", ");
+                            }
+                            AppendValueRepr(
+                                context,
+                                result,
+                                list[i],
+                                depth);
+                        }
+                    }
+                    result.Append(']');
+                    return;
+                }
+                result.Append(PythonOps.Repr(context, value));
+            }
 
             public PythonDictionary _field_types {
                 get {
@@ -187,24 +643,436 @@ namespace IronPython.Modules {
                 }
             }
 
-            public void __init__([ParamDictionary] IDictionary<object, object> kwargs) {
-                foreach (object field in _fields) {
-                    if (field is not string name || kwargs.ContainsKey(name)) {
+            public static object __new__(
+                CodeContext context,
+                [NotNone] PythonType pythonType,
+                [ParamDictionary] IDictionary<object, object> kwargs,
+                [NotNone] params object[] args) {
+                object result = pythonType.CreateInstance(context);
+                if (result is AST ast) {
+                    ast._pythonType = pythonType;
+                }
+                return result;
+            }
+
+            public void __init__(
+                CodeContext context,
+                [ParamDictionary] IDictionary<object, object> kwargs,
+                [NotNone] params object[] args) {
+                if (GetType() == typeof(AST)) {
+                    PythonOps.Warn(
+                        context,
+                        PythonExceptions.DeprecationWarning,
+                        "AST constructor takes 0 positional arguments");
+                    if (args.Length > 0) {
+                        throw PythonOps.TypeError(
+                            "AST constructor takes 0 positional arguments");
+                    }
+                }
+
+                if (!PythonOps.TryGetBoundAttr(
+                    context,
+                    this,
+                    "_fields",
+                    out object fieldsValue)) {
+                    throw PythonOps.AttributeError(
+                        "type object '{0}' has no attribute '_fields'",
+                        PythonOps.GetPythonTypeName(this));
+                }
+                PythonOps.TryGetBoundAttr(
+                    context,
+                    this,
+                    "_attributes",
+                    out object attributesValue);
+
+                List<string> fields = ToFieldNames(
+                    fieldsValue,
+                    out object malformedField);
+                if (malformedField is not null) {
+                    throw PythonOps.TypeError(
+                        "Field {0} must be a string",
+                        PythonOps.Repr(context, malformedField));
+                }
+                List<string> attributes = ToFieldNames(
+                    attributesValue,
+                    out _);
+
+                TryGetFieldTypes(
+                    context,
+                    out PythonDictionary fieldTypes);
+                var values = new Dictionary<string, object>();
+                for (int i = 0; i < args.Length; i++) {
+                    if (i >= fields.Count) {
+                        throw PythonOps.TypeError(
+                            "{0}.__init__ got too many positional arguments",
+                            PythonOps.GetPythonTypeName(this));
+                    }
+                    values[fields[i]] = args[i];
+                }
+                foreach (KeyValuePair<object, object> item in kwargs) {
+                    if (!TryGetKeywordName(
+                        context,
+                        item.Key,
+                        fields,
+                        attributes,
+                        out string name)) {
+                        PythonOps.Warn(
+                            context,
+                            PythonExceptions.DeprecationWarning,
+                            "got an unexpected keyword argument {0}",
+                            PythonOps.Repr(context, item.Key));
+                        throw PythonOps.TypeError(
+                            "got an unexpected keyword argument {0}",
+                            PythonOps.Repr(context, item.Key));
+                    }
+                    if (!fields.Contains(name)
+                        && !attributes.Contains(name)
+                        && GetType().GetProperty(name) is null) {
+                        throw PythonOps.TypeError(
+                            "{0}.__init__ got an unexpected keyword argument '{1}'",
+                            PythonOps.GetPythonTypeName(this),
+                            name);
+                    }
+                    if (values.ContainsKey(name)) {
+                        throw PythonOps.TypeError(
+                            "{0} got multiple values for argument '{1}'",
+                            GetDisplayTypeName(context),
+                            name);
+                    }
+                    values[name] = item.Value;
+                }
+
+                var missing = new List<string>();
+                foreach (string name in fields) {
+                    if (values.ContainsKey(name)) {
+                        SetFieldValue(context, name, values[name]);
                         continue;
                     }
-                    System.Reflection.PropertyInfo property = GetType().GetProperty(name);
-                    if (property?.GetValue(this) is null && !IsOptionalField(name)) {
+
+                    object fieldType = null;
+                    bool hasFieldType = fieldTypes is not null
+                        && fieldTypes.TryGetValue(name, out fieldType);
+                    if (fieldTypes is not null && !hasFieldType) {
                         throw PythonOps.TypeError(
-                            "{0} constructor missing required field {1}",
-                            PythonOps.GetPythonTypeName(this),
-                            PythonOps.Repr(DefaultContext.Default, name));
+                            "Field '{0}' is missing from {1}._field_types",
+                            name,
+                            GetQualifiedTypeName(context));
                     }
+
+                    if (IsSequenceField(name, fieldType)) {
+                        SetFieldValue(context, name, new PythonList());
+                    } else if (name == "ctx"
+                        && fieldType is PythonType exprContextType
+                        && exprContextType.IsSubclassOf(
+                            DynamicHelpers.GetPythonTypeFromType(
+                                typeof(expr_context)))) {
+                        SetFieldValue(context, name, Load.Instance);
+                    } else if (!IsOptionalField(name)
+                        && fieldTypes is not null
+                        && !IsOptionalType(fieldType)) {
+                        missing.Add(name);
+                    }
+                }
+
+                foreach (KeyValuePair<string, object> item in values) {
+                    if (!fields.Contains(item.Key)) {
+                        SetFieldValue(context, item.Key, item.Value);
+                    }
+                }
+
+                if (missing.Count > 0) {
+                    string argumentWord =
+                        missing.Count == 1 ? "argument" : "arguments";
+                    string names = missing.Count == 1
+                        ? $"'{missing[0]}'"
+                        : string.Join(
+                            ", ",
+                            missing.Take(missing.Count - 1)
+                                .Select(name => $"'{name}'"))
+                            + $", and '{missing[^1]}'";
+                    throw PythonOps.TypeError(
+                        "{0}.__init__ missing {1} required positional {2}: {3}",
+                        GetDisplayTypeName(context),
+                        missing.Count,
+                        argumentWord,
+                        names);
                 }
             }
 
-            private bool IsOptionalField(string name) =>
-                OptionalFieldNames.TryGetValue(GetType().Name, out HashSet<string> fields)
+            private bool TryGetFieldTypes(
+                CodeContext context,
+                out PythonDictionary fieldTypes) {
+                PythonType type = DynamicHelpers.GetPythonType(this);
+                if (!type.IsSystemType) {
+                    if (PythonOps.TryGetBoundAttr(
+                        context,
+                        type,
+                        "_field_types",
+                        out object fieldTypesValue)) {
+                        fieldTypes = fieldTypesValue as PythonDictionary;
+                        return fieldTypes is not null;
+                    }
+
+                    fieldTypes = null;
+                    return false;
+                }
+
+                fieldTypes = _field_types;
+                return fieldTypes is not null;
+            }
+
+            private static bool TryGetKeywordName(
+                CodeContext context,
+                object key,
+                List<string> fields,
+                List<string> attributes,
+                out string name) {
+                if (key is string stringKey) {
+                    name = stringKey;
+                    return true;
+                }
+
+                foreach (string field in fields) {
+                    if (PythonOps.EqualRetBool(context, key, field)) {
+                        name = field;
+                        return true;
+                    }
+                }
+                foreach (string attribute in attributes) {
+                    if (PythonOps.EqualRetBool(context, key, attribute)) {
+                        name = attribute;
+                        return true;
+                    }
+                }
+
+                name = null;
+                return false;
+            }
+
+            private string GetDisplayTypeName(CodeContext context) {
+                PythonType type = DynamicHelpers.GetPythonType(this);
+                object module = PythonType.Get__module__(context, type);
+                return Equals(module, "_ast")
+                    ? "ast." + type.Name
+                    : type.Name;
+            }
+
+            private string GetQualifiedTypeName(CodeContext context) {
+                PythonType type = DynamicHelpers.GetPythonType(this);
+                object module = PythonType.Get__module__(context, type);
+                string displayModule = Equals(module, "_ast")
+                    ? "ast"
+                    : module as string ?? "unknown";
+                return displayModule + "." + type.QualName;
+            }
+
+            private static List<string> ToFieldNames(
+                object value,
+                out object malformedField) {
+                malformedField = null;
+                var result = new List<string>();
+                if (value is not IEnumerable enumerable) {
+                    return result;
+                }
+                foreach (object field in enumerable) {
+                    if (field is string name) {
+                        result.Add(name);
+                    } else {
+                        malformedField ??= field ?? "None";
+                    }
+                }
+                return result;
+            }
+
+            private static bool IsSequenceField(
+                string name,
+                object fieldType) {
+                if (SequenceFieldNames.Contains(name)) {
+                    return true;
+                }
+                if (fieldType is GenericAlias alias
+                    && alias.__origin__ is PythonType origin
+                    && origin.Name is "list" or "tuple" or "set"
+                    or "frozenset") {
+                    return true;
+                }
+                string typeName = fieldType?.ToString() ?? string.Empty;
+                return typeName.StartsWith("list[", StringComparison.Ordinal)
+                    || typeName.StartsWith(
+                        "System.Collections.Generic.List",
+                        StringComparison.Ordinal);
+            }
+
+            private static bool IsOptionalType(object fieldType) {
+                if (fieldType is null) return false;
+                if (fieldType is UnionType union) {
+                    return union.__args__.Any(member => member is null);
+                }
+                string typeName = fieldType.ToString() ?? string.Empty;
+                return typeName.Contains("None", StringComparison.Ordinal);
+            }
+
+            internal bool IsOptionalField(string name) =>
+                OptionalFieldNames.TryGetValue(
+                    this is ArgType
+                        ? "arg"
+                        : GetType().Name,
+                    out HashSet<string> fields)
                 && fields.Contains(name);
+
+            internal void SetFieldValue(
+                CodeContext context,
+                string name,
+                object value) {
+                System.Reflection.PropertyInfo property =
+                    GetType().GetProperty(name);
+                if (property is not null) {
+                    try {
+                        property.SetValue(this, value, null);
+                    } catch (ArgumentException) {
+                        EnsureCustomAttributes()[name] = value;
+                    } catch (System.Reflection.TargetInvocationException e)
+                        when (e.InnerException is ArgumentException
+                            or InvalidCastException) {
+                        EnsureCustomAttributes()[name] = value;
+                    }
+                } else {
+                    PythonOps.SetAttr(context, this, name, value);
+                }
+            }
+
+            internal bool TryGetFieldValue(
+                string name,
+                out object value) {
+                if (_customAttributes is not null
+                    && _customAttributes.TryGetValue(name, out value)) {
+                    return true;
+                }
+
+                System.Reflection.MemberInfo member =
+                    (System.Reflection.MemberInfo)GetType().GetProperty(name)
+                    ?? GetType().GetField(name);
+                if (member is System.Reflection.PropertyInfo property) {
+                    value = property.GetValue(this, null);
+                    return true;
+                }
+                if (member is System.Reflection.FieldInfo field) {
+                    value = field.GetValue(this);
+                    return true;
+                }
+
+                value = null;
+                return false;
+            }
+
+            internal void GetLocation(
+                out int? line,
+                out int? column,
+                out int? endLine,
+                out int? endColumn) {
+                line = _lineno;
+                column = _col_offset;
+                endLine = _end_lineno;
+                endColumn = _end_col_offset;
+            }
+
+            private PythonDictionary EnsureCustomAttributes() {
+                if (_customAttributes is null) {
+                    _customAttributes = new PythonDictionary();
+                }
+                return _customAttributes;
+            }
+
+            public PythonDictionary __dict__ => EnsureCustomAttributes();
+
+            PythonDictionary IPythonObject.Dict => _customAttributes;
+
+            PythonDictionary IPythonObject.SetDict(PythonDictionary dict) {
+                System.Threading.Interlocked.CompareExchange(
+                    ref _customAttributes,
+                    dict,
+                    null);
+                return _customAttributes;
+            }
+
+            bool IPythonObject.ReplaceDict(PythonDictionary dict) {
+                return System.Threading.Interlocked.CompareExchange(
+                    ref _customAttributes,
+                    dict,
+                    null) is null;
+            }
+
+            PythonType IPythonObject.PythonType
+                => _pythonType ?? DynamicHelpers.GetPythonTypeFromType(GetType());
+
+            void IPythonObject.SetPythonType(PythonType newType) {
+                if (newType.IsSystemType) {
+                    throw PythonOps.TypeError(
+                        "__class__ assignment can only be performed on user defined types");
+                }
+                _pythonType = newType;
+            }
+
+            object[] IPythonObject.GetSlots() => _slots;
+
+            object[] IPythonObject.GetSlotsCreate() {
+                if (_slots is null) {
+                    System.Threading.Interlocked.CompareExchange(
+                        ref _slots,
+                        new object[1],
+                        null);
+                }
+                return _slots;
+            }
+
+            DynamicMetaObject IDynamicMetaObjectProvider.GetMetaObject(
+                LinqExpression parameter) {
+                return new MetaUserObject(
+                    parameter,
+                    BindingRestrictions.Empty,
+                    null,
+                    this);
+            }
+
+            public object __getattribute__(
+                CodeContext context,
+                string name) {
+                if (_customAttributes is not null
+                    && _customAttributes.TryGetValue(name, out object value)) {
+                    return value;
+                }
+                if (name == "__dict__") {
+                    return this.__dict__;
+                }
+                if (name == "__class__") {
+                    return DynamicHelpers.GetPythonType(this);
+                }
+                return ObjectOps.__getattribute__(context, this, name);
+            }
+
+            public object __getattr__(CodeContext context, string name) {
+                if (_customAttributes is not null
+                    && _customAttributes.TryGetValue(name, out object value)) {
+                    return value;
+                }
+                throw PythonOps.AttributeError(
+                    "'{0}' object has no attribute '{1}'",
+                    PythonOps.GetPythonTypeName(this),
+                    name);
+            }
+
+            public void __setattr__(
+                CodeContext context,
+                string name,
+                object value) {
+                System.Reflection.PropertyInfo property =
+                    GetType().GetProperty(name);
+                if (property is not null && property.CanWrite) {
+                    property.SetValue(this, value, null);
+                } else {
+                    EnsureCustomAttributes()[name] = value;
+                }
+            }
 
             public int lineno {
                 get {
@@ -245,6 +1113,11 @@ namespace IronPython.Modules {
             }
 
             public void __setstate__(PythonDictionary state) {
+                foreach (KeyValuePair<object, object> item in state) {
+                    if (item.Key is string name) {
+                        SetFieldValue(DefaultContext.Default, name, item.Value);
+                    }
+                }
                 restoreProperties(_attributes, state);
                 restoreProperties(_fields, state);
             }
@@ -285,7 +1158,17 @@ namespace IronPython.Modules {
             }
 
             public virtual object/*!*/ __reduce__() {
-                return PythonTuple.MakeTuple(DynamicHelpers.GetPythonType(this), PythonTuple.EMPTY, getstate());
+                CodeContext context = DefaultContext.Default;
+                object copyreg = context.LanguageContext
+                    .GetCopyRegModule();
+                object newObject = PythonOps.GetBoundAttr(
+                    context,
+                    copyreg,
+                    "__newobj__");
+                return PythonTuple.MakeTuple(
+                    newObject,
+                    PythonTuple.MakeTuple(DynamicHelpers.GetPythonType(this)),
+                    getstate());
             }
 
             public virtual object/*!*/ __reduce_ex__(int protocol) {
@@ -339,7 +1222,9 @@ namespace IronPython.Modules {
 
             internal static stmt Convert(Statement stmt) {
                 stmt ast = stmt switch {
-                    FunctionDefinition s => new FunctionDef(s),
+                    FunctionDefinition s => s.IsAsync
+                        ? new AsyncFunctionDef(s)
+                        : new FunctionDef(s),
                     ReturnStatement s => new Return(s),
                     AnnotatedAssignStatement s => new AnnAssign(s),
                     AssignmentStatement s => new Assign(s),
@@ -564,8 +1449,17 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class alias : AST {
+            private static readonly PythonTuple __attributes =
+                PythonTuple.MakeTuple(new[] {
+                    nameof(lineno),
+                    nameof(col_offset),
+                    nameof(end_lineno),
+                    nameof(end_col_offset)
+                });
+
             public alias() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(name), nameof(asname) });
+                _attributes = __attributes;
             }
 
             public alias(string name, [Optional] string asname)
@@ -583,17 +1477,30 @@ namespace IronPython.Modules {
 
         [PythonType("arg"), PythonHidden]
         public class ArgType : AST {
-            private static PythonTuple __attributes = PythonTuple.MakeTuple(new[] { nameof(lineno), nameof(col_offset) });
-            private static PythonTuple __fields = PythonTuple.MakeTuple(new[] { nameof(arg), nameof(annotation) });
+            private static PythonTuple __attributes = PythonTuple.MakeTuple(new[] {
+                nameof(lineno),
+                nameof(col_offset),
+                nameof(end_lineno),
+                nameof(end_col_offset)
+            });
+            private static PythonTuple __fields = PythonTuple.MakeTuple(new[] {
+                nameof(arg),
+                nameof(annotation),
+                nameof(type_comment)
+            });
 
             public ArgType() {
                 _attributes = __attributes;
                 _fields = __fields;
             }
 
-            public ArgType(string arg, object annotation) : this() {
+            public ArgType(
+                string arg,
+                object annotation,
+                [Optional] string type_comment) : this() {
                 this.arg = arg;
                 this.annotation = annotation;
+                this.type_comment = type_comment;
             }
 
             internal ArgType(Parameter parameter) : this() {
@@ -604,16 +1511,34 @@ namespace IronPython.Modules {
 
             public string arg { get; set; }
             public object annotation { get; set; }
+            public string type_comment { get; set; }
         }
 
         [PythonType]
         public class arguments : AST {
             public arguments() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(args), nameof(vararg), nameof(kwonlyargs), nameof(kw_defaults), nameof(kwarg), nameof(defaults) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(posonlyargs),
+                    nameof(args),
+                    nameof(vararg),
+                    nameof(kwonlyargs),
+                    nameof(kw_defaults),
+                    nameof(kwarg),
+                    nameof(defaults)
+                });
+                posonlyargs = new PythonList();
             }
 
-            public arguments(PythonList args, ArgType vararg, PythonList kwonlyargs, PythonList kw_defaults, ArgType kwarg, PythonList defaults)
+            public arguments(
+                PythonList posonlyargs,
+                PythonList args,
+                ArgType vararg,
+                PythonList kwonlyargs,
+                PythonList kw_defaults,
+                ArgType kwarg,
+                PythonList defaults)
                 : this() {
+                this.posonlyargs = posonlyargs;
                 this.args = args;
                 this.vararg = vararg;
                 this.kwonlyargs = kwonlyargs;
@@ -624,12 +1549,18 @@ namespace IronPython.Modules {
 
             internal arguments(IList<Parameter> parameters)
                 : this() {
+                posonlyargs = new PythonList();
                 args = new PythonList(parameters.Count);
                 defaults = new PythonList(parameters.Count);
                 kwonlyargs = new PythonList();
                 kw_defaults = new PythonList();
                 foreach (Parameter param in parameters) {
                     switch (param.Kind) {
+                        case ParameterKind.PositionalOnly:
+                            posonlyargs.Add(new ArgType(param));
+                            if (param.DefaultValue != null)
+                                defaults.Add(Convert(param.DefaultValue));
+                            break;
                         case ParameterKind.List:
                             vararg = new ArgType(param);
                             break;
@@ -651,34 +1582,46 @@ namespace IronPython.Modules {
 
             internal Parameter[] Revert() {
                 var parameters = new List<Parameter>();
-                for (var i = kwonlyargs.Count - 1; i >= 0; i--) {
+                int positionalCount =
+                    posonlyargs.Count + args.Count;
+                int firstDefault =
+                    positionalCount - defaults.Count;
+                for (int i = 0; i < positionalCount; i++) {
+                    ArgType arg = i < posonlyargs.Count
+                        ? (ArgType)posonlyargs[i]
+                        : (ArgType)args[i - posonlyargs.Count];
+                    parameters.Add(new Parameter(
+                        arg.arg,
+                        i < posonlyargs.Count
+                            ? ParameterKind.PositionalOnly
+                            : ParameterKind.Normal) {
+                        Annotation = expr.Revert(arg.annotation),
+                        DefaultValue = i >= firstDefault
+                            ? expr.Revert(defaults[i - firstDefault])
+                            : null
+                    });
+                }
+                for (int i = 0; i < kwonlyargs.Count; i++) {
                     var kwonlyarg = (ArgType)kwonlyargs[i];
-                    var param = new Parameter(kwonlyarg.arg, ParameterKind.KeywordOnly) {
+                    parameters.Add(new Parameter(
+                        kwonlyarg.arg,
+                        ParameterKind.KeywordOnly) {
                         Annotation = expr.Revert(kwonlyarg.annotation),
                         DefaultValue = expr.Revert(kw_defaults[i])
-                    };
-                }
-                int argIdx = args.Count - 1;
-                for (int defIdx = defaults.Count - 1; defIdx >= 0; defIdx--, argIdx--) {
-                    var arg = (ArgType)args[argIdx];
-                    parameters.Add(new Parameter(arg.arg) {
-                        Annotation = expr.Revert(arg.annotation),
-                        DefaultValue = expr.Revert(defaults[defIdx])
                     });
                 }
-                while (argIdx >= 0) {
-                    var arg = (ArgType)args[argIdx--];
-                    parameters.Add(new Parameter(arg.arg) {
-                        Annotation = expr.Revert(arg.annotation)
-                    });
-                }
-                parameters.Reverse();
                 if (vararg != null)
-                    parameters.Add(new Parameter(vararg.arg, ParameterKind.List));
+                    parameters.Add(new Parameter(vararg.arg, ParameterKind.List) {
+                        Annotation = expr.Revert(vararg.annotation)
+                    });
                 if (kwarg != null)
-                    parameters.Add(new Parameter(kwarg.arg, ParameterKind.Dictionary));
+                    parameters.Add(new Parameter(kwarg.arg, ParameterKind.Dictionary) {
+                        Annotation = expr.Revert(kwarg.annotation)
+                    });
                 return parameters.ToArray();
             }
+
+            public PythonList posonlyargs { get; set; }
 
             public PythonList args { get; set; }
 
@@ -705,20 +1648,31 @@ namespace IronPython.Modules {
         [PythonType]
         public class comprehension : AST {
             public comprehension() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(target), nameof(iter), nameof(ifs) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(target),
+                    nameof(iter),
+                    nameof(ifs),
+                    nameof(is_async)
+                });
             }
 
-            public comprehension(expr target, expr iter, PythonList ifs)
+            public comprehension(
+                expr target,
+                expr iter,
+                PythonList ifs,
+                [Optional] int is_async)
                 : this() {
                 this.target = target;
                 this.iter = iter;
                 this.ifs = ifs;
+                this.is_async = is_async;
             }
 
             internal comprehension(ComprehensionFor listFor, ComprehensionIf[] listIfs)
                 : this() {
                 target = Convert(listFor.Left, Store.Instance);
                 iter = Convert(listFor.List);
+                is_async = listFor.IsAsync ? 1 : 0;
                 ifs = new PythonList(listIfs.Length);
                 foreach (ComprehensionIf listIf in listIfs)
                     ifs.Add(Convert(listIf.Test));
@@ -728,6 +1682,7 @@ namespace IronPython.Modules {
                 var comprehensionIterators = new List<ComprehensionIterator>();
                 foreach (comprehension comp in comprehensions) {
                     ComprehensionFor cf = new ComprehensionFor(expr.Revert(comp.target), expr.Revert(comp.iter));
+                    cf.IsAsync = comp.is_async != 0;
                     comprehensionIterators.Add(cf);
                     foreach (expr ifs in comp.ifs) {
                         comprehensionIterators.Add(new ComprehensionIf(expr.Revert(ifs)));
@@ -741,6 +1696,8 @@ namespace IronPython.Modules {
             public expr iter { get; set; }
 
             public PythonList ifs { get; set; }
+
+            public int is_async { get; set; }
         }
 
         [PythonType]
@@ -797,8 +1754,17 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class keyword : AST {
+            private static readonly PythonTuple __attributes =
+                PythonTuple.MakeTuple(new[] {
+                    nameof(lineno),
+                    nameof(col_offset),
+                    nameof(end_lineno),
+                    nameof(end_col_offset)
+                });
+
             public keyword() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(arg), nameof(value) });
+                _attributes = __attributes;
             }
 
             public keyword(string arg, expr value)
@@ -945,13 +1911,19 @@ namespace IronPython.Modules {
         [PythonType]
         public class Assign : stmt {
             public Assign() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(targets), nameof(value) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(targets),
+                    nameof(value),
+                    nameof(type_comment)
+                });
             }
 
-            public Assign(PythonList targets, expr value, [Optional] int? lineno, [Optional] int? col_offset)
+            public Assign(PythonList targets, expr value, [Optional] string type_comment,
+                [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.targets = targets;
                 this.value = value;
+                this.type_comment = type_comment;
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -972,31 +1944,83 @@ namespace IronPython.Modules {
             public PythonList targets { get; set; }
 
             public expr value { get; set; }
+
+            public string type_comment { get; set; }
         }
 
         [PythonType]
         public class AsyncFunctionDef : stmt {
             public AsyncFunctionDef() {
-                _fields = PythonTuple.MakeTuple(nameof(name), nameof(args), nameof(body), nameof(decorator_list), nameof(returns));
+                _fields = PythonTuple.MakeTuple(
+                    nameof(name),
+                    nameof(args),
+                    nameof(body),
+                    nameof(decorator_list),
+                    nameof(returns),
+                    nameof(type_comment),
+                    nameof(type_params));
             }
 
-            public AsyncFunctionDef(expr name, expr args, expr body, expr decorator_list, expr returns, [Optional] int? lineno, [Optional] int? col_offset)
+            public AsyncFunctionDef(
+                string name,
+                arguments args,
+                PythonList body,
+                PythonList decorator_list,
+                expr returns,
+                [Optional] string type_comment,
+                [Optional] PythonList type_params,
+                [Optional] int? lineno,
+                [Optional] int? col_offset)
                 : this() {
                 this.name = name;
                 this.args = args;
                 this.body = body;
                 this.decorator_list = decorator_list;
                 this.returns = returns;
+                this.type_comment = type_comment;
+                this.type_params = type_params ?? new PythonList();
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
 
-            // _fields
-            public expr name { get; set; }
-            public expr args { get; set; }
-            public expr body { get; set; }
-            public expr decorator_list { get; set; }
+            internal AsyncFunctionDef(FunctionDefinition def)
+                : this() {
+                name = def.Name;
+                args = new arguments(def.Parameters);
+                body = ConvertStatements(def.Body);
+                decorator_list = new PythonList();
+                if (def.Decorators is not null) {
+                    foreach (AstExpression decorator in def.Decorators) {
+                        decorator_list.Add(Convert(decorator));
+                    }
+                }
+                returns = def.ReturnAnnotation is null
+                    ? null
+                    : Convert(def.ReturnAnnotation);
+                type_params = new PythonList();
+            }
+
+            internal override Statement Revert() {
+                FunctionDefinition fd = new FunctionDefinition(
+                    name,
+                    args.Revert(),
+                    RevertStmts(body),
+                    isAsync: true);
+                fd.IsGenerator = _containsYield;
+                _containsYield = false;
+                if (decorator_list.Count != 0) {
+                    fd.Decorators = expr.RevertExprs(decorator_list);
+                }
+                return fd;
+            }
+
+            public string name { get; set; }
+            public arguments args { get; set; }
+            public PythonList body { get; set; }
+            public PythonList decorator_list { get; set; }
             public expr returns { get; set; }
+            public string type_comment { get; set; }
+            public PythonList type_params { get; set; }
         }
 
         [PythonType]
@@ -1275,16 +2299,32 @@ namespace IronPython.Modules {
         [PythonType]
         public class ClassDef : stmt {
             public ClassDef() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(name), nameof(bases), nameof(keywords), nameof(body), nameof(decorator_list) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(name),
+                    nameof(bases),
+                    nameof(keywords),
+                    nameof(body),
+                    nameof(decorator_list),
+                    nameof(type_params)
+                });
             }
 
-            public ClassDef(string name, PythonList bases, PythonList keywords, PythonList body, PythonList decorator_list, [Optional] int? lineno, [Optional] int? col_offset)
+            public ClassDef(
+                string name,
+                PythonList bases,
+                PythonList keywords,
+                PythonList body,
+                PythonList decorator_list,
+                [Optional] PythonList type_params,
+                [Optional] int? lineno,
+                [Optional] int? col_offset)
                 : this() {
                 this.name = name;
                 this.bases = bases;
                 this.keywords = keywords;
                 this.body = body;
                 this.decorator_list = decorator_list;
+                this.type_params = type_params ?? new PythonList();
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -1308,6 +2348,7 @@ namespace IronPython.Modules {
                 } else {
                     decorator_list = new PythonList(0);
                 }
+                type_params = new PythonList();
             }
 
             internal override Statement Revert() {
@@ -1335,6 +2376,8 @@ namespace IronPython.Modules {
             public PythonList body { get; set; }
 
             public PythonList decorator_list { get; set; }
+
+            public PythonList type_params { get; set; }
         }
 
         [PythonType]
@@ -1622,9 +2665,6 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class Expr : stmt {
-            public static readonly PythonTuple __match_args__ =
-                PythonTuple.MakeTuple(nameof(value));
-
             public Expr() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(value), });
             }
@@ -1701,10 +2741,16 @@ namespace IronPython.Modules {
         [PythonType]
         public class For : stmt {
             public For() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(target), nameof(iter), nameof(body), nameof(orelse) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(target),
+                    nameof(iter),
+                    nameof(body),
+                    nameof(orelse),
+                    nameof(type_comment)
+                });
             }
 
-            public For(expr target, expr iter, PythonList body, [Optional] PythonList orelse,
+            public For(expr target, expr iter, PythonList body, [Optional] PythonList orelse, [Optional] string type_comment,
                [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.target = target;
@@ -1714,6 +2760,7 @@ namespace IronPython.Modules {
                     this.orelse = new PythonList();
                 else
                     this.orelse = orelse;
+                this.type_comment = type_comment;
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -1737,6 +2784,8 @@ namespace IronPython.Modules {
             public PythonList body { get; set; }
 
             public PythonList orelse { get; set; }
+
+            public string type_comment { get; set; }
         }
 
         [PythonType]
@@ -1771,10 +2820,25 @@ namespace IronPython.Modules {
         [PythonType]
         public class FunctionDef : stmt {
             public FunctionDef() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(name), nameof(args), nameof(body), nameof(decorator_list), nameof(returns) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(name),
+                    nameof(args),
+                    nameof(body),
+                    nameof(decorator_list),
+                    nameof(returns),
+                    nameof(type_comment),
+                    nameof(type_params)
+                });
             }
 
-            public FunctionDef(string name, arguments args, PythonList body, PythonList decorator_list, expr returns,
+            public FunctionDef(
+                string name,
+                arguments args,
+                PythonList body,
+                PythonList decorator_list,
+                expr returns,
+                [Optional] string type_comment,
+                [Optional] PythonList type_params,
                 [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.name = name;
@@ -1782,6 +2846,8 @@ namespace IronPython.Modules {
                 this.body = body;
                 this.decorator_list = decorator_list;
                 this.returns = returns;
+                this.type_comment = type_comment;
+                this.type_params = type_params ?? new PythonList();
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -1802,6 +2868,7 @@ namespace IronPython.Modules {
 
                 if (def.ReturnAnnotation != null)
                     returns = Convert(def.ReturnAnnotation);
+                type_params = new PythonList();
             }
 
             internal override Statement Revert() {
@@ -1822,6 +2889,10 @@ namespace IronPython.Modules {
             public PythonList decorator_list { get; set; }
 
             public expr returns { get; set; }
+
+            public string type_comment { get; set; }
+
+            public PythonList type_params { get; set; }
         }
 
         [PythonType]
@@ -2082,12 +3153,17 @@ namespace IronPython.Modules {
         [PythonType]
         public class Import : stmt {
             public Import() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(names), });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(names),
+                    nameof(is_lazy)
+                });
             }
 
-            public Import(PythonList names, [Optional] int? lineno, [Optional] int? col_offset)
+            public Import(PythonList names, [Optional] int? is_lazy,
+                [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.names = names;
+                this.is_lazy = is_lazy;
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -2095,6 +3171,7 @@ namespace IronPython.Modules {
             internal Import(ImportStatement stmt)
                 : this() {
                 names = ConvertAliases(stmt.Names, stmt.AsNames);
+                is_lazy = stmt.IsLazy ? 1 : null;
             }
 
             internal override Statement Revert() {
@@ -2105,24 +3182,34 @@ namespace IronPython.Modules {
                     moduleNames[i] = new ModuleName(alias.name.Split(MODULE_NAME_SPLITTER));
                     asNames[i] = alias.asname;
                 }
-                return new ImportStatement(moduleNames, asNames);
+                return new ImportStatement(
+                    moduleNames,
+                    asNames,
+                    isLazy: is_lazy == 1);
             }
 
             public PythonList names { get; set; }
+            public int? is_lazy { get; set; }
         }
 
         [PythonType]
         public class ImportFrom : stmt {
             public ImportFrom() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(module), nameof(names), nameof(level) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(module),
+                    nameof(names),
+                    nameof(level),
+                    nameof(is_lazy)
+                });
             }
 
-            public ImportFrom([Optional] string module, PythonList names, [Optional] int level,
+            public ImportFrom([Optional] string module, PythonList names, [Optional] int? level, [Optional] int? is_lazy,
                 [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.module = module;
                 this.names = names;
                 this.level = level;
+                this.is_lazy = is_lazy;
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -2134,22 +3221,32 @@ namespace IronPython.Modules {
                 names = ConvertAliases(stmt.Names, stmt.AsNames);
                 if (stmt.Root is RelativeModuleName)
                     level = ((RelativeModuleName)stmt.Root).DotCount;
+                is_lazy = stmt.IsLazy ? 1 : null;
             }
 
             internal override Statement Revert() {
                 ModuleName root;
                 if (module is null) {
-                    root = new RelativeModuleName(Array.Empty<string>(), level);
+                    root = new RelativeModuleName(
+                        Array.Empty<string>(),
+                        level.GetValueOrDefault());
                 } else {
                     if (module[0] == '.') // relative module
-                        root = new RelativeModuleName(module.Split(MODULE_NAME_SPLITTER), level);
+                        root = new RelativeModuleName(
+                            module.Split(MODULE_NAME_SPLITTER),
+                            level.GetValueOrDefault());
                     else {
                         root = new ModuleName(module.Split(MODULE_NAME_SPLITTER));
                     }
                 }
 
                 if (names.Count == 1 && ((alias)names[0]).name == "*")
-                    return new FromImportStatement(root, (string[])FromImportStatement.Star, null, false);
+                    return new FromImportStatement(
+                        root,
+                        (string[])FromImportStatement.Star,
+                        null,
+                        false,
+                        isLazy: is_lazy == 1);
 
                 String[] newNames = new String[names.Count];
                 String[] asNames = new String[names.Count];
@@ -2158,14 +3255,21 @@ namespace IronPython.Modules {
                     newNames[i] = alias.name;
                     asNames[i] = alias.asname;
                 }
-                return new FromImportStatement(root, newNames, asNames, false);
+                return new FromImportStatement(
+                    root,
+                    newNames,
+                    asNames,
+                    false,
+                    isLazy: is_lazy == 1);
             }
 
             public string module { get; set; }
 
             public PythonList names { get; set; }
 
-            public int level { get; set; }
+            public int? level { get; set; }
+
+            public int? is_lazy { get; set; }
         }
 
         [PythonType]
@@ -2266,10 +3370,10 @@ namespace IronPython.Modules {
         public class Interpolation : expr {
             public Interpolation() {
                 _fields = PythonTuple.MakeTuple(
-                    new[] { nameof(str), nameof(value), nameof(conversion), nameof(format_spec) });
+                    new[] { nameof(value), nameof(str), nameof(conversion), nameof(format_spec) });
             }
 
-            public Interpolation(string str, expr value, int conversion, expr format_spec)
+            public Interpolation(expr value, string str, int conversion, expr format_spec)
                 : this() {
                 this.str = str;
                 this.value = value;
@@ -3219,14 +4323,19 @@ namespace IronPython.Modules {
         [PythonType]
         public class With : stmt {
             public With() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(items), nameof(body) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(items),
+                    nameof(body),
+                    nameof(type_comment)
+                });
             }
 
-            public With(PythonList items, PythonList body,
+            public With(PythonList items, PythonList body, [Optional] string type_comment,
                 [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.items = items;
                 this.body = body;
+                this.type_comment = type_comment;
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -3249,6 +4358,8 @@ namespace IronPython.Modules {
             public PythonList items { get; set; }
 
             public PythonList body { get; set; }
+
+            public string type_comment { get; set; }
         }
 
         [PythonType]
@@ -3356,10 +4467,16 @@ namespace IronPython.Modules {
         [PythonType]
         public class AsyncFor : stmt {
             public AsyncFor() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(target), nameof(iter), nameof(body), nameof(orelse) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(target),
+                    nameof(iter),
+                    nameof(body),
+                    nameof(orelse),
+                    nameof(type_comment)
+                });
             }
 
-            public AsyncFor(expr target, expr iter, PythonList body, [Optional] PythonList orelse,
+            public AsyncFor(expr target, expr iter, PythonList body, [Optional] PythonList orelse, [Optional] string type_comment,
                [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.target = target;
@@ -3369,6 +4486,7 @@ namespace IronPython.Modules {
                     this.orelse = new PythonList();
                 else
                     this.orelse = orelse;
+                this.type_comment = type_comment;
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -3392,19 +4510,26 @@ namespace IronPython.Modules {
             public PythonList body { get; set; }
 
             public PythonList orelse { get; set; }
+
+            public string type_comment { get; set; }
         }
 
         [PythonType]
         public class AsyncWith : stmt {
             public AsyncWith() {
-                _fields = PythonTuple.MakeTuple(new[] { nameof(items), nameof(body) });
+                _fields = PythonTuple.MakeTuple(new[] {
+                    nameof(items),
+                    nameof(body),
+                    nameof(type_comment)
+                });
             }
 
-            public AsyncWith(PythonList items, PythonList body,
+            public AsyncWith(PythonList items, PythonList body, [Optional] string type_comment,
                 [Optional] int? lineno, [Optional] int? col_offset)
                 : this() {
                 this.items = items;
                 this.body = body;
+                this.type_comment = type_comment;
                 _lineno = lineno;
                 _col_offset = col_offset;
             }
@@ -3427,6 +4552,358 @@ namespace IronPython.Modules {
             public PythonList items { get; set; }
 
             public PythonList body { get; set; }
+
+            public string type_comment { get; set; }
+        }
+
+        [PythonType]
+        public abstract class pattern : AST {
+            protected pattern() {
+                _attributes = PythonTuple.MakeTuple(new[] {
+                    nameof(lineno),
+                    nameof(col_offset),
+                    nameof(end_lineno),
+                    nameof(end_col_offset)
+                });
+            }
+        }
+
+        [PythonType]
+        public class MatchValue : pattern {
+            public MatchValue() {
+                _fields = PythonTuple.MakeTuple(nameof(value));
+            }
+
+            public MatchValue(expr value) : this() {
+                this.value = value;
+            }
+
+            public expr value { get; set; }
+        }
+
+        [PythonType]
+        public class MatchSingleton : pattern {
+            public MatchSingleton() {
+                _fields = PythonTuple.MakeTuple(nameof(value));
+            }
+
+            public MatchSingleton(object value) : this() {
+                this.value = value;
+            }
+
+            public object value { get; set; }
+        }
+
+        [PythonType]
+        public class MatchSequence : pattern {
+            public MatchSequence() {
+                _fields = PythonTuple.MakeTuple(nameof(patterns));
+                patterns = new PythonList();
+            }
+
+            public MatchSequence(PythonList patterns) : this() {
+                if (patterns is not null) this.patterns = patterns;
+            }
+
+            public PythonList patterns { get; set; }
+        }
+
+        [PythonType]
+        public class MatchMapping : pattern {
+            public MatchMapping() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(keys),
+                    nameof(patterns),
+                    nameof(rest));
+                keys = new PythonList();
+                patterns = new PythonList();
+            }
+
+            public MatchMapping(
+                PythonList keys,
+                PythonList patterns,
+                [Optional] string rest) : this() {
+                if (keys is not null) this.keys = keys;
+                if (patterns is not null) this.patterns = patterns;
+                this.rest = rest;
+            }
+
+            public PythonList keys { get; set; }
+            public PythonList patterns { get; set; }
+            public string rest { get; set; }
+        }
+
+        [PythonType]
+        public class MatchClass : pattern {
+            public MatchClass() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(cls),
+                    nameof(patterns),
+                    nameof(kwd_attrs),
+                    nameof(kwd_patterns));
+                patterns = new PythonList();
+                kwd_attrs = new PythonList();
+                kwd_patterns = new PythonList();
+            }
+
+            public MatchClass(
+                expr cls,
+                [Optional] PythonList patterns,
+                [Optional] PythonList kwd_attrs,
+                [Optional] PythonList kwd_patterns) : this() {
+                this.cls = cls;
+                if (patterns is not null) this.patterns = patterns;
+                if (kwd_attrs is not null) this.kwd_attrs = kwd_attrs;
+                if (kwd_patterns is not null) this.kwd_patterns = kwd_patterns;
+            }
+
+            public expr cls { get; set; }
+            public PythonList patterns { get; set; }
+            public PythonList kwd_attrs { get; set; }
+            public PythonList kwd_patterns { get; set; }
+        }
+
+        [PythonType]
+        public class MatchStar : pattern {
+            public MatchStar() {
+                _fields = PythonTuple.MakeTuple(nameof(name));
+            }
+
+            public MatchStar([Optional] string name) : this() {
+                this.name = name;
+            }
+
+            public string name { get; set; }
+        }
+
+        [PythonType]
+        public class MatchAs : pattern {
+            public MatchAs() {
+                _fields = PythonTuple.MakeTuple(nameof(pattern), nameof(name));
+            }
+
+            public MatchAs([Optional] pattern pattern, [Optional] string name)
+                : this() {
+                this.pattern = pattern;
+                this.name = name;
+            }
+
+            public pattern pattern { get; set; }
+            public string name { get; set; }
+        }
+
+        [PythonType]
+        public class MatchOr : pattern {
+            public MatchOr() {
+                _fields = PythonTuple.MakeTuple(nameof(patterns));
+                patterns = new PythonList();
+            }
+
+            public MatchOr(PythonList patterns) : this() {
+                if (patterns is not null) this.patterns = patterns;
+            }
+
+            public PythonList patterns { get; set; }
+        }
+
+        [PythonType]
+        public class match_case : AST {
+            public match_case() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(pattern),
+                    nameof(guard),
+                    nameof(body));
+                body = new PythonList();
+            }
+
+            public match_case(
+                pattern pattern,
+                [Optional] expr guard,
+                [Optional] PythonList body) : this() {
+                this.pattern = pattern;
+                this.guard = guard;
+                if (body is not null) this.body = body;
+            }
+
+            public pattern pattern { get; set; }
+            public expr guard { get; set; }
+            public PythonList body { get; set; }
+        }
+
+        [PythonType]
+        public class Match : stmt {
+            public Match() {
+                _fields = PythonTuple.MakeTuple(nameof(subject), nameof(cases));
+                cases = new PythonList();
+            }
+
+            public Match(expr subject, [Optional] PythonList cases) : this() {
+                this.subject = subject;
+                if (cases is not null) this.cases = cases;
+            }
+
+            public expr subject { get; set; }
+            public PythonList cases { get; set; }
+        }
+
+        [PythonType]
+        public class TypeAlias : stmt {
+            public TypeAlias() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(name),
+                    nameof(type_params),
+                    nameof(value));
+                type_params = new PythonList();
+            }
+
+            public TypeAlias(
+                expr name,
+                [Optional] PythonList type_params,
+                expr value) : this() {
+                this.name = name;
+                if (type_params is not null) this.type_params = type_params;
+                this.value = value;
+            }
+
+            public expr name { get; set; }
+            public PythonList type_params { get; set; }
+            public expr value { get; set; }
+        }
+
+        [PythonType]
+        public abstract class type_ignore : AST {
+        }
+
+        [PythonType]
+        public class TypeIgnore : type_ignore {
+            public TypeIgnore() {
+                _fields = PythonTuple.MakeTuple(nameof(lineno), nameof(tag));
+            }
+
+            public TypeIgnore(int lineno, string tag) : this() {
+                this.lineno = lineno;
+                this.tag = tag;
+            }
+
+            public string tag { get; set; }
+        }
+
+        [PythonType]
+        public abstract class type_param : AST {
+            protected type_param() {
+                _attributes = PythonTuple.MakeTuple(new[] {
+                    nameof(lineno),
+                    nameof(col_offset),
+                    nameof(end_lineno),
+                    nameof(end_col_offset)
+                });
+            }
+        }
+
+        [PythonType]
+        public class TypeVar : type_param {
+            public TypeVar() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(name),
+                    nameof(bound),
+                    nameof(default_value));
+            }
+
+            public TypeVar(
+                string name,
+                [Optional] expr bound,
+                [Optional] expr default_value) : this() {
+                this.name = name;
+                this.bound = bound;
+                this.default_value = default_value;
+            }
+
+            public string name { get; set; }
+            public expr bound { get; set; }
+            public expr default_value { get; set; }
+        }
+
+        [PythonType]
+        public class ParamSpec : type_param {
+            public ParamSpec() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(name),
+                    nameof(default_value));
+            }
+
+            public ParamSpec(
+                string name,
+                [Optional] expr default_value) : this() {
+                this.name = name;
+                this.default_value = default_value;
+            }
+
+            public string name { get; set; }
+            public expr default_value { get; set; }
+        }
+
+        [PythonType]
+        public class TypeVarTuple : type_param {
+            public TypeVarTuple() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(name),
+                    nameof(default_value));
+            }
+
+            public TypeVarTuple(
+                string name,
+                [Optional] expr default_value) : this() {
+                this.name = name;
+                this.default_value = default_value;
+            }
+
+            public string name { get; set; }
+            public expr default_value { get; set; }
+        }
+
+        [PythonType]
+        public class TryStar : stmt {
+            public TryStar() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(body),
+                    nameof(handlers),
+                    nameof(orelse),
+                    nameof(finalbody));
+            }
+
+            public TryStar(
+                PythonList body,
+                PythonList handlers,
+                PythonList orelse,
+                PythonList finalbody) : this() {
+                this.body = body;
+                this.handlers = handlers;
+                this.orelse = orelse;
+                this.finalbody = finalbody;
+            }
+
+            public PythonList body { get; set; }
+            public PythonList handlers { get; set; }
+            public PythonList orelse { get; set; }
+            public PythonList finalbody { get; set; }
+        }
+
+        [PythonType]
+        public class FunctionType : mod {
+            public FunctionType() {
+                _fields = PythonTuple.MakeTuple(
+                    nameof(argtypes),
+                    nameof(returns));
+                argtypes = new PythonList();
+            }
+
+            public FunctionType(PythonList argtypes, expr returns) : this() {
+                if (argtypes is not null) this.argtypes = argtypes;
+                this.returns = returns;
+            }
+
+            public PythonList argtypes { get; set; }
+            public expr returns { get; set; }
         }
     }
 }

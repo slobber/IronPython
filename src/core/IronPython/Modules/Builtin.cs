@@ -691,6 +691,11 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 astOnly = true;
                 iflags &= ~_ast.PyCF_ONLY_AST;
             }
+            iflags &= ~(
+                _ast.PyCF_IGNORE_COOKIE
+                | _ast.PyCF_TYPE_COMMENTS
+                | _ast.PyCF_ALLOW_TOP_LEVEL_AWAIT
+                | _ast.PyCF_OPTIMIZED_AST);
 
             bool inheritContext = GetCompilerInheritance(dont_inherit);
             CompileFlags cflags = GetCompilerFlags(iflags);

@@ -124,6 +124,38 @@ namespace IronPython.Compiler {
             }
         }
 
+        internal IronPython.Compiler.Syntax.Ast.PythonAstNode ParsePublicAst(
+            string mode) {
+            try {
+                string source = _sourceReader.ReadToEnd();
+                PegParser parser = CreateGeneratedParser(
+                    source,
+                    out PythonTokenizer tokenizer);
+                string startRule = mode switch {
+                    "eval" => PythonGeneratedParser.EvalStartRule,
+                    "single" => PythonGeneratedParser.InteractiveStartRule,
+                    _ => PythonGeneratedParser.ModuleStartRule
+                };
+                PegParseResult result = parser.Parse(startRule);
+                if (!result.Success
+                    || result.Value is not IronPython.Compiler.Syntax.Ast.PythonAstNode node) {
+                    throw CreateGeneratedParseError(
+                        parser,
+                        tokenizer,
+                        result);
+                }
+
+                Exception barryError = TryCreateBarryAsFluflError(source);
+                if (barryError is not null) {
+                    throw barryError;
+                }
+                NotifyGeneratedParserSink(node);
+                return node;
+            } catch (DecoderFallbackException exception) {
+                throw BadSourceError(exception);
+            }
+        }
+
         public PythonAst ParseInteractiveCode(
             out ScriptCodeParseResult properties) {
             properties = ScriptCodeParseResult.Complete;

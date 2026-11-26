@@ -79,6 +79,8 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         private static int MasterVersion = 1;
         private static readonly CommonDictionaryStorage _pythonTypes = new CommonDictionaryStorage();
         private static readonly object _subtypesLock = new object();
+        private static readonly Dictionary<Type, PythonType[]> _reflectedSubtypes =
+            new Dictionary<Type, PythonType[]>();
         internal static readonly Func<string, Exception, Exception> DefaultMakeException = (message, innerException) => new Exception(message, innerException);
         internal static readonly Func<string, Exception> DefaultMakeExceptionNoInnerException = (message) => new Exception(message);
 
@@ -344,6 +346,16 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         private PythonDictionary _annotations = new PythonDictionary();
         private bool _annotationsInitialized;
         private object? _annotate;
+
+        internal void SetSystemAnnotations(PythonDictionary annotations) {
+            if (!IsSystemType) {
+                throw new InvalidOperationException(
+                    "System annotations can only be set on system types.");
+            }
+            _annotations = annotations;
+            _annotationsInitialized = true;
+            _dict?["__annotations_cache__"] = ToTypeSlot(_annotations);
+        }
 
         [SpecialName, PropertyMethod, WrapperDescriptor]
         public static PythonTuple Get__type_params__([NotNone] PythonType self) {
@@ -1064,6 +1076,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
         public PythonList __subclasses__(CodeContext/*!*/ context) {
             PythonList ret = new PythonList();
+            var seen = new HashSet<PythonType>();
             var subtypes = SubTypes;
 
             if (subtypes != null) {
@@ -1073,12 +1086,50 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                     if (wr.TryGetTarget(out PythonType pt)) {
                         if (pt.PythonContext == null || pt.PythonContext == pc) {
                             ret.AddNoLock(pt);
+                            seen.Add(pt);
                         }
                     }
                 }
             }
 
+            if (IsSystemType) {
+                PythonType[] reflected;
+                lock (_reflectedSubtypes) {
+                    if (!_reflectedSubtypes.TryGetValue(
+                        UnderlyingSystemType,
+                        out reflected)) {
+                        reflected = UnderlyingSystemType.Assembly.GetTypes()
+                            .Where(type => type.BaseType == UnderlyingSystemType)
+                            .OrderBy(type => HasRecursiveField(type) ? 1 : 0)
+                            .ThenBy(type => type.Name, StringComparer.Ordinal)
+                            .Select(DynamicHelpers.GetPythonTypeFromType)
+                            .ToArray();
+                        _reflectedSubtypes[UnderlyingSystemType] = reflected;
+                    }
+                }
+                foreach (PythonType subtype in reflected) {
+                    if (seen.Add(subtype)) {
+                        ret.AddNoLock(subtype);
+                    }
+                }
+            }
+
             return ret;
+        }
+
+        private bool HasRecursiveField(Type type) {
+            if (UnderlyingSystemType == typeof(object)) {
+                return false;
+            }
+            foreach (PropertyInfo property in type.GetProperties(
+                BindingFlags.Public | BindingFlags.Instance)) {
+                if (property.PropertyType != typeof(object)
+                    && UnderlyingSystemType.IsAssignableFrom(
+                        property.PropertyType)) {
+                    return true;
+                }
+            }
+            return false;
         }
 
         public virtual PythonList mro() {
