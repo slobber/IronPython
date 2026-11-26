@@ -655,11 +655,8 @@ namespace IronPython.Modules {
         }
 
         private static int ToInt(object value) {
-            object index = PythonOps.Index(value);
-            return index is int result
-                ? result
-                : throw PythonOps.OverflowError(
-                    "file action value is too large");
+            return Converter.ConvertToInt32(
+                PythonOps.Index(value));
         }
 
         private sealed class NativeStringArray : IDisposable {
