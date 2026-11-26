@@ -83,12 +83,7 @@ namespace IronPython.Modules {
             int flags,
             uint mode);
 
-        [DllImport(
-            "libc",
-            CharSet = CharSet.Ansi,
-            BestFitMapping = false,
-            ThrowOnUnmappableChar = true,
-            SetLastError = true)]
+        [DllImport("libc", EntryPoint = "posix_spawn", SetLastError = true)]
         private static extern int posix_spawn(
             out int pid,
             IntPtr file,
@@ -97,12 +92,7 @@ namespace IronPython.Modules {
             IntPtr[] argv,
             IntPtr[] envp);
 
-        [DllImport(
-            "libc",
-            CharSet = CharSet.Ansi,
-            BestFitMapping = false,
-            ThrowOnUnmappableChar = true,
-            SetLastError = true)]
+        [DllImport("libc", EntryPoint = "posix_spawnp", SetLastError = true)]
         private static extern int posix_spawnp(
             out int pid,
             IntPtr file,
