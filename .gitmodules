@@ -1,8 +1,8 @@
 [submodule "DLR"]
 	path = src/dlr
-	url = https://github.com/IronLanguages/dlr
+	url = https://github.com/slobber/DLR.git
 	branch = main
 [submodule "IronPython.StdLib"]
 	path = src/core/IronPython.StdLib
-	url = git@git.cyber-stone.com:wnd/IronPython.StdLib.git
+	url = ../IronPython.StdLib.git
 	branch = python-3.15
