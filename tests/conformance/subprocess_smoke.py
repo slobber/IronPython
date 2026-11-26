@@ -10,9 +10,6 @@ def native_posix_spawn():
     if sys.platform == "win32" or not hasattr(os, "posix_spawn"):
         return
 
-    if hasattr(os, "_posix_spawn_probe"):
-        print("NATIVE_POSIX_SPAWN_PROBE", os._posix_spawn_probe(), flush=True)
-
     command = ["/bin/sh", "-c", "exit 0"]
     env = {
         "HOME": os.environ.get("HOME", "/tmp"),
@@ -92,20 +89,6 @@ def main():
     native_posix_spawn()
     synchronous()
     print("SYNCHRONOUS_OK", flush=True)
-    if sys.platform != "win32":
-        spawn = os.posix_spawn
-
-        def traced_spawn(path, args, env, **kwargs):
-            print(
-                "POSIX_SPAWN_REQUEST",
-                path,
-                args,
-                kwargs,
-                flush=True,
-            )
-            return spawn(path, args, env, **kwargs)
-
-        os.posix_spawn = traced_spawn
     asyncio.run(asynchronous())
     print("ASYNC_SUBPROCESS_OK", flush=True)
     if sys.platform == "win32":

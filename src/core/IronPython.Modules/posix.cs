@@ -37,9 +37,16 @@ namespace IronPython.Modules {
         public const int POSIX_SPAWN_DUP2 = 2;
         public const int POSIX_SPAWN_CLOSEFROM = 3;
 
+        private const short POSIX_SPAWN_RESETIDS = 0x01;
+        private const short POSIX_SPAWN_SETPGROUP = 0x02;
+        private const short POSIX_SPAWN_SETSIGDEF = 0x04;
+        private const short POSIX_SPAWN_SETSIGMASK = 0x08;
+        private const short POSIX_SPAWN_SETSID_LINUX = 0x80;
+        private const short POSIX_SPAWN_SETSID_MACOS = 0x400;
         private const short POSIX_SPAWN_CLOEXEC_DEFAULT = 0x4000;
         private const int SpawnFileActionsBufferSize = 256;
         private const int SpawnAttributesBufferSize = 4096;
+        private const int SignalSetBufferSize = 256;
 
         [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawn_file_actions_init(
@@ -61,6 +68,27 @@ namespace IronPython.Modules {
         private static extern int posix_spawnattr_setflags(
             IntPtr attributes,
             short flags);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int posix_spawnattr_setpgroup(
+            IntPtr attributes,
+            int processGroup);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int posix_spawnattr_setsigmask(
+            IntPtr attributes,
+            IntPtr signalMask);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int posix_spawnattr_setsigdefault(
+            IntPtr attributes,
+            IntPtr signalDefault);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int sigemptyset(IntPtr signalSet);
+
+        [DllImport("libc", SetLastError = true)]
+        private static extern int sigaddset(IntPtr signalSet, int signal);
 
         [DllImport("libc", SetLastError = true)]
         private static extern int posix_spawn_file_actions_addinherit_np(
@@ -122,7 +150,13 @@ namespace IronPython.Modules {
             [ParamDictionary] IDictionary<object, object> kwargs) {
             if (kwargs is not null && kwargs.Count > 0) {
                 foreach (object key in kwargs.Keys) {
-                    if (key is not "file_actions" and not "setsigdef") {
+                    if (key is not "file_actions"
+                        and not "setpgroup"
+                        and not "resetids"
+                        and not "setsid"
+                        and not "setsigmask"
+                        and not "setsigdef"
+                        and not "scheduler") {
                         throw PythonOps.NotImplementedError(
                             $"posix_spawn option {key!} is not supported");
                     }
@@ -168,7 +202,40 @@ namespace IronPython.Modules {
 
             IntPtr attributes = IntPtr.Zero;
             bool attributesInitialized = false;
-            if (useCloseOnExecDefault) {
+            bool resetIds = GetBooleanOption(kwargs, "resetids");
+            bool setSession = GetBooleanOption(kwargs, "setsid");
+            bool hasProcessGroup = TryGetOption(
+                kwargs,
+                "setpgroup",
+                out object? processGroupValue);
+            int processGroup = hasProcessGroup
+                ? ToInt(processGroupValue!)
+                : 0;
+            bool hasSignalMask = TryGetOption(
+                kwargs,
+                "setsigmask",
+                out object? signalMask);
+            bool hasSignalDefaults = TryGetOption(
+                kwargs,
+                "setsigdef",
+                out object? signalDefaults);
+            bool hasScheduler = TryGetOption(
+                kwargs,
+                "scheduler",
+                out object? scheduler);
+            if (hasScheduler && scheduler is not PythonTuple) {
+                throw PythonOps.TypeError(
+                    "scheduler must be a tuple or None");
+            }
+
+            bool useAttributes = useCloseOnExecDefault
+                || resetIds
+                || setSession
+                || hasProcessGroup
+                || hasSignalMask
+                || hasSignalDefaults
+                || hasScheduler;
+            if (useAttributes) {
                 attributes = Marshal.AllocHGlobal(
                     SpawnAttributesBufferSize);
                 rc = posix_spawnattr_init(attributes);
@@ -181,17 +248,82 @@ namespace IronPython.Modules {
                     throw GetLastUnixError(executable);
                 }
                 attributesInitialized = true;
-                rc = posix_spawnattr_setflags(
-                    attributes,
-                    POSIX_SPAWN_CLOEXEC_DEFAULT);
-                if (rc != 0) {
+                try {
+                    short flags = 0;
+                    if (hasProcessGroup) {
+                        rc = posix_spawnattr_setpgroup(
+                            attributes,
+                            processGroup);
+                        if (rc != 0) {
+                            throw GetLastUnixError(executable);
+                        }
+                        flags |= POSIX_SPAWN_SETPGROUP;
+                    }
+                    if (resetIds) {
+                        flags |= POSIX_SPAWN_RESETIDS;
+                    }
+                    if (setSession) {
+                        flags |= OperatingSystem.IsMacOS()
+                            ? POSIX_SPAWN_SETSID_MACOS
+                            : POSIX_SPAWN_SETSID_LINUX;
+                    }
+                    if (hasSignalMask) {
+                        IntPtr set = CreateSignalSet(
+                            context,
+                            signalMask!,
+                            "setsigmask");
+                        try {
+                            rc = posix_spawnattr_setsigmask(
+                                attributes,
+                                set);
+                        } finally {
+                            Marshal.FreeHGlobal(set);
+                        }
+                        if (rc != 0) {
+                            throw GetLastUnixError(executable);
+                        }
+                        flags |= POSIX_SPAWN_SETSIGMASK;
+                    }
+                    if (hasSignalDefaults) {
+                        IntPtr set = CreateSignalSet(
+                            context,
+                            signalDefaults!,
+                            "setsigdef");
+                        try {
+                            rc = posix_spawnattr_setsigdefault(
+                                attributes,
+                                set);
+                        } finally {
+                            Marshal.FreeHGlobal(set);
+                        }
+                        if (rc != 0) {
+                            throw GetLastUnixError(executable);
+                        }
+                        flags |= POSIX_SPAWN_SETSIGDEF;
+                    }
+                    if (useCloseOnExecDefault) {
+                        flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+                    }
+                    if (hasScheduler) {
+                        throw PythonOps.NotImplementedError(
+                            "posix_spawn scheduler is not supported");
+                    }
+                    if (flags != 0) {
+                        rc = posix_spawnattr_setflags(
+                            attributes,
+                            flags);
+                        if (rc != 0) {
+                            throw GetLastUnixError(executable);
+                        }
+                    }
+                } catch {
                     posix_spawnattr_destroy(attributes);
                     Marshal.FreeHGlobal(attributes);
                     if (actionsInitialized) {
                         posix_spawn_file_actions_destroy(actions);
                         Marshal.FreeHGlobal(actions);
                     }
-                    throw GetLastUnixError(executable);
+                    throw;
                 }
             }
 
@@ -236,29 +368,6 @@ namespace IronPython.Modules {
                     Marshal.FreeHGlobal(actions);
                 }
             }
-        }
-
-        [PythonHidden(PlatformsAttribute.PlatformFamily.Windows)]
-        [SupportedOSPlatform("linux")]
-        [SupportedOSPlatform("macos")]
-        public static int posix_spawn_probe() {
-            using NativeStringArray argv = new(
-                new[] { "/bin/sh", "-c", "exit 0" });
-            using NativeStringArray envp = new(
-                new[] { "PATH=/usr/bin:/bin" });
-            int pid;
-            int error = posix_spawn(
-                out pid,
-                "/bin/sh",
-                IntPtr.Zero,
-                IntPtr.Zero,
-                argv.Pointers,
-                envp.Pointers);
-            if (error != 0) {
-                return -error;
-            }
-            Syscall.waitpid(pid, out _, 0);
-            return 0;
         }
 
         [SupportedOSPlatform("linux")]
@@ -486,6 +595,63 @@ namespace IronPython.Modules {
                 result.Add(item.Key + "=" + item.Value);
             }
             return result.ToArray();
+        }
+
+        private static bool GetBooleanOption(
+            IDictionary<object, object>? kwargs,
+            string name) {
+            return TryGetOption(kwargs, name, out object? value)
+                && PythonOps.IsTrue(value);
+        }
+
+        private static bool TryGetOption(
+            IDictionary<object, object>? kwargs,
+            string name,
+            out object? value) {
+            if (kwargs is not null
+                && kwargs.TryGetValue(name, out value)
+                && value is not null) {
+                return true;
+            }
+            value = null;
+            return false;
+        }
+
+        [SupportedOSPlatform("linux")]
+        [SupportedOSPlatform("macos")]
+        private static IntPtr CreateSignalSet(
+            CodeContext context,
+            object signals,
+            string optionName) {
+            IntPtr set = Marshal.AllocHGlobal(SignalSetBufferSize);
+            if (sigemptyset(set) != 0) {
+                Marshal.FreeHGlobal(set);
+                throw GetLastUnixError();
+            }
+
+            if (!PythonOps.TryGetEnumerator(
+                    context,
+                    signals,
+                    out IEnumerator? enumerator)
+                || enumerator is null) {
+                Marshal.FreeHGlobal(set);
+                throw PythonOps.TypeError(
+                    $"{optionName} must be an iterable of signals");
+            }
+            try {
+                while (enumerator.MoveNext()) {
+                    int signal = ToInt(enumerator.Current);
+                    if (sigaddset(set, signal) != 0) {
+                        throw GetLastUnixError();
+                    }
+                }
+            } catch {
+                Marshal.FreeHGlobal(set);
+                throw;
+            } finally {
+                (enumerator as IDisposable)?.Dispose();
+            }
+            return set;
         }
 
         private static int ToInt(object value) {
