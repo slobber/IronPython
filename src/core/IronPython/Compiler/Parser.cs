@@ -124,13 +124,70 @@ namespace IronPython.Compiler {
             }
         }
 
+        private static IronPython.Compiler.Syntax.Ast.PythonAstNode
+            ParseFunctionTypePublicAst(
+                string source,
+                int featureVersion) {
+            int arrow = source.IndexOf("->", StringComparison.Ordinal);
+            if (arrow < 0) {
+                throw PythonOps.SyntaxError(
+                    "expected '->' in function type");
+            }
+            string argumentsSource = source
+                .Substring(0, arrow)
+                .Trim();
+            string returnSource = source
+                .Substring(arrow + 2)
+                .Trim();
+            PegParser argumentsParser = CreateGeneratedParser(
+                argumentsSource,
+                out PythonTokenizer argumentsTokenizer,
+                featureVersion);
+            PegParseResult argumentsResult = argumentsParser.Parse(
+                PythonGeneratedParser.EvalStartRule);
+            if (!argumentsResult.Success
+                || argumentsResult.Value
+                    is not IronPython.Compiler.Syntax.Ast.Expression
+                    {
+                        Body: IronPython.Compiler.Syntax.Ast.Tuple tuple
+                    }) {
+                throw PythonOps.SyntaxError(
+                    "invalid function type arguments");
+            }
+            PegParser returnsParser = CreateGeneratedParser(
+                returnSource,
+                out PythonTokenizer returnsTokenizer,
+                featureVersion);
+            PegParseResult returnsResult = returnsParser.Parse(
+                PythonGeneratedParser.EvalStartRule);
+            if (!returnsResult.Success
+                || returnsResult.Value
+                    is not IronPython.Compiler.Syntax.Ast.Expression
+                    {
+                        Body: IronPython.Compiler.Syntax.Ast.ExprBase returns
+                    }) {
+                throw PythonOps.SyntaxError(
+                    "invalid function type return value");
+            }
+            return new IronPython.Compiler.Syntax.Ast.FunctionType(
+                tuple.Elts,
+                returns);
+        }
+
         internal IronPython.Compiler.Syntax.Ast.PythonAstNode ParsePublicAst(
-            string mode) {
+            string mode,
+            int featureVersion = -1) {
             try {
                 string source = _sourceReader.ReadToEnd();
+                if (mode == "func_type") {
+                    return ParseFunctionTypePublicAst(
+                        source,
+                        featureVersion);
+                }
                 PegParser parser = CreateGeneratedParser(
                     source,
-                    out PythonTokenizer tokenizer);
+                    out PythonTokenizer tokenizer,
+                    featureVersion);
                 string startRule = mode switch {
                     "eval" => PythonGeneratedParser.EvalStartRule,
                     "single" => PythonGeneratedParser.InteractiveStartRule,
@@ -151,6 +208,8 @@ namespace IronPython.Compiler {
                 }
                 NotifyGeneratedParserSink(node);
                 return node;
+            } catch (PegUnsupportedVersionException exception) {
+                throw PythonOps.SyntaxError(exception.Message);
             } catch (DecoderFallbackException exception) {
                 throw BadSourceError(exception);
             }
@@ -386,7 +445,8 @@ namespace IronPython.Compiler {
 
         private static PegParser CreateGeneratedParser(
             string source,
-            out PythonTokenizer tokenizer) {
+            out PythonTokenizer tokenizer,
+            int featureVersion = -1) {
             tokenizer = new PythonTokenizer(source);
             var options = new PegParserOptions {
                 MaxRuleInvocations = Math.Clamp(
@@ -396,7 +456,8 @@ namespace IronPython.Compiler {
                 MaxMemoEntries = Math.Clamp(
                     source.Length * 100,
                     250_000,
-                    10_000_000)
+                    10_000_000),
+                PythonMinorVersion = 15
             };
             return new PegParser(
                 PythonGrammarDescriptors.Rules,

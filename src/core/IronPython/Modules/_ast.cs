@@ -160,8 +160,31 @@ namespace IronPython.Modules {
                 or "slice";
         }
 
+        public static bool _is_deleted(object value) =>
+            AST.IsDeletedField(value);
+
+        public static void _install_match_args() {
+            foreach (Type type in typeof(_ast).GetNestedTypes()) {
+                if (!typeof(AST).IsAssignableFrom(type)
+                    || type.IsAbstract) {
+                    continue;
+                }
+                object instance = Activator.CreateInstance(
+                    type,
+                    nonPublic: true);
+                DynamicHelpers.GetPythonTypeFromType(type)
+                    .SetSystemMember(
+                        "__match_args__",
+                        ((AST)instance)._fields);
+            }
+        }
+
         [ThreadStatic]
         internal static bool _skipBuildAstBinding;
+        private static readonly HashSet<string> IdentifierFieldNames =
+            new HashSet<string>(StringComparer.Ordinal) {
+                "arg", "asname", "attr", "id", "name", "names", "rest"
+            };
 
         private class ThrowingErrorSink : ErrorSink {
             public static new readonly ThrowingErrorSink/*!*/ Default = new ThrowingErrorSink();
@@ -188,6 +211,7 @@ namespace IronPython.Modules {
             SourceUnit unit = new SourceUnit(codeContext.LanguageContext, NullTextContentProvider.Null, filename, SourceCodeKind.AutoDetect);
             CompilerContext compilerContext = new CompilerContext(unit, options, ErrorSink.Default);
             CheckForCycles(source);
+            ValidateAstTree(source);
             PublicAstNode publicAst = ConvertToPublicAst(source);
             return publicAst switch {
                 IronPython.Compiler.Syntax.Ast.Expression expression
@@ -257,6 +281,15 @@ namespace IronPython.Modules {
                         ? new PythonList()
                         : null;
                 }
+                if (astType == typeof(Constant)
+                    && fieldName == "value") {
+                    fieldValue = NormalizeParsedConstant(fieldValue);
+                }
+                if (fieldValue is string identifier
+                    && IdentifierFieldNames.Contains(
+                        fieldName ?? string.Empty)) {
+                    fieldValue = string.Intern(identifier);
+                }
                 if (fieldValue is null
                     && !source.IsOptionalField(fieldName)
                     && !IsNullValueAllowed(astType, fieldName)) {
@@ -265,6 +298,20 @@ namespace IronPython.Modules {
                         fieldName,
                         DynamicHelpers.GetPythonType(source).Name);
                 }
+                if (astType == typeof(Constant)
+                    && !source._isParsedAst
+                    && fieldName == "value"
+                    && FindInvalidConstantValue(
+                        fieldValue,
+                        out object invalidConstant)) {
+                    throw PythonOps.TypeError(
+                        "got an invalid type in Constant: {0}",
+                        PythonOps.GetPythonTypeName(invalidConstant));
+                }
+                ValidateIdentifierField(
+                    astType,
+                    fieldName,
+                    fieldValue);
                 arguments[i] = ConvertToPublicValue(
                     fieldValue,
                     parameters[i].ParameterType);
@@ -276,6 +323,26 @@ namespace IronPython.Modules {
                     out int? column,
                     out int? endLine,
                     out int? endColumn);
+                bool validatePosition =
+                    (source is stmt or expr)
+                    && source is not Import
+                    && source is not ImportFrom;
+                if (validatePosition
+                    && !source._isParsedAst
+                    && (line < 0
+                        || column < 0
+                        || endLine is < 0
+                        || endColumn is < 0
+                        || line != null
+                            && endLine != null
+                            && endLine < line
+                        || line == endLine
+                            && column != null
+                            && endColumn != null
+                            && endColumn < column)) {
+                    throw PythonOps.ValueError(
+                        "invalid position information");
+                }
                 arguments[fieldCount] = line ?? 0;
                 arguments[fieldCount + 1] = column ?? 0;
                 arguments[fieldCount + 2] = endLine;
@@ -285,6 +352,82 @@ namespace IronPython.Modules {
             return (PublicAstNode)constructor.Invoke(arguments);
         }
 
+        private static object NormalizeParsedConstant(object value) {
+            if (value is byte[] bytes) {
+                return new IronPython.Runtime.Bytes(bytes);
+            }
+            if (value is IEnumerable values
+                && value is not string
+                && value is not byte[]
+                && value is not IronPython.Runtime.Bytes
+                && value is not PythonTuple
+                && value is not FrozenSetCollection) {
+                object[] items = values.Cast<object>().ToArray();
+                if (items.All(item =>
+                    item is byte
+                    || item is int integer
+                        && integer >= 0
+                        && integer <= 255)) {
+                    return new IronPython.Runtime.Bytes(
+                        items.Select(item => item is byte b
+                            ? b
+                            : checked((byte)(int)item)));
+                }
+            }
+            return value;
+        }
+
+        private static void ValidateIdentifierField(
+            Type astType,
+            string fieldName,
+            object fieldValue) {
+            if (!IdentifierFieldNames.Contains(fieldName ?? string.Empty)) {
+                return;
+            }
+            bool isIdentifier = fieldName switch {
+                "name" => astType != typeof(TypeAlias),
+                _ => true
+            };
+            if (!isIdentifier) {
+                return;
+            }
+            if (fieldName == "names"
+                && fieldValue is AST) {
+                return;
+            }
+            if (fieldValue is Extensible<string> extensibleName) {
+                ValidateIdentifierField(
+                    astType,
+                    fieldName,
+                    extensibleName.Value);
+                return;
+            }
+            if (fieldValue is not null
+                && fieldValue is not string
+                && fieldValue is not IEnumerable) {
+                throw PythonOps.TypeError(
+                    "identifier must be of type str ({0}.{1}: {2})",
+                    astType.Name,
+                    fieldName,
+                    fieldValue.GetType().FullName);
+            }
+            if (fieldValue is string name
+                && name is "True" or "False" or "None") {
+                throw PythonOps.ValueError(
+                    "identifier field can't represent '{0}' constant",
+                    name);
+            }
+            if (fieldValue is IEnumerable values
+                && fieldValue is not string) {
+                foreach (object value in values) {
+                    ValidateIdentifierField(
+                        astType,
+                        fieldName,
+                        value);
+                }
+            }
+        }
+
         private static bool IsNullValueAllowed(
             Type astType,
             string fieldName) {
@@ -292,6 +435,43 @@ namespace IronPython.Modules {
                     && fieldName == "value"
                 || astType == typeof(MatchSingleton)
                     && fieldName == "value";
+        }
+
+        private static bool FindInvalidConstantValue(
+            object value,
+            out object invalid) {
+            if (value is null
+                or string
+                or IronPython.Runtime.Bytes
+                or bool
+                or int
+                or BigInteger
+                or double
+                or Complex
+                or IronPython.Runtime.Types.Ellipsis) {
+                invalid = null;
+                return false;
+            }
+            if (value is PythonTuple tuple) {
+                foreach (object item in tuple) {
+                    if (FindInvalidConstantValue(item, out invalid)) {
+                        return true;
+                    }
+                }
+                invalid = null;
+                return false;
+            }
+            if (value is FrozenSetCollection frozenSet) {
+                foreach (object item in frozenSet) {
+                    if (FindInvalidConstantValue(item, out invalid)) {
+                        return true;
+                    }
+                }
+                invalid = null;
+                return false;
+            }
+            invalid = value;
+            return true;
         }
 
         private static bool HasLocationParameters(
@@ -393,13 +573,1144 @@ namespace IronPython.Modules {
             Visit(source);
         }
 
-        internal static AST BuildAst(CodeContext context, SourceUnit sourceUnit, PythonCompilerOptions opts, string mode) {
+        private static void ValidateAstTree(AST source) {
+            switch (source) {
+                case Module module:
+                    ValidateStatements(module.body);
+                    break;
+                case Interactive interactive:
+                    ValidateStatements(interactive.body);
+                    break;
+                case Expression expression:
+                    ValidateExpr(expression.body, expectedContext: Load.Instance);
+                    break;
+            }
+        }
+
+        private static void ValidateStatements(PythonList statements) {
+            for (int i = 0; i < statements.Count; i++) {
+                if (statements[i] is not stmt statement) {
+                    throw InvalidAst("None disallowed");
+                }
+                ValidateStatement(statement);
+            }
+        }
+
+        private static void ValidateStatement(stmt statement) {
+            switch (statement) {
+                case FunctionDef function:
+                    ValidateBody(function.body, "FunctionDef");
+                    ValidateArguments(function.args);
+                    ValidateExprList(function.decorator_list);
+                    ValidateExpr(function.returns, Load.Instance);
+                    break;
+                case AsyncFunctionDef function:
+                    ValidateBody(function.body, "AsyncFunctionDef");
+                    ValidateArguments(function.args);
+                    ValidateExprList(function.decorator_list);
+                    ValidateExpr(function.returns, Load.Instance);
+                    break;
+                case ClassDef @class:
+                    ValidateBody(@class.body, "ClassDef");
+                    ValidateExprList(@class.bases);
+                    foreach (object item in @class.keywords) {
+                        ValidateKeyword(item);
+                    }
+                    ValidateExprList(@class.decorator_list);
+                    break;
+                case Return @return:
+                    ValidateExpr(@return.value);
+                    break;
+                case Delete delete:
+                    RequireNonEmpty(delete.targets, "empty targets on Delete");
+                    ValidateTargets(delete.targets, Del.Instance, "Del");
+                    break;
+                case Assign assign:
+                    RequireNonEmpty(assign.targets, "empty targets on Assign");
+                    ValidateTargets(assign.targets, Store.Instance, "Store");
+                    ValidateExpr(assign.value, Load.Instance);
+                    break;
+                case AnnAssign annAssign:
+                    ValidateExpr(
+                        annAssign.target,
+                        Store.Instance,
+                        "Store");
+                    ValidateExpr(annAssign.annotation, Load.Instance);
+                    ValidateExpr(annAssign.value, Load.Instance);
+                    break;
+                case AugAssign augAssign:
+                    ValidateExpr(
+                        augAssign.target,
+                        Store.Instance,
+                        "Store");
+                    ValidateExpr(augAssign.value, Load.Instance);
+                    break;
+                case For @for:
+                    ValidateBody(@for.body, "For");
+                    ValidateExpr(
+                        @for.target,
+                        Store.Instance,
+                        "Store");
+                    ValidateExpr(@for.iter, Load.Instance);
+                    ValidateStatements(@for.orelse);
+                    break;
+                case AsyncFor @for:
+                    ValidateBody(@for.body, "AsyncFor");
+                    ValidateExpr(
+                        @for.target,
+                        Store.Instance,
+                        "Store");
+                    ValidateExpr(@for.iter, Load.Instance);
+                    ValidateStatements(@for.orelse);
+                    break;
+                case While @while:
+                    ValidateBody(@while.body, "While");
+                    ValidateExpr(@while.test, Load.Instance);
+                    ValidateStatements(@while.orelse);
+                    break;
+                case If @if:
+                    ValidateBody(@if.body, "If");
+                    ValidateExpr(@if.test, Load.Instance);
+                    ValidateStatements(@if.orelse);
+                    break;
+                case With @with:
+                    RequireNonEmpty(@with.items, "empty items on With");
+                    ValidateBody(@with.body, "With");
+                    ValidateWithItems(@with.items);
+                    break;
+                case AsyncWith @with:
+                    RequireNonEmpty(@with.items, "empty items on AsyncWith");
+                    ValidateBody(@with.body, "AsyncWith");
+                    ValidateWithItems(@with.items);
+                    break;
+                case Raise raise:
+                    if (raise.exc is null && raise.cause is not null) {
+                        throw InvalidAst(
+                            "Raise with cause but no exception");
+                    }
+                    ValidateExpr(raise.exc, Load.Instance);
+                    ValidateExpr(raise.cause, Load.Instance);
+                    break;
+                case Try @try:
+                    ValidateTry(
+                        @try.body,
+                        @try.handlers,
+                        @try.orelse,
+                        @try.finalbody,
+                        "Try");
+                    break;
+                case TryStar @try:
+                    ValidateTry(
+                        @try.body,
+                        @try.handlers,
+                        @try.orelse,
+                        @try.finalbody,
+                        "TryStar");
+                    break;
+                case Assert assert:
+                    ValidateExpr(assert.test, Load.Instance);
+                    ValidateExpr(assert.msg, Load.Instance);
+                    break;
+                case Import import:
+                    RequireNonEmpty(import.names, "empty names on Import");
+                    break;
+                case ImportFrom importFrom:
+                    if (importFrom.level < 0) {
+                        throw InvalidAst("Negative ImportFrom level");
+                    }
+                    RequireNonEmpty(
+                        importFrom.names,
+                        "empty names on ImportFrom");
+                    break;
+                case Global global:
+                    RequireNonEmpty(global.names, "empty names on Global");
+                    break;
+                case Nonlocal nonlocal:
+                    RequireNonEmpty(
+                        nonlocal.names,
+                        "empty names on Nonlocal");
+                    break;
+                case Expr expression:
+                    ValidateExpr(expression.value, Load.Instance);
+                    break;
+                case Match match:
+                    ValidateExpr(match.subject, Load.Instance);
+                    foreach (object item in match.cases) {
+                        if (item is not match_case matchCase) {
+                            throw InvalidAst("None disallowed");
+                        }
+                        if (matchCase.pattern is null) {
+                            throw InvalidAst(
+                                "field 'pattern' is required for match_case");
+                        }
+                        ValidatePattern(matchCase.pattern);
+                        ValidateExpr(matchCase.guard, Load.Instance);
+                        ValidateStatements(matchCase.body);
+                    }
+                    break;
+                case TypeAlias typeAlias:
+                    ValidateExpr(
+                        typeAlias.name,
+                        Store.Instance,
+                        "Store");
+                    ValidateExpr(typeAlias.value, Load.Instance);
+                    break;
+            }
+        }
+
+        private static void ValidateTry(
+            PythonList body,
+            PythonList handlers,
+            PythonList orelse,
+            PythonList finalBody,
+            string name) {
+            ValidateBody(body, name);
+            foreach (object item in handlers) {
+                if (item is not ExceptHandler handler) {
+                    throw InvalidAst("None disallowed");
+                }
+                ValidateBody(handler.body, "ExceptHandler");
+                ValidateExpr(handler.type, Load.Instance);
+            }
+            if (handlers.Count == 0 && finalBody.Count == 0) {
+                throw InvalidAst(
+                    name + " has neither except handlers nor finalbody");
+            }
+            if (handlers.Count == 0 && orelse.Count != 0) {
+                throw InvalidAst(
+                    name + " has orelse but no except handlers");
+            }
+            ValidateStatements(orelse);
+            ValidateStatements(finalBody);
+        }
+
+        private static void ValidateWithItems(PythonList items) {
+            foreach (object item in items) {
+                if (item is not withitem withItem) {
+                    throw InvalidAst("None disallowed");
+                }
+                ValidateExpr(withItem.context_expr, Load.Instance);
+                ValidateExpr(
+                    withItem.optional_vars,
+                    Store.Instance,
+                    "Store");
+            }
+        }
+
+        private static void ValidateArguments(arguments arguments) {
+            if (arguments is null) {
+                throw InvalidAst("None disallowed");
+            }
+            ValidateArgList(arguments.posonlyargs);
+            ValidateArgList(arguments.args);
+            ValidateArgList(arguments.kwonlyargs);
+            ValidateArg(arguments.vararg, allowNull: true);
+            ValidateArg(arguments.kwarg, allowNull: true);
+            int positionalCount =
+                arguments.posonlyargs.Count + arguments.args.Count;
+            if (arguments.defaults.Count > positionalCount) {
+                throw InvalidAst(
+                    "more positional defaults than args");
+            }
+            if (arguments.kw_defaults.Count != arguments.kwonlyargs.Count) {
+                throw InvalidAst(
+                    "length of kwonlyargs is not the same as kw_defaults");
+            }
+            ValidateExprList(arguments.defaults, allowNull: true);
+            foreach (object item in arguments.kw_defaults) {
+                if (item is null) {
+                    continue;
+                }
+                ValidateExpr(item, Load.Instance);
+            }
+        }
+
+        private static void ValidateArgList(PythonList args) {
+            foreach (object item in args) {
+                ValidateArg(item, allowNull: false);
+            }
+        }
+
+        private static void ValidateArg(object item, bool allowNull) {
+            if (item is null) {
+                if (allowNull) {
+                    return;
+                }
+                throw InvalidAst("None disallowed");
+            }
+            if (item is not ArgType arg) {
+                throw InvalidAst("None disallowed");
+            }
+            ValidateExpr(arg.annotation, Load.Instance);
+        }
+
+        private static void ValidateKeyword(object item) {
+            if (item is not keyword keyword) {
+                throw InvalidAst("None disallowed");
+            }
+            ValidateExpr(keyword.value, Load.Instance);
+        }
+
+        private static void ValidateExprList(
+            PythonList values,
+            bool allowNull = false) {
+            foreach (object item in values) {
+                if (item is null && !allowNull) {
+                    throw InvalidAst("None disallowed");
+                }
+                ValidateExpr(item, Load.Instance);
+            }
+        }
+
+        private static void ValidateTargets(
+            PythonList targets,
+            expr_context context,
+            string contextName) {
+            foreach (object item in targets) {
+                if (item is null) {
+                    throw InvalidAst("None disallowed");
+                }
+                ValidateExpr(item, context, contextName);
+            }
+        }
+
+        private static void ValidateExpr(
+            object value,
+            expr_context expectedContext = null,
+            string contextName = "Load") {
+            if (value is null) {
+                return;
+            }
+            if (value is not expr expression) {
+                throw InvalidAst("None disallowed");
+            }
+
+            if (expression is Name or Attribute
+                or Subscript or List or Tuple or Starred) {
+                expr_context actualContext = expression switch {
+                    Name name => name.ctx,
+                    Attribute attribute => attribute.ctx,
+                    Subscript subscript => subscript.ctx,
+                    List list => list.ctx,
+                    Tuple tuple => tuple.ctx,
+                    Starred starred => starred.ctx,
+                    _ => null
+                };
+                if (expectedContext is not null
+                    && actualContext?.GetType() != expectedContext.GetType()) {
+                    throw InvalidAst(
+                        "expression must have " + contextName + " context");
+                }
+                if (actualContext is null) {
+                    throw InvalidAst("expression must have " + contextName + " context");
+                }
+            } else if (expectedContext is Store or Del) {
+                throw InvalidAst(
+                    "expression which can't be assigned to in "
+                    + contextName + " context");
+            }
+
+            switch (expression) {
+                case BoolOp boolean:
+                    if (boolean.values.Count < 2) {
+                        throw InvalidAst("BoolOp with less than 2 values");
+                    }
+                    ValidateExprList(boolean.values);
+                    break;
+                case BinOp binary:
+                    ValidateExpr(binary.left, Load.Instance);
+                    ValidateExpr(binary.right, Load.Instance);
+                    break;
+                case UnaryOp unary:
+                    ValidateExpr(unary.operand, Load.Instance);
+                    break;
+                case Lambda lambda:
+                    ValidateArguments(lambda.args);
+                    ValidateExpr(lambda.body, Load.Instance);
+                    break;
+                case IfExp ifExp:
+                    ValidateExpr(ifExp.test, Load.Instance);
+                    ValidateExpr(ifExp.body, Load.Instance);
+                    ValidateExpr(ifExp.orelse, Load.Instance);
+                    break;
+                case Dict dict:
+                    if (dict.keys.Count != dict.values.Count) {
+                        throw InvalidAst(
+                            "Dict keys and values must have the same number of keys as values");
+                    }
+                    foreach (object key in dict.keys) {
+                        ValidateExpr(key, Load.Instance);
+                    }
+                    ValidateExprList(dict.values);
+                    break;
+                case Set set:
+                    ValidateExprList(set.elts);
+                    break;
+                case List list:
+                    ValidateTargetsOrExprs(list.elts, list.ctx);
+                    break;
+                case Tuple tuple:
+                    ValidateTargetsOrExprs(tuple.elts, tuple.ctx);
+                    break;
+                case Starred starred:
+                    ValidateExpr(
+                        starred.value,
+                        starred.ctx,
+                        starred.ctx is Store
+                            ? "Store"
+                            : starred.ctx is Del
+                                ? "Del"
+                                : "Load");
+                    break;
+                case Attribute attribute:
+                    ValidateExpr(attribute.value, Load.Instance);
+                    break;
+                case Subscript subscript:
+                    ValidateExpr(subscript.value, Load.Instance);
+                    ValidateExpr(subscript.slice, Load.Instance);
+                    break;
+                case Slice slice:
+                    ValidateExpr(slice.lower, Load.Instance);
+                    ValidateExpr(slice.upper, Load.Instance);
+                    ValidateExpr(slice.step, Load.Instance);
+                    break;
+                case Call call:
+                    ValidateExpr(call.func, Load.Instance);
+                    ValidateExprList(call.args);
+                    foreach (object item in call.keywords) {
+                        ValidateKeyword(item);
+                    }
+                    break;
+                case Compare compare:
+                    if (compare.comparators.Count == 0) {
+                        throw InvalidAst("Compare has no comparators");
+                    }
+                    if (compare.ops.Count != compare.comparators.Count) {
+                        throw InvalidAst(
+                            "Compare has different number of comparators and operands");
+                    }
+                    ValidateExpr(compare.left, Load.Instance);
+                    ValidateExprList(compare.comparators);
+                    break;
+                case ListComp comp:
+                    ValidateComprehensions(comp.generators);
+                    ValidateExpr(comp.elt, Load.Instance);
+                    break;
+                case SetComp comp:
+                    ValidateComprehensions(comp.generators);
+                    ValidateExpr(comp.elt, Load.Instance);
+                    break;
+                case DictComp comp:
+                    ValidateComprehensions(comp.generators);
+                    ValidateExpr(comp.key, Load.Instance);
+                    ValidateExpr(comp.value, Load.Instance);
+                    break;
+                case GeneratorExp comp:
+                    ValidateComprehensions(comp.generators);
+                    ValidateExpr(comp.elt, Load.Instance);
+                    break;
+                case Yield yield:
+                    ValidateExpr(yield.value, Load.Instance);
+                    break;
+                case YieldFrom yieldFrom:
+                    ValidateExpr(yieldFrom.value, Load.Instance);
+                    break;
+                case Await await:
+                    ValidateExpr(await.value, Load.Instance);
+                    break;
+                case JoinedStr joined:
+                    ValidateExprList(joined.values);
+                    break;
+                case FormattedValue formatted:
+                    ValidateExpr(formatted.value, Load.Instance);
+                    ValidateExpr(formatted.format_spec, Load.Instance);
+                    break;
+            }
+        }
+
+        private static void ValidateTargetsOrExprs(
+            PythonList values,
+            expr_context context) {
+            foreach (object item in values) {
+                if (item is null) {
+                    throw InvalidAst("None disallowed");
+                }
+                ValidateExpr(
+                    item,
+                    context is Store
+                        ? Store.Instance
+                        : context is Del
+                            ? Del.Instance
+                            : Load.Instance,
+                    context is Store
+                        ? "Store"
+                        : context is Del
+                            ? "Del"
+                            : "Load");
+            }
+        }
+
+        private static void ValidateComprehensions(PythonList generators) {
+            if (generators.Count == 0) {
+                throw InvalidAst("comprehension with no generators");
+            }
+            foreach (object item in generators) {
+                if (item is not comprehension comprehension) {
+                    throw InvalidAst("None disallowed");
+                }
+                ValidateExpr(
+                    comprehension.target,
+                    Store.Instance,
+                    "Store");
+                ValidateExpr(comprehension.iter, Load.Instance);
+                ValidateExprList(comprehension.ifs);
+            }
+        }
+
+        private static void ValidatePattern(
+            pattern pattern,
+            bool allowStar = false) {
+            if (pattern is null) {
+                throw InvalidAst("None disallowed");
+            }
+            switch (pattern) {
+                case MatchValue value:
+                    if (!IsLiteralPattern(value.value)) {
+                        throw InvalidAst("invalid pattern");
+                    }
+                    break;
+                case MatchSingleton singleton:
+                    if (singleton.value is not null
+                        && singleton.value is not bool) {
+                        throw InvalidAst("invalid MatchSingleton value");
+                    }
+                    break;
+                case MatchSequence sequence:
+                    bool foundStar = false;
+                    foreach (object item in sequence.patterns) {
+                        if (item is not pattern nested) {
+                            throw InvalidAst("None disallowed");
+                        }
+                        if (nested is MatchStar) {
+                            if (foundStar) {
+                                throw InvalidAst(
+                                    "multiple starred patterns");
+                            }
+                            foundStar = true;
+                        }
+                        ValidatePattern(
+                            nested,
+                            allowStar: nested is MatchStar);
+                    }
+                    break;
+                case MatchMapping mapping:
+                    if (mapping.keys.Count != mapping.patterns.Count) {
+                        throw InvalidAst(
+                            "MatchMapping keys and patterns must have the same length");
+                    }
+                    foreach (object key in mapping.keys) {
+                        if (!IsLiteralPattern(key)) {
+                            throw InvalidAst("invalid mapping key");
+                        }
+                    }
+                    foreach (object item in mapping.patterns) {
+                        ValidatePattern(item as pattern);
+                    }
+                    ValidateCaptureName(mapping.rest);
+                    break;
+                case MatchClass @class:
+                    if (!IsClassPatternTarget(@class.cls)) {
+                        throw InvalidAst("invalid class pattern");
+                    }
+                    if (@class.kwd_attrs.Count != @class.kwd_patterns.Count) {
+                        throw InvalidAst(
+                            "MatchClass keyword attributes and patterns must have the same length");
+                    }
+                    foreach (object item in @class.patterns) {
+                        if (item is MatchStar
+                            || item is not pattern classPattern) {
+                            throw InvalidAst("invalid class pattern");
+                        }
+                        ValidatePattern(classPattern);
+                    }
+                    foreach (object item in @class.kwd_attrs) {
+                        ValidateIdentifierValue(item);
+                    }
+                    foreach (object item in @class.kwd_patterns) {
+                        if (item is MatchStar) {
+                            throw InvalidAst("invalid class pattern");
+                        }
+                        ValidatePattern(item as pattern);
+                    }
+                    break;
+                case MatchStar star:
+                    if (!allowStar) {
+                        throw InvalidAst(
+                            "MatchStar is only valid in a sequence pattern");
+                    }
+                    ValidateCaptureName(star.name);
+                    break;
+                case MatchAs @as:
+                    ValidateCaptureName(@as.name);
+                    if (@as.pattern is not null) {
+                        ValidatePattern(@as.pattern);
+                    }
+                    break;
+                case MatchOr or:
+                    if (or.patterns.Count < 2) {
+                        throw InvalidAst(
+                            "MatchOr requires at least 2 patterns");
+                    }
+                    foreach (object item in or.patterns) {
+                        ValidatePattern(item as pattern);
+                    }
+                    for (int i = 0; i < or.patterns.Count - 1; i++) {
+                        if (IsIrrefutablePattern(or.patterns[i] as pattern)) {
+                            throw InvalidAst(
+                                "irrefutable pattern is not allowed here");
+                        }
+                    }
+                    break;
+            }
+        }
+
+        private static bool IsLiteralPattern(object value) {
+            if (value is Constant constant) {
+                return constant.value is not null
+                    && constant.value is not bool
+                    && constant.value is not IronPython.Runtime.Types.Ellipsis
+                    && constant.value is not PythonTuple
+                    && constant.value is not FrozenSetCollection;
+            }
+            if (value is Attribute attribute) {
+                return IsLoadNameOrAttribute(attribute);
+            }
+            if (value is BinOp binary) {
+                return IsLiteralPattern(binary.left)
+                    && IsLiteralPattern(binary.right)
+                    && binary.op is Add or Sub;
+            }
+            if (value is UnaryOp unary) {
+                return IsLiteralPattern(unary.operand)
+                    && unary.op is UAdd or USub;
+            }
+            return false;
+        }
+
+        private static bool IsClassPatternTarget(object value) {
+            return value is Name { ctx: Load }
+                || value is Attribute attribute
+                    && IsLoadNameOrAttribute(attribute);
+        }
+
+        private static bool IsLoadNameOrAttribute(expr value) =>
+            value switch {
+                Name name => name.ctx is Load,
+                Attribute attribute => attribute.ctx is Load
+                    && IsLoadNameOrAttribute(attribute.value),
+                _ => false
+            };
+
+        private static bool IsIrrefutablePattern(pattern pattern) =>
+            pattern is MatchAs { pattern: null };
+
+        private static void ValidateCaptureName(string name) {
+            if (name is not null) {
+                ValidateIdentifierValue(name);
+            }
+        }
+
+        private static void ValidateIdentifierValue(object value) {
+            if (value is not string name
+                || name is "_" or "True" or "False" or "None") {
+                throw InvalidAst("invalid identifier");
+            }
+        }
+
+        private static void ValidateBody(PythonList body, string name) {
+            if (body.Count == 0) {
+                throw InvalidAst("empty body on " + name);
+            }
+            ValidateStatements(body);
+        }
+
+        private static void RequireNonEmpty(
+            PythonList values,
+            string message) {
+            if (values.Count == 0) {
+                throw InvalidAst(message);
+            }
+        }
+
+        internal static Exception InvalidAst(string message) =>
+            PythonOps.ValueError(message);
+
+        internal static AST BuildAst(
+            CodeContext context,
+            SourceUnit sourceUnit,
+            PythonCompilerOptions opts,
+            string mode,
+            int optimizeLevel = -1,
+            int featureVersion = -1,
+            bool typeComments = false) {
             using (Parser parser = Parser.CreateParser(
                 new CompilerContext(sourceUnit, opts, ThrowingErrorSink.Default),
                 (PythonOptions)context.LanguageContext.Options)) {
 
-                return ConvertPublicAst(
-                    parser.ParsePublicAst(mode));
+                string sourceText = sourceUnit.GetCode() ?? string.Empty;
+                if (featureVersion >= 0) {
+                    ValidatePep758Source(
+                        sourceText,
+                        featureVersion);
+                }
+                AST ast = ConvertPublicAst(
+                    parser.ParsePublicAst(mode, featureVersion));
+                ApplyConstantKinds(ast, sourceText);
+                if (featureVersion >= 0) {
+                    ValidateFeatureVersion(ast, featureVersion);
+                }
+                if (typeComments
+                    && ast is Module module) {
+                    AddTypeIgnores(
+                        module,
+                        sourceText);
+                }
+                NormalizeAstSpansRecursive(ast);
+                if (optimizeLevel > 0) {
+                    OptimizeAst(ast, optimizeLevel);
+                }
+                return ast;
+            }
+        }
+
+        internal static AST OptimizeAst(AST node, int optimizeLevel) {
+            foreach (object field in node._fields.ToArray()) {
+                if (field is not string name
+                    || !node.TryGetFieldValue(name, out object value)) {
+                    continue;
+                }
+                if (value is AST child) {
+                    AST optimizedChild = OptimizeAst(
+                        child,
+                        optimizeLevel);
+                    if (!ReferenceEquals(child, optimizedChild)) {
+                        node.SetFieldValue(
+                            DefaultContext.Default,
+                            name,
+                            optimizedChild);
+                    }
+                } else if (value is PythonList list) {
+                    for (int i = 0; i < list.Count; i++) {
+                        if (list[i] is AST item) {
+                            list[i] = OptimizeAst(
+                                item,
+                                optimizeLevel);
+                        }
+                    }
+                }
+            }
+
+            if (node is UnaryOp unary
+                && unary.operand is Constant unaryConstant
+                && IsFoldedNumber(unaryConstant.value)) {
+                object value = unary.op is USub
+                    ? PythonOps.Negate(unaryConstant.value)
+                    : unaryConstant.value;
+                return CreateFoldedConstant(node, value);
+            }
+
+            if (node is BinOp binary
+                && TryFoldBinary(binary, out object foldedValue)) {
+                return CreateFoldedConstant(node, foldedValue);
+            }
+
+            if (node is BinOp formatting
+                && formatting.op is Mod
+                && formatting.left is Constant
+                    {
+                        value: "%s"
+                    }
+                && formatting.right is Tuple
+                    {
+                        elts.Count: 1
+                    } tuple) {
+                var formattedValue = new FormattedValue(
+                    (expr)tuple.elts[0],
+                    115,
+                    null);
+                CopyLocation(formattedValue, tuple.elts[0] as AST);
+                var joined = new JoinedStr();
+                joined.values = new PythonList {
+                    formattedValue
+                };
+                CopyLocation(joined, node);
+                return joined;
+            }
+
+            if (node is Name { id: "__debug__" }) {
+                return CreateFoldedConstant(node, false);
+            }
+
+            if (optimizeLevel >= 2) {
+                RemoveDocstring(node);
+            }
+            return node;
+        }
+
+        private static void ApplyConstantKinds(
+            AST node,
+            string source) {
+            if (node is Constant { value: string } constant) {
+                constant.GetLocation(
+                    out int? line,
+                    out int? column,
+                    out _,
+                    out _);
+                if (line is int lineNumber
+                    && column is int columnOffset) {
+                    string[] lines = source.Split(
+                        new[] { "\r\n", "\n", "\r" },
+                        StringSplitOptions.None);
+                    if (lineNumber > 0
+                        && lineNumber <= lines.Length
+                        && columnOffset >= 0
+                        && columnOffset < lines[lineNumber - 1].Length
+                        && lines[lineNumber - 1][columnOffset]
+                            is 'u' or 'U') {
+                        constant.kind = "u";
+                        constant.__dict__["kind"] = "u";
+                    }
+                }
+            }
+            foreach (object field in node._fields) {
+                if (field is not string name
+                    || !node.TryGetFieldValue(name, out object value)) {
+                    continue;
+                }
+                if (value is AST child) {
+                    ApplyConstantKinds(child, source);
+                } else if (value is IEnumerable values
+                    && value is not string
+                    && value is not byte[]) {
+                    foreach (object item in values) {
+                        if (item is AST itemNode) {
+                            ApplyConstantKinds(itemNode, source);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void AddTypeIgnores(
+            Module module,
+            string source) {
+            string[] lines = source.Split(
+                new[] { "\r\n", "\n", "\r" },
+                StringSplitOptions.None);
+            for (int i = 0; i < lines.Length; i++) {
+                const string marker = "# type: ignore";
+                int comment = lines[i].IndexOf(
+                    marker,
+                    StringComparison.Ordinal);
+                if (comment < 0) {
+                    continue;
+                }
+                string tag = lines[i]
+                    .Substring(comment + marker.Length)
+                    .Trim();
+                module.type_ignores.Add(
+                    new TypeIgnore(i + 1, tag));
+            }
+        }
+
+        private static void ValidateFeatureVersion(
+            AST node,
+            int featureVersion) {
+            switch (node) {
+                case NamedExpr when featureVersion < 8:
+                    throw PythonOps.SyntaxError(
+                        "assignment expressions require Python 3.8");
+                case Match when featureVersion < 10:
+                    throw PythonOps.SyntaxError(
+                        "match statements require Python 3.10");
+                case TryStar when featureVersion < 11:
+                    throw PythonOps.SyntaxError(
+                        "exception groups require Python 3.11");
+                case TypeAlias when featureVersion < 12:
+                    throw PythonOps.SyntaxError(
+                        "type alias statements require Python 3.12");
+                case TemplateStr when featureVersion < 14:
+                case Interpolation when featureVersion < 14:
+                    throw PythonOps.SyntaxError(
+                        "template strings require Python 3.14");
+                case FunctionDef function:
+                    if (function.type_params.Count != 0
+                        && featureVersion < 12) {
+                        throw PythonOps.SyntaxError(
+                            "type parameters require Python 3.12");
+                    }
+                    ValidatePositionalOnlyVersion(
+                        function.args,
+                        featureVersion);
+                    break;
+                case AsyncFunctionDef function:
+                    if (function.type_params.Count != 0
+                        && featureVersion < 12) {
+                        throw PythonOps.SyntaxError(
+                            "type parameters require Python 3.12");
+                    }
+                    ValidatePositionalOnlyVersion(
+                        function.args,
+                        featureVersion);
+                    break;
+                case ClassDef @class:
+                    if (@class.type_params.Count != 0
+                        && featureVersion < 12) {
+                        throw PythonOps.SyntaxError(
+                            "type parameters require Python 3.12");
+                    }
+                    break;
+                case Lambda lambda:
+                    ValidatePositionalOnlyVersion(
+                        lambda.args,
+                        featureVersion);
+                    break;
+                case TypeVar { default_value: not null }
+                    when featureVersion < 13:
+                case ParamSpec { default_value: not null }
+                    when featureVersion < 13:
+                case TypeVarTuple { default_value: not null }
+                    when featureVersion < 13:
+                    throw PythonOps.SyntaxError(
+                        "type parameter defaults require Python 3.13");
+            }
+
+            foreach (object field in node._fields) {
+                if (field is not string name
+                    || !node.TryGetFieldValue(name, out object value)) {
+                    continue;
+                }
+                if (value is AST child) {
+                    ValidateFeatureVersion(child, featureVersion);
+                } else if (value is IEnumerable values
+                    && value is not string
+                    && value is not byte[]) {
+                    foreach (object item in values) {
+                        if (item is AST itemNode) {
+                            ValidateFeatureVersion(
+                                itemNode,
+                                featureVersion);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static void ValidatePositionalOnlyVersion(
+            arguments arguments,
+            int featureVersion) {
+            if (featureVersion < 8
+                && arguments.posonlyargs.Count != 0) {
+                throw PythonOps.SyntaxError(
+                    "positional-only parameters require Python 3.8");
+            }
+        }
+
+        private static void ValidatePep758Source(
+            string source,
+            int featureVersion) {
+            if (featureVersion >= 14) {
+                return;
+            }
+            string[] lines = source.Split(
+                new[] { "\r\n", "\n", "\r" },
+                StringSplitOptions.None);
+            foreach (string line in lines) {
+                string trimmed = line.TrimStart();
+                if (!trimmed.StartsWith(
+                    "except",
+                    StringComparison.Ordinal)) {
+                    continue;
+                }
+                int colon = trimmed.IndexOf(':');
+                string header = colon < 0
+                    ? trimmed
+                    : trimmed.Substring(0, colon);
+                int comma = header.IndexOf(',');
+                int openParen = header.IndexOf('(');
+                if (comma >= 0
+                    && (openParen < 0 || comma < openParen)) {
+                    throw PythonOps.SyntaxError(
+                        "multiple unparenthesized exception types require Python 3.14");
+                }
+            }
+        }
+
+        private static void NormalizeAstSpansRecursive(AST node) {
+            foreach (object field in node._fields) {
+                if (field is not string name
+                    || !node.TryGetFieldValue(name, out object value)) {
+                    continue;
+                }
+                if (value is AST child) {
+                    NormalizeAstSpansRecursive(child);
+                } else if (value is IEnumerable values
+                    && value is not string
+                    && value is not byte[]) {
+                    foreach (object item in values) {
+                        if (item is AST itemNode) {
+                            NormalizeAstSpansRecursive(itemNode);
+                        }
+                    }
+                }
+            }
+            NormalizeAstSpan(node);
+            if (node is Constant constant
+                && constant._isParsedAst
+                && constant.value is PythonList bytes
+                && bytes.All(item =>
+                    Converter.TryConvertToInt32(
+                        item,
+                        out int intValue)
+                    && intValue >= 0
+                    && intValue <= 255)) {
+                var converted = new IronPython.Runtime.Bytes(
+                    bytes.Select(item => {
+                        Converter.TryConvertToInt32(
+                            item,
+                            out int intValue);
+                        return checked((byte)intValue);
+                    }));
+                constant.value = converted;
+                constant.__dict__["value"] = converted;
+            }
+        }
+
+        private static bool TryFoldBinary(
+            BinOp binary,
+            out object value) {
+            value = null;
+            if (binary.left is not Constant left
+                || binary.right is not Constant right
+                || !IsFoldedNumber(left.value)
+                || !IsFoldedNumber(right.value)) {
+                return false;
+            }
+
+            if (left.value is Complex || right.value is Complex) {
+                Complex leftValue = ToComplex(left.value);
+                Complex rightValue = ToComplex(right.value);
+                value = binary.op switch {
+                    Add => leftValue + rightValue,
+                    Sub => leftValue - rightValue,
+                    _ => null
+                };
+                return value is not null;
+            }
+
+            if (left.value is double || right.value is double) {
+                double leftValue = Convert.ToDouble(left.value);
+                double rightValue = Convert.ToDouble(right.value);
+                value = binary.op switch {
+                    Add => leftValue + rightValue,
+                    Sub => leftValue - rightValue,
+                    _ => null
+                };
+                return value is not null;
+            }
+
+            BigInteger leftInteger = ToBigInteger(left.value);
+            BigInteger rightInteger = ToBigInteger(right.value);
+            value = binary.op switch {
+                Add => leftInteger + rightInteger,
+                Sub => leftInteger - rightInteger,
+                _ => null
+            };
+            return value is not null;
+        }
+
+        private static bool IsFoldedNumber(object value) =>
+            value is int or BigInteger or double or Complex;
+
+        private static BigInteger ToBigInteger(object value) =>
+            value is BigInteger integer
+                ? integer
+                : new BigInteger(Convert.ToInt64(value));
+
+        private static Complex ToComplex(object value) =>
+            value is Complex complex
+                ? complex
+                : new Complex(Convert.ToDouble(value), 0);
+
+        private static Constant CreateFoldedConstant(
+            AST location,
+            object value) {
+            var result = new Constant(value);
+            CopyLocation(result, location);
+            return result;
+        }
+
+        private static void CopyLocation(AST target, AST source) {
+            if (source is null) {
+                return;
+            }
+            source.GetLocation(
+                out int? line,
+                out int? column,
+                out int? endLine,
+                out int? endColumn);
+            if (line is not null) target.lineno = line.Value;
+            if (column is not null) target.col_offset = column.Value;
+            if (endLine is not null) target.end_lineno = endLine.Value;
+            if (endColumn is not null) target.end_col_offset = endColumn.Value;
+            if (line is not null) target.__dict__["lineno"] = line.Value;
+            if (column is not null) target.__dict__["col_offset"] = column.Value;
+            if (endLine is not null) target.__dict__["end_lineno"] = endLine.Value;
+            if (endColumn is not null) target.__dict__["end_col_offset"] = endColumn.Value;
+        }
+
+        private static void RemoveDocstring(AST node) {
+            PythonList body = node switch {
+                Module module => module.body,
+                FunctionDef function => function.body,
+                AsyncFunctionDef function => function.body,
+                ClassDef @class => @class.body,
+                _ => null
+            };
+            if (body is null
+                || body.Count == 0
+                || body[0] is not Expr
+                    {
+                        value: Constant
+                        {
+                            value: string
+                        }
+                    }) {
+                return;
+            }
+
+            AST docstring = body[0] as AST;
+            body.RemoveAt(0);
+            if (body.Count == 0) {
+                var pass = new Pass();
+                docstring.GetLocation(
+                    out int? line,
+                    out int? column,
+                    out _,
+                    out _);
+                if (line is not null) {
+                    pass.lineno = line.Value;
+                    pass.__dict__["lineno"] = line.Value;
+                    pass.end_lineno = line.Value;
+                    pass.__dict__["end_lineno"] = line.Value;
+                }
+                if (column is not null) {
+                    pass.col_offset = column.Value;
+                    pass.__dict__["col_offset"] = column.Value;
+                    pass.end_col_offset = column.Value + 4;
+                    pass.__dict__["end_col_offset"] = column.Value + 4;
+                }
+                body.Add(pass);
             }
         }
 
@@ -419,6 +1730,7 @@ namespace IronPython.Modules {
             var result = (AST)Activator.CreateInstance(
                 targetType,
                 nonPublic: true);
+            result._isParsedAst = true;
             foreach (IronPython.Compiler.Syntax.Ast.AstFieldValue field
                 in node.GetFields()) {
                 result.SetFieldValue(
@@ -432,17 +1744,313 @@ namespace IronPython.Modules {
             }
             if (node.LineNumber is int lineNumber) {
                 result.lineno = lineNumber;
+                result.__dict__["lineno"] = lineNumber;
             }
             if (node.ColumnOffset is int columnOffset) {
                 result.col_offset = columnOffset;
+                result.__dict__["col_offset"] = columnOffset;
             }
             if (node.EndLineNumber is int endLineNumber) {
                 result.end_lineno = endLineNumber;
+                result.__dict__["end_lineno"] = endLineNumber;
             }
             if (node.EndColumnOffset is int endColumnOffset) {
                 result.end_col_offset = endColumnOffset;
+                result.__dict__["end_col_offset"] = endColumnOffset;
             }
+            NormalizeAstSpan(result);
             return result;
+        }
+
+        private static void NormalizeAstSpan(AST node) {
+            int? endLine = null;
+            int? endColumn = null;
+            foreach (object field in node._fields) {
+                if (field is not string name
+                    || !node.TryGetFieldValue(name, out object value)) {
+                    continue;
+                }
+                IncludeSpan(value, ref endLine, ref endColumn);
+            }
+
+            if (node is Attribute attribute) {
+                attribute.value.GetLocation(
+                    out _,
+                    out _,
+                    out int? valueLine,
+                    out int? valueColumn);
+                if (valueLine is not null && valueColumn is not null) {
+                    int attributeColumn = valueColumn.Value
+                        + 1
+                        + attribute.attr.Length;
+                    IncludeSpan(
+                        valueLine.Value,
+                        attributeColumn,
+                        ref endLine,
+                        ref endColumn);
+                }
+            } else if (node is Subscript subscript) {
+                subscript.slice.GetLocation(
+                    out int? sliceLine,
+                    out int? sliceColumn,
+                    out int? sliceEndLine,
+                    out int? sliceEndColumn);
+                subscript.value.GetLocation(
+                    out _,
+                    out _,
+                    out int? valueLine,
+                    out int? valueColumn);
+                node.GetLocation(
+                    out _,
+                    out _,
+                    out int? subscriptEndLine,
+                    out int? subscriptEndColumn);
+                int desiredEndColumn = subscript.slice is Slice
+                    ? Math.Max(
+                        endColumn ?? 0,
+                        subscriptEndColumn ?? 0)
+                    : (endColumn ?? 0) + 1;
+                node.end_lineno =
+                    subscriptEndLine ?? sliceEndLine ?? valueLine ?? 0;
+                node.end_col_offset = desiredEndColumn;
+                if (node.end_lineno is int nodeEndLine) {
+                    node.__dict__["end_lineno"] = nodeEndLine;
+                }
+                node.__dict__["end_col_offset"] = desiredEndColumn;
+                endLine = node.end_lineno;
+                endColumn = desiredEndColumn;
+                int bracketColumn = desiredEndColumn - 1;
+                int declaredSliceEndLine = subscript.slice.lineno;
+                subscript.slice.end_lineno = declaredSliceEndLine;
+                subscript.slice.end_col_offset = bracketColumn;
+                subscript.slice.__dict__["end_lineno"] = declaredSliceEndLine;
+                subscript.slice.__dict__["end_col_offset"] = bracketColumn;
+                if (valueLine is not null
+                    && valueColumn is not null) {
+                    if (subscript.slice is Slice) {
+                        int startColumn = valueColumn.Value + 1;
+                        subscript.slice.lineno = valueLine.Value;
+                        subscript.slice.col_offset = startColumn;
+                        subscript.slice.__dict__["lineno"] = valueLine.Value;
+                        subscript.slice.__dict__["col_offset"] = startColumn;
+                    }
+                }
+            }
+
+            if (node is TypeVarTuple typeVarTuple) {
+                SetNodeEnd(
+                    node,
+                    typeVarTuple.name.Length + 1,
+                    setAbsolute: false);
+            } else if (node is ParamSpec paramSpec) {
+                SetNodeEnd(
+                    node,
+                    paramSpec.name.Length + 2,
+                    setAbsolute: false);
+            }
+
+            if (node is keyword keyword) {
+                keyword.value.GetLocation(
+                    out int? valueLine,
+                    out int? valueColumn,
+                    out _,
+                    out _);
+                if (valueLine is not null && valueColumn is not null) {
+                    int startColumn = Math.Max(
+                        0,
+                        valueColumn.Value
+                            - (keyword.arg is null
+                                ? 2
+                                : keyword.arg.Length + 1));
+                    keyword.col_offset = startColumn;
+                    keyword.__dict__["col_offset"] = startColumn;
+                }
+            } else if (node is Import import) {
+                if (import.names.Count != 0
+                    && import.names[0] is alias firstAlias) {
+                    firstAlias.GetLocation(
+                        out _,
+                        out int? aliasColumn,
+                        out _,
+                        out _);
+                    if (aliasColumn is not null) {
+                        int startColumn = Math.Max(
+                            0,
+                            aliasColumn.Value
+                                - (import.is_lazy == 1 ? 12 : 7));
+                        node.col_offset = startColumn;
+                        node.__dict__["col_offset"] = startColumn;
+                    }
+                }
+            } else if (node is ImportFrom importFrom) {
+                if (importFrom.names.Count != 0
+                    && importFrom.names[0] is alias firstAlias) {
+                    firstAlias.GetLocation(
+                        out int? aliasLine,
+                        out int? aliasColumn,
+                        out _,
+                        out _);
+                    node.GetLocation(
+                        out int? startLine,
+                        out _,
+                        out _,
+                        out _);
+                    if (aliasLine == startLine && aliasColumn is not null) {
+                        int prefixLength =
+                            (importFrom.is_lazy == 1 ? 5 : 0)
+                            + 5
+                            + (importFrom.level ?? 0)
+                            + (importFrom.module?.Length ?? 0)
+                            + 8;
+                        int startColumn = Math.Max(
+                            0,
+                            aliasColumn.Value - prefixLength);
+                        node.col_offset = startColumn;
+                        node.__dict__["col_offset"] = startColumn;
+                        if (firstAlias.name == "*"
+                            && aliasColumn == 0) {
+                            int aliasColumnValue =
+                                startColumn + prefixLength;
+                            firstAlias.lineno = startLine ?? 1;
+                            firstAlias.col_offset = aliasColumnValue;
+                            firstAlias.end_lineno = startLine ?? 1;
+                            firstAlias.end_col_offset =
+                                aliasColumnValue + 1;
+                            firstAlias.__dict__["lineno"] =
+                                firstAlias.lineno;
+                            firstAlias.__dict__["col_offset"] =
+                                firstAlias.col_offset;
+                            firstAlias.__dict__["end_lineno"] =
+                                firstAlias.end_lineno;
+                            firstAlias.__dict__["end_col_offset"] =
+                                firstAlias.end_col_offset;
+                        }
+                    }
+                }
+            } else if (node is TypeAlias typeAlias) {
+                typeAlias.name.GetLocation(
+                    out int? nameLine,
+                    out int? nameColumn,
+                    out _,
+                    out _);
+                if (nameLine is not null && nameColumn is not null) {
+                    int startColumn = Math.Max(0, nameColumn.Value - 5);
+                    node.lineno = nameLine.Value;
+                    node.col_offset = startColumn;
+                    node.__dict__["lineno"] = nameLine.Value;
+                    node.__dict__["col_offset"] = startColumn;
+                }
+            } else if (node is Interpolation interpolation
+                && interpolation.format_spec is TemplateStr templateSpec) {
+                interpolation.format_spec = new JoinedStr(templateSpec.values);
+                CopyLocation(
+                    interpolation.format_spec,
+                    templateSpec);
+            } else if (node is Expr
+                {
+                    value: NamedExpr
+                } namedExprStatement) {
+                namedExprStatement.GetLocation(
+                    out int? line,
+                    out int? column,
+                    out _,
+                    out _);
+                namedExprStatement.value.GetLocation(
+                    out _,
+                    out _,
+                    out int? valueEndLine,
+                    out int? valueEndColumn);
+                if (line is not null
+                    && column is not null
+                    && valueEndLine == line
+                    && valueEndColumn is not null) {
+                    namedExprStatement.col_offset = Math.Max(
+                        0,
+                        column.Value - 1);
+                    namedExprStatement.end_col_offset =
+                        valueEndColumn.Value + 1;
+                    namedExprStatement.__dict__["col_offset"] =
+                        namedExprStatement.col_offset;
+                    namedExprStatement.__dict__["end_col_offset"] =
+                        namedExprStatement.end_col_offset;
+                }
+            }
+
+            if (endLine is not null
+                && endColumn is not null) {
+                node.GetLocation(
+                    out _,
+                    out _,
+                    out int? currentEndLine,
+                    out int? currentEndColumn);
+                if (currentEndLine is null
+                    || currentEndLine < endLine
+                    || currentEndLine == endLine
+                    && currentEndColumn < endColumn) {
+                    node.end_lineno = endLine.Value;
+                    node.end_col_offset = endColumn.Value;
+                    node.__dict__["end_lineno"] = endLine.Value;
+                    node.__dict__["end_col_offset"] = endColumn.Value;
+                }
+            }
+        }
+
+        private static void SetNodeEnd(
+            AST node,
+            int length,
+            bool setAbsolute) {
+            node.GetLocation(
+                out _,
+                out int? column,
+                out _,
+                out _);
+            if (column is null) {
+                return;
+            }
+            int endColumn = setAbsolute
+                ? length
+                : column.Value + length;
+            node.end_col_offset = endColumn;
+            node.__dict__["end_col_offset"] = endColumn;
+        }
+
+        private static void IncludeSpan(
+            object value,
+            ref int? endLine,
+            ref int? endColumn) {
+            if (value is AST child) {
+                child.GetLocation(
+                    out _,
+                    out _,
+                    out int? line,
+                    out int? column);
+                if (line is not null && column is not null) {
+                    IncludeSpan(
+                        line.Value,
+                        column.Value,
+                        ref endLine,
+                        ref endColumn);
+                }
+            } else if (value is IEnumerable values
+                && value is not string
+                && value is not byte[]) {
+                foreach (object item in values) {
+                    IncludeSpan(item, ref endLine, ref endColumn);
+                }
+            }
+        }
+
+        private static void IncludeSpan(
+            int line,
+            int column,
+            ref int? endLine,
+            ref int? endColumn) {
+            if (endLine is null
+                || line > endLine
+                || line == endLine && column > endColumn) {
+                endLine = line;
+                endColumn = column;
+            }
         }
 
         private static object ConvertPublicAstValue(object value) {
@@ -484,6 +2092,8 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class AST : IPythonObject, IDynamicMetaObjectProvider {
+            private static readonly object DeletedField = new object();
+
             internal static readonly HashSet<string> SequenceFieldNames =
                 new HashSet<string>(StringComparer.Ordinal) {
                     "args", "argtypes", "bases", "body", "cases", "comparators",
@@ -538,12 +2148,60 @@ namespace IronPython.Modules {
             private PythonDictionary _customAttributes;
             private PythonType _pythonType;
             private object[] _slots;
+            internal bool _isParsedAst;
 
             public PythonTuple _fields { get; protected set; } = PythonTuple.EMPTY;
 
             public PythonTuple _attributes { get; protected set; } = PythonTuple.EMPTY;
 
-            public PythonTuple __match_args__ => _fields;
+            public AST __replace__(
+                CodeContext context,
+                [ParamDictionary] IDictionary<object, object> changes) {
+                var values = new Dictionary<object, object>();
+                foreach (object field in _fields) {
+                    if (field is string name
+                        && TryGetFieldValue(name, out object value)) {
+                        values[name] = value;
+                    }
+                }
+                foreach (object attribute in _attributes) {
+                    if (attribute is string name
+                        && TryGetFieldValue(name, out object value)) {
+                        values[name] = value;
+                    }
+                }
+                foreach (KeyValuePair<object, object> change in changes) {
+                    if (change.Key is not string name) {
+                        PythonOps.Warn(
+                            context,
+                            PythonExceptions.DeprecationWarning,
+                            "got an unexpected keyword argument {0}",
+                            PythonOps.Repr(context, change.Key));
+                        throw PythonOps.TypeError(
+                            "got an unexpected keyword argument {0}",
+                            PythonOps.Repr(context, change.Key));
+                    }
+                    if (!_fields.Contains(name)
+                        && !_attributes.Contains(name)) {
+                        throw PythonOps.TypeError(
+                            "{0}.__init__ got an unexpected keyword argument '{1}'",
+                            GetDisplayTypeName(context),
+                            name);
+                    }
+                    values[name] = change.Value;
+                }
+
+                var result = (AST)DynamicHelpers.GetPythonType(this)
+                    .CreateInstance(context);
+                result.__init__(
+                    context,
+                    values,
+                    Array.Empty<object>());
+                foreach (KeyValuePair<object, object> value in values) {
+                    result.EnsureCustomAttributes()[value.Key] = value.Value;
+                }
+                return result;
+            }
 
             public string __repr__(CodeContext context) {
                 var result = new StringBuilder();
@@ -631,13 +2289,20 @@ namespace IronPython.Modules {
                     var result = new PythonDictionary();
                     foreach (object fieldValue in _fields) {
                         if (fieldValue is not string name) continue;
-                        result[name] = string.Equals(name, "ctx", StringComparison.Ordinal)
+                        object fieldType = string.Equals(
+                            name,
+                            "ctx",
+                            StringComparison.Ordinal)
                             ? DynamicHelpers.GetPythonTypeFromType(typeof(expr_context))
                             : SequenceFieldNames.Contains(name)
                                 ? new IronPython.Runtime.Types.GenericAlias(
                                     TypeCache.PythonList,
                                     TypeCache.Object)
                                 : TypeCache.Object;
+                        if (IsOptionalField(name)) {
+                            fieldType = UnionType.MakeUnion(fieldType, null);
+                        }
+                        result[name] = fieldType;
                     }
                     return result;
                 }
@@ -705,7 +2370,7 @@ namespace IronPython.Modules {
                     if (i >= fields.Count) {
                         throw PythonOps.TypeError(
                             "{0}.__init__ got too many positional arguments",
-                            PythonOps.GetPythonTypeName(this));
+                            GetDisplayTypeName(context));
                     }
                     values[fields[i]] = args[i];
                 }
@@ -730,7 +2395,7 @@ namespace IronPython.Modules {
                         && GetType().GetProperty(name) is null) {
                         throw PythonOps.TypeError(
                             "{0}.__init__ got an unexpected keyword argument '{1}'",
-                            PythonOps.GetPythonTypeName(this),
+                            GetDisplayTypeName(context),
                             name);
                     }
                     if (values.ContainsKey(name)) {
@@ -929,6 +2594,7 @@ namespace IronPython.Modules {
                 if (property is not null) {
                     try {
                         property.SetValue(this, value, null);
+                        _customAttributes?.Remove(name);
                     } catch (ArgumentException) {
                         EnsureCustomAttributes()[name] = value;
                     } catch (System.Reflection.TargetInvocationException e)
@@ -946,6 +2612,10 @@ namespace IronPython.Modules {
                 out object value) {
                 if (_customAttributes is not null
                     && _customAttributes.TryGetValue(name, out value)) {
+                    if (IsDeletedField(value)) {
+                        value = null;
+                        return false;
+                    }
                     return true;
                 }
 
@@ -1039,10 +2709,19 @@ namespace IronPython.Modules {
                 string name) {
                 if (_customAttributes is not null
                     && _customAttributes.TryGetValue(name, out object value)) {
+                    if (IsDeletedField(value)) {
+                        throw PythonOps.AttributeError(
+                            "'{0}' object has no attribute '{1}'",
+                            PythonOps.GetPythonTypeName(this),
+                            name);
+                    }
                     return value;
                 }
                 if (name == "__dict__") {
                     return this.__dict__;
+                }
+                if (name == "__match_args__") {
+                    return _fields;
                 }
                 if (name == "__class__") {
                     return DynamicHelpers.GetPythonType(this);
@@ -1065,13 +2744,33 @@ namespace IronPython.Modules {
                 CodeContext context,
                 string name,
                 object value) {
+                if (name == "_fields") {
+                    EnsureCustomAttributes()[name] = value;
+                    return;
+                }
                 System.Reflection.PropertyInfo property =
                     GetType().GetProperty(name);
                 if (property is not null && property.CanWrite) {
                     property.SetValue(this, value, null);
+                    _customAttributes?.Remove(name);
                 } else {
                     EnsureCustomAttributes()[name] = value;
                 }
+            }
+
+            public void __delattr__(
+                CodeContext context,
+                string name) {
+                if (_customAttributes is not null
+                        && _customAttributes.ContainsKey(name)
+                    || GetType().GetProperty(name) is not null) {
+                    EnsureCustomAttributes()[name] = DeletedField;
+                    return;
+                }
+                throw PythonOps.AttributeError(
+                    "'{0}' object has no attribute '{1}'",
+                    PythonOps.GetPythonTypeName(this),
+                    name);
             }
 
             public int lineno {
@@ -1093,7 +2792,6 @@ namespace IronPython.Modules {
             public int end_lineno {
                 get {
                     if (_end_lineno != null) return (int)_end_lineno;
-                    if (_lineno != null) return (int)_lineno;
                     throw PythonOps.AttributeErrorForMissingAttribute(
                         PythonOps.GetPythonTypeName(this),
                         "end_lineno");
@@ -1104,13 +2802,16 @@ namespace IronPython.Modules {
             public int end_col_offset {
                 get {
                     if (_end_col_offset != null) return (int)_end_col_offset;
-                    if (_col_offset != null) return (int)_col_offset;
                     throw PythonOps.AttributeErrorForMissingAttribute(
                         PythonOps.GetPythonTypeName(this),
                         "end_col_offset");
                 }
                 set { _end_col_offset = value; }
             }
+
+            internal static bool IsDeletedField(object value) =>
+                ReferenceEquals(value, DeletedField)
+                || ReferenceEquals(value, Uninitialized.Instance);
 
             public void __setstate__(PythonDictionary state) {
                 foreach (KeyValuePair<object, object> item in state) {
@@ -1477,6 +3178,12 @@ namespace IronPython.Modules {
 
         [PythonType("arg"), PythonHidden]
         public class ArgType : AST {
+            public static readonly PythonTuple __match_args__ =
+                PythonTuple.MakeTuple(
+                    nameof(arg),
+                    nameof(annotation),
+                    nameof(type_comment));
+
             private static PythonTuple __attributes = PythonTuple.MakeTuple(new[] {
                 nameof(lineno),
                 nameof(col_offset),
@@ -1516,6 +3223,16 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class arguments : AST {
+            public static readonly PythonTuple __match_args__ =
+                PythonTuple.MakeTuple(
+                    nameof(posonlyargs),
+                    nameof(args),
+                    nameof(vararg),
+                    nameof(kwonlyargs),
+                    nameof(kw_defaults),
+                    nameof(kwarg),
+                    nameof(defaults));
+
             public arguments() {
                 _fields = PythonTuple.MakeTuple(new[] {
                     nameof(posonlyargs),
@@ -2819,6 +4536,16 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class FunctionDef : stmt {
+            public static readonly PythonTuple __match_args__ =
+                PythonTuple.MakeTuple(
+                    nameof(name),
+                    nameof(args),
+                    nameof(body),
+                    nameof(decorator_list),
+                    nameof(returns),
+                    nameof(type_comment),
+                    nameof(type_params));
+
             public FunctionDef() {
                 _fields = PythonTuple.MakeTuple(new[] {
                     nameof(name),
@@ -3048,6 +4775,7 @@ namespace IronPython.Modules {
         }
 
         [PythonType]
+        [Documentation("GtE")]
         public class GtE : cmpop {
             internal static readonly GtE Instance = new GtE();
             internal override PythonOperator Revert() => PythonOperator.GreaterThanOrEqual;
@@ -3558,6 +5286,9 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class Load : expr_context {
+            public static readonly PythonTuple __match_args__ =
+                PythonTuple.EMPTY;
+
             internal static readonly Load Instance = new Load();
         }
 
@@ -3624,6 +5355,11 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class Name : expr {
+            public static readonly PythonTuple __match_args__ =
+                PythonTuple.MakeTuple(
+                    nameof(id),
+                    nameof(ctx));
+
             public Name() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(id), nameof(ctx) });
             }
@@ -3799,6 +5535,9 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class Pass : stmt {
+            public static readonly PythonTuple __match_args__ =
+                PythonTuple.EMPTY;
+
             internal static readonly Pass Instance = new Pass();
 
             internal Pass()
@@ -4363,6 +6102,7 @@ namespace IronPython.Modules {
         }
 
         [PythonType]
+        [Documentation("withitem(expr context_expr, expr? optional_vars)")]
         public class withitem : AST {
             public withitem() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(context_expr), nameof(optional_vars) });

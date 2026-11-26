@@ -357,6 +357,13 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             _dict?["__annotations_cache__"] = ToTypeSlot(_annotations);
         }
 
+        internal void SetSystemMember(string name, object value) {
+            if (!IsSystemType || _dict is null) {
+                return;
+            }
+            _dict[name] = ToTypeSlot(value);
+        }
+
         [SpecialName, PropertyMethod, WrapperDescriptor]
         public static PythonTuple Get__type_params__([NotNone] PythonType self) {
             if (self._dict is not null

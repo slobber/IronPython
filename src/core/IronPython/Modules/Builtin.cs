@@ -610,6 +610,25 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             bool astOnly = flags != null && (ConvertCompileFlags(flags) & _ast.PyCF_ONLY_AST) != 0;
 
             if (astOnly) {
+                bool validAstForMode = mode switch {
+                    "exec" => source is _ast.Module,
+                    "eval" => source is _ast.Expression,
+                    "single" => source is _ast.Interactive,
+                    "func_type" => source is _ast.FunctionType,
+                    _ => false
+                };
+                if (!validAstForMode) {
+                    throw PythonOps.TypeError(
+                        "invalid AST for compile mode '{0}'",
+                        mode);
+                }
+                if (optimize is not null) {
+                    int optimizeLevel = Converter.ConvertToInt32(
+                        PythonOps.Index(optimize));
+                    if (optimizeLevel > 0) {
+                        _ast.OptimizeAst(source, optimizeLevel);
+                    }
+                }
                 return source;
             } else {
                 PythonAst ast = _ast.ConvertToPythonAst(
@@ -635,7 +654,17 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             var contentProvider = new MemoryStreamContentProvider(context.LanguageContext, bytes, sfilename);
             var sourceUnit = context.LanguageContext.CreateSourceUnit(contentProvider, sfilename, sourceCodeKind);
 
-            return CompileHelper(context, sourceUnit, mode, flags, dont_inherit, module);
+            return CompileHelper(
+                context,
+                sourceUnit,
+                mode,
+                flags,
+                dont_inherit,
+                module,
+                optimize is null
+                    ? -1
+                    : Converter.ConvertToInt32(PythonOps.Index(optimize)),
+                _feature_version);
         }
 
         [Documentation("")] // provided by first overload
@@ -646,17 +675,23 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             var sourceCodeKind = ValidateCompileMode(mode);
 
             if (source.Contains('\0')) {
-#if PYTHON_34
-                throw PythonOps.TypeError("source code string cannot contain null bytes");
-#else
-                // TODO: SyntaxError in 3.11
-                throw PythonOps.ValueError("source code string cannot contain null bytes");
-#endif
+                throw PythonOps.SyntaxError(
+                    "source code string cannot contain null bytes");
             }
 
             var sourceUnit = context.LanguageContext.CreateSnippet(source, sfilename, sourceCodeKind);
 
-            return CompileHelper(context, sourceUnit, mode, flags, dont_inherit, module);
+            return CompileHelper(
+                context,
+                sourceUnit,
+                mode,
+                flags,
+                dont_inherit,
+                module,
+                optimize is null
+                    ? -1
+                    : Converter.ConvertToInt32(PythonOps.Index(optimize)),
+                _feature_version);
         }
 
         private static int ConvertCompileFlags(object flags) {
@@ -673,6 +708,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 case "exec": return SourceCodeKind.Statements;
                 case "eval": return SourceCodeKind.Expression;
                 case "single": return SourceCodeKind.InteractiveCode;
+                case "func_type": return SourceCodeKind.Expression;
                 default:
                     throw PythonOps.ValueError("compile() arg 3 must be 'exec' or 'eval' or 'single'");
             }
@@ -684,9 +720,13 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             string mode,
             object? flags,
             bool dont_inherit,
-            object? module) {
+            object? module,
+            int optimizeLevel,
+            int featureVersion) {
             bool astOnly = false;
             int iflags = flags != null ? ConvertCompileFlags(flags) : 0;
+            bool typeComments =
+                (iflags & _ast.PyCF_TYPE_COMMENTS) != 0;
             if ((iflags & _ast.PyCF_ONLY_AST) != 0) {
                 astOnly = true;
                 iflags &= ~_ast.PyCF_ONLY_AST;
@@ -712,7 +752,14 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
 
             return !astOnly ?
                 (object)FunctionCode.FromSourceUnit(sourceUnit, opts, true) :
-                (object)_ast.BuildAst(context, sourceUnit, opts, mode);
+                (object)_ast.BuildAst(
+                    context,
+                    sourceUnit,
+                    opts,
+                    mode,
+                    optimizeLevel,
+                    featureVersion,
+                    typeComments);
         }
 
         private static string? GetCompileModuleName(object? module) {
