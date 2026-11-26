@@ -196,6 +196,29 @@ namespace IronPython.Modules {
             }
         }
 
+        [PythonHidden(PlatformsAttribute.PlatformFamily.Windows)]
+        [SupportedOSPlatform("linux")]
+        [SupportedOSPlatform("macos")]
+        public static int posix_spawn_probe() {
+            using NativeStringArray argv = new(
+                new[] { "/bin/sh", "-c", "exit 0" });
+            using NativeStringArray envp = new(
+                new[] { "PATH=/usr/bin:/bin" });
+            int pid;
+            int error = posix_spawn(
+                out pid,
+                "/bin/sh",
+                IntPtr.Zero,
+                IntPtr.Zero,
+                argv.Pointers,
+                envp.Pointers);
+            if (error != 0) {
+                return -error;
+            }
+            Syscall.waitpid(pid, out _, 0);
+            return 0;
+        }
+
         [SupportedOSPlatform("linux")]
         [SupportedOSPlatform("macos")]
         internal static PythonTuple WaitPidUnix(int pid, int options) {

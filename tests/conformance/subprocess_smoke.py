@@ -10,6 +10,9 @@ def native_posix_spawn():
     if sys.platform == "win32" or not hasattr(os, "posix_spawn"):
         return
 
+    if hasattr(os, "_posix_spawn_probe"):
+        print("NATIVE_POSIX_SPAWN_PROBE", os._posix_spawn_probe(), flush=True)
+
     command = ["/bin/sh", "-c", "exit 0"]
     env = {
         "HOME": os.environ.get("HOME", "/tmp"),
