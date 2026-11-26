@@ -450,6 +450,39 @@ namespace IronPython.Runtime.Types {
                 );
             }
 
+            if (call is IPythonSite profileSite) {
+                var contextExpression = Ast.Constant(profileSite.Context);
+                var profileResult = Ast.Variable(
+                    typeof(object),
+                    "builtinProfileResult");
+                var profileCall = Ast.Block(
+                    typeof(object),
+                    new[] { profileResult },
+                    Ast.Call(
+                        typeof(PythonOps).GetMethod(
+                            nameof(PythonOps.ProfileBuiltinCallStart)),
+                        contextExpression,
+                        AstUtils.Constant(function.Value)),
+                    Ast.TryFinally(
+                        Ast.Assign(
+                            profileResult,
+                            Ast.Convert(res.Expression, typeof(object))),
+                        Ast.Call(
+                            typeof(PythonOps).GetMethod(
+                                nameof(PythonOps.ProfileBuiltinCallEnd)),
+                            contextExpression,
+                            AstUtils.Constant(function.Value))),
+                    profileResult);
+                res = new DynamicMetaObject(
+                    Ast.Condition(
+                        Ast.Property(
+                            contextExpression,
+                            nameof(PythonContext.HasActiveProfile)),
+                        profileCall,
+                        Ast.Convert(res.Expression, typeof(object))),
+                    res.Restrictions);
+            }
+
             return res;
         }
 

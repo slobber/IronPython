@@ -21,10 +21,9 @@ namespace IronPython.Runtime {
         private TracebackDelegate _traceDispatch;
         private bool _inTraceBack;
         private bool _exceptionThrown;
-
-#if PROFILE_SUPPORT
-        private bool _profile;
-#endif
+        private object _profileObject;
+        private TracebackDelegate _profileDispatch;
+        private bool _inProfileBack;
 
         internal PythonTracebackListener(PythonContext pythonContext, object traceObject, bool isDummyListener) {
             _pythonContext = pythonContext;
@@ -48,6 +47,12 @@ namespace IronPython.Runtime {
             }
         }
 
+        internal object ProfileObject {
+            get {
+                return _profileObject;
+            }
+        }
+
         internal bool InTraceBack {
             get {
                 return _inTraceBack;
@@ -67,20 +72,22 @@ namespace IronPython.Runtime {
         // dummy listener used to maintain the frame stack on a thread without a trace function
         internal bool IsDummyListener { get; }
 
-#if PROFILE_SUPPORT
-        internal void SetProfile(TracebackDelegate traceDispatch) {
-            _traceDispatch = traceDispatch;
-            _profile = true;
+        internal void SetProfile(object profileObject) {
+            if (profileObject == null) {
+                _profileObject = null;
+                _profileDispatch = null;
+                return;
+            }
+            _profileObject = profileObject;
+            _profileDispatch = (TracebackDelegate)Converter.ConvertToDelegate(
+                profileObject,
+                typeof(TracebackDelegate));
         }
-#endif
 
         #region ITraceCallback Members
 
         public void OnTraceEvent(Debugging.TraceEventKind kind, string name, string sourceFileName, SourceSpan sourceSpan, Func<IDictionary<object, object>> scopeCallback, object payload, object customPayload) {        
             if (kind == Debugging.TraceEventKind.ThreadExit ||                  // We don't care about thread-exit events
-#if PROFILE_SUPPORT
-                (_profile && kind == Debugging.TraceEventKind.TracePoint) ||    // Ignore code execute tracebacks when in profile mode
-#endif
                 kind == Debugging.TraceEventKind.ExceptionUnwind) {             // and we always have a try/catch so we don't care about methods unwinding.
                 return;
             }
@@ -121,11 +128,9 @@ namespace IronPython.Runtime {
                         thread.Add(new FunctionStack(pyFrame));
                     }
 
-                    if (traceDispatchObject == null) {
-                        return;
+                    if (traceDispatchObject != null) {
+                        pyFrame.Setf_trace(traceDispatchObject);
                     }
-                    
-                    pyFrame.Setf_trace(traceDispatchObject);
                 } else {
                     if (thread.Count == 0) {
                         return;
@@ -146,6 +151,12 @@ namespace IronPython.Runtime {
 
                 if (traceDispatchObject != null && !_exceptionThrown && !IsDummyListener) {
                     DispatchTrace(thread, kind, payload, traceDispatch, traceDispatchObject, pyFrame);
+                }
+                if (_profileObject != null
+                    && !_inProfileBack
+                    && kind is Debugging.TraceEventKind.FrameEnter
+                        or Debugging.TraceEventKind.FrameExit) {
+                    DispatchProfile(kind, payload, pyFrame);
                 }
             } finally {
                 if (kind == Debugging.TraceEventKind.FrameExit && thread.Count > 0) {
@@ -228,6 +239,61 @@ namespace IronPython.Runtime {
                     // so that we can pop our frames.
                     _traceObject = _traceDispatch = null;
                     _exceptionThrown = true;
+                }
+            }
+        }
+
+        private void DispatchProfile(
+            Debugging.TraceEventKind kind,
+            object payload,
+            TraceBackFrame pyFrame) {
+            object args = null;
+            string traceEvent;
+            switch (kind) {
+                case Debugging.TraceEventKind.FrameEnter:
+                    traceEvent = "call";
+                    break;
+                case Debugging.TraceEventKind.FrameExit:
+                    traceEvent = "return";
+                    args = payload;
+                    break;
+                default:
+                    return;
+            }
+
+            DispatchProfileEvent(traceEvent, args, pyFrame);
+        }
+
+        internal void DispatchBuiltinProfileEvent(
+            string traceEvent,
+            object args) {
+            if (_profileObject == null || _inProfileBack) {
+                return;
+            }
+            var thread = PythonOps.GetFunctionStackNoCreate();
+            if (thread == null || thread.Count == 0) {
+                return;
+            }
+            FunctionStack top = thread[thread.Count - 1];
+            var pyFrame = top.Frame
+                ?? SysModule._getframeImpl(top.Context, 0);
+            DispatchProfileEvent(traceEvent, args, pyFrame);
+        }
+
+        private void DispatchProfileEvent(
+            string traceEvent,
+            object args,
+            TraceBackFrame pyFrame) {
+            bool profileThrew = true;
+            _inProfileBack = true;
+            try {
+                _profileDispatch(pyFrame, traceEvent, args);
+                profileThrew = false;
+            } finally {
+                _inProfileBack = false;
+                if (profileThrew) {
+                    _profileObject = null;
+                    _profileDispatch = null;
                 }
             }
         }

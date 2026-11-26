@@ -5725,6 +5725,18 @@ namespace IronPython.Runtime.Operations {
             return _funcStack;
         }
 
+        public static void ProfileBuiltinCallStart(
+            PythonContext context,
+            object callable) {
+            context.DispatchBuiltinProfileEvent("c_call", callable);
+        }
+
+        public static void ProfileBuiltinCallEnd(
+            PythonContext context,
+            object callable) {
+            context.DispatchBuiltinProfileEvent("c_return", callable);
+        }
+
         public static List<FunctionStack> PushFrame(CodeContext/*!*/ context, FunctionCode function) {
             List<FunctionStack> stack = GetFunctionStack();
             stack.Add(new FunctionStack(context, function));

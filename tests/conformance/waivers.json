@@ -254,6 +254,72 @@
                 "test.test_ensurepip.RealInstallation.*"
             ]
         },
+        {
+            "id": "profiling-cpython-deterministic-counter-layout",
+            "category": "cpython-internal",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#17.4",
+            "reason": "These fixtures compare byte-for-byte cProfile reports generated from CPython's linked instruction contexts and simulated timer. IronPython exposes the public profiler, records Python and managed builtin calls, and reports callers/callees, but DLR frame boundaries split recursive and per-edge accounting differently.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_profile.ProfileTest.test_cprofile",
+                "test.test_profiling.test_tracing_profiler.CProfileTest.test_cprofile"
+            ]
+        },
+        {
+            "id": "profiling-cpython-reentrant-monitoring",
+            "category": "cpython-internal",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#17.4",
+            "reason": "These cases mutate or re-enable the active profiler from its external timer or during deallocation, then inspect CPython sys.unraisablehook and sys.monitoring teardown state. IronPython uses a managed trace listener and does not expose CPython's refcounted callback lifecycle.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_profiling.test_tracing_profiler.CProfileTest.test_bad_counter_during_dealloc",
+                "test.test_profiling.test_tracing_profiler.CProfileTest.test_enable_in_external_timer",
+                "test.test_profiling.test_tracing_profiler.CProfileTest.test_evil_external_timer",
+                "test.test_profiling.test_tracing_profiler.CProfileTest.test_external_timer_reinitializes_profiler",
+                "test.test_profiling.test_tracing_profiler.CProfileTest.test_external_timer_result_reentry"
+            ]
+        },
+        {
+            "id": "profiling-sampling-remote-debugging",
+            "category": "platform-unavailable",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#17.4",
+            "reason": "The sampling profiler's live and binary collectors depend on CPython's _remote_debugging native C-extension API. The portable formatting, heatmap, and smoke surfaces run without it; native process sampling remains unavailable on the managed runtime.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_profiling.test_sampling_profiler.test_advanced.*",
+                "test.test_profiling.test_sampling_profiler.test_async.*",
+                "test.test_profiling.test_sampling_profiler.test_binary_format.*",
+                "test.test_profiling.test_sampling_profiler.test_blocking.*",
+                "test.test_profiling.test_sampling_profiler.test_children.*",
+                "test.test_profiling.test_sampling_profiler.test_cli.*",
+                "test.test_profiling.test_sampling_profiler.test_collectors.*",
+                "test.test_profiling.test_sampling_profiler.test_integration.*",
+                "test.test_profiling.test_sampling_profiler.test_modes.*",
+                "test.test_profiling.test_sampling_profiler.test_profiler.*",
+                "test.test_profiling.test_sampling_profiler.test_dump.TestStackDumpFormatting.test_format_stack_dump_async_task"
+            ]
+        },
+        {
+            "id": "profiling-child-process-and-cli",
+            "category": "platform-unavailable",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#17.4",
+            "reason": "These profiler and sampling tests launch a child IronPython process through subprocess fork/exec or validate script path setup in that child. fork_exec is not available in this runtime checkpoint; the equivalent in-process profiler, heatmap, and formatter behavior passes.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_profile.ProfileTest.test_output_file_when_changing_directory",
+                "test.test_profile.ProfileTest.test_run_profile_as_module",
+                "test.test_profiling.test_heatmap.TestHeatmapCollectorExport.test_export_index_contains_file_references",
+                "test.test_profiling.test_heatmap.TestHeatmapCollectorSetStats.*",
+                "test.test_profiling.test_sampling_profiler.test_sync_coordinator.*",
+                "test.test_profiling.test_tracing_profiler.CProfileTest.test_output_file_when_changing_directory",
+                "test.test_profiling.test_tracing_profiler.CProfileTest.test_run_profile_as_module",
+                "test.test_profiling.test_tracing_profiler.TestCommandLine.*"
+            ]
+        },
     {
       "id": "interpreter-call-c-api-code-inspection",
       "category": "cpython-c-api",

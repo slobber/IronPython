@@ -655,24 +655,13 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
 
         // setdefaultencoding has been removed in Python 3
 
-#if PROFILE_SUPPORT
-        // not enabled because we don't yet support tracing built-in functions.  Doing so is a little
-        // difficult because it's hard to flip tracing on/off for them w/o a perf overhead in the
-        // non-profiling case.
-        public static void setprofile(CodeContext/*!*/ context, TracebackDelegate o) {
-            PythonContext pyContext = context.LanguageContext;
-            pyContext.EnsureDebugContext();
-
-            if (o == null) {
-                pyContext.UnregisterTracebackHandler();
-            } else {
-                pyContext.RegisterTracebackHandler();
-            }
-
-            // Register the trace func with the listener
-            pyContext.TracebackListener.SetProfile(o);
+        public static void setprofile(CodeContext/*!*/ context, object o) {
+            context.LanguageContext.SetProfile(o);
         }
-#endif
+
+        public static object getprofile(CodeContext/*!*/ context) {
+            return context.LanguageContext.GetProfile();
+        }
 
         public static void settrace(CodeContext/*!*/ context, object o) {
             context.LanguageContext.SetTrace(o);

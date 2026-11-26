@@ -3994,6 +3994,68 @@ namespace IronPython.Runtime {
             }
         }
 
+        internal void SetProfile(object o) {
+            if (o == null && _debugContext == null) {
+                return;
+            }
+
+            EnsureDebugContext();
+
+            var oldListener = _tracebackListeners.Value;
+            var newListener = oldListener;
+            if (o == null) {
+                if (oldListener != null) {
+                    oldListener.SetProfile(null);
+                    if (oldListener.TraceObject == null) {
+                        newListener = null;
+                    }
+                }
+            } else {
+                if (oldListener == null || oldListener.IsDummyListener) {
+                    oldListener = null;
+                    newListener = new PythonTracebackListener(
+                        this,
+                        null,
+                        isDummyListener: false);
+                }
+                newListener.SetProfile(o);
+            }
+            _tracebackListeners.Value = newListener;
+
+            lock (_codeUpdateLock) {
+                var oldEnableTracing = EnableTracing;
+                var oldCounted = oldListener?.IsDummyListener == false;
+                var newCounted = newListener?.IsDummyListener == false;
+
+                if (oldCounted != newCounted) {
+                    Interlocked.Add(
+                        ref _tracebackListenersCount,
+                        newCounted ? 1 : -1);
+                }
+                if (EnableTracing != oldEnableTracing) {
+                    FunctionCode.UpdateAllCode(this);
+                }
+            }
+        }
+
+        internal object GetProfile() {
+            return _debugContext != null
+                ? _tracebackListeners.Value?.ProfileObject
+                : null;
+        }
+
+        internal bool HasActiveProfile
+            => _debugContext != null
+                && _tracebackListeners.Value?.ProfileObject != null;
+
+        internal void DispatchBuiltinProfileEvent(
+            string eventName,
+            object callable) {
+            _tracebackListeners.Value?.DispatchBuiltinProfileEvent(
+                eventName,
+                callable);
+        }
+
         internal object CallTracing(object func, PythonTuple args) {
             // The CPython implementation basically only stores/restores the
             // nesting level and the recursion control (e.g. that the trace handler

@@ -323,7 +323,7 @@
 - [x] 17.1 Add `graphlib` and `zoneinfo`.
 - [x] 17.2 Add `tomllib`.
 - [x] 17.3 Add `compression.zstd`.
-- [ ] 17.4 Add `profiling` and the public sampling profile API.
+- [x] 17.4 Add `profiling` and the public sampling profile API.
 - [x] 17.5 Add `math.integer`.
 - [x] 17.6 Remove `distutils` and other modules absent from CPython 3.15.2.
 - [x] 17.7 Remove PEP 594 modules and `lib2to3`/`2to3`.
