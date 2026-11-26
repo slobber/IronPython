@@ -105,6 +105,10 @@ namespace IronPython.Compiler {
                         result);
                 }
 
+                Exception barryError = TryCreateBarryAsFluflError(source);
+                if (barryError is not null) {
+                    throw barryError;
+                }
                 NotifyGeneratedParserSink(module);
                 if (returnValue) {
                     ((PythonCompilerOptions)_context.Options).CompilationMode =
@@ -155,6 +159,10 @@ namespace IronPython.Compiler {
                 return null;
             }
 
+            Exception barryError = TryCreateBarryAsFluflError(source);
+            if (barryError is not null) {
+                throw barryError;
+            }
             if (missingTrailingNewline
                 && StartsCompoundStatement(source)) {
                 _errorCode = ErrorCodes.IncompleteStatement;
@@ -199,6 +207,10 @@ namespace IronPython.Compiler {
                         tokenizer,
                         result);
                 }
+                Exception barryError = TryCreateBarryAsFluflError(source);
+                if (barryError is not null) {
+                    throw barryError;
+                }
                 NotifyGeneratedParserSink(module);
                 return CreateGeneratedStatementAst(
                     module.Body,
@@ -222,6 +234,10 @@ namespace IronPython.Compiler {
                         parser,
                         tokenizer,
                         result);
+                }
+                Exception barryError = TryCreateBarryAsFluflError(source);
+                if (barryError is not null) {
+                    throw barryError;
                 }
                 NotifyGeneratedParserSink(expression);
                 return new PythonAst(
@@ -365,6 +381,12 @@ namespace IronPython.Compiler {
             string source = _sourceUnit.GetCode() ?? string.Empty;
             int failurePosition = failure?.Position ?? result.Position;
             string message = failure?.Message ?? "invalid syntax";
+
+            Exception rangeError = TryCreateRangeSyntaxError(source);
+            if (rangeError is not null) {
+                return rangeError;
+            }
+
             if (Regex.IsMatch(
                     source,
                     @"(?:def|class|type)\s+\w+\[[^\]]*\*\*\w+\s*:\s*\(")) {
@@ -390,6 +412,177 @@ namespace IronPython.Compiler {
                     tokenizer,
                     failurePosition),
                 ErrorCodes.SyntaxError);
+        }
+
+        private Exception TryCreateRangeSyntaxError(string source) {
+            Match generator = Regex.Match(
+                source,
+                @"(?<gen>[A-Za-z_]\w*\s+for\s+[^,\n]*?\bif\s+[A-Za-z_]\w*)");
+            if (generator.Success) {
+                int start = generator.Groups["gen"].Index;
+                int previous = start - 1;
+                while (previous >= 0 && char.IsWhiteSpace(source[previous])) {
+                    previous--;
+                }
+                if (previous >= 0 && source[previous] == ',') {
+                    return CreateRangeSyntaxError(
+                        source,
+                        "Generator expression must be parenthesized",
+                        start,
+                        generator.Index + generator.Length);
+                }
+            }
+
+            string[] lines = source.Split('\n');
+            bool sawExcept = false;
+            bool sawExceptStar = false;
+            int tryIndent = -1;
+            int offset = 0;
+            foreach (string line in lines) {
+                string trimmed = line.TrimStart();
+                int indent = line.Length - trimmed.Length;
+                if (trimmed.StartsWith("try", StringComparison.Ordinal)
+                    && (trimmed.Length == 3
+                        || char.IsWhiteSpace(trimmed[3])
+                        || trimmed[3] == ':')) {
+                    tryIndent = indent;
+                    sawExcept = false;
+                    sawExceptStar = false;
+                    offset += line.Length + 1;
+                    continue;
+                }
+                if (tryIndent < 0) {
+                    offset += line.Length + 1;
+                    continue;
+                }
+                bool exceptStar = trimmed.StartsWith(
+                    "except*",
+                    StringComparison.Ordinal);
+                if (exceptStar
+                    && sawExcept) {
+                    return CreateRangeSyntaxError(
+                        source,
+                        "cannot have both 'except' and 'except*' on the same 'try'",
+                        offset + line.Length - trimmed.Length,
+                        offset + line.Length - trimmed.Length + 7);
+                }
+                if (!exceptStar
+                    && trimmed.StartsWith("except", StringComparison.Ordinal)
+                    && sawExceptStar) {
+                    return CreateRangeSyntaxError(
+                        source,
+                        "cannot have both 'except' and 'except*' on the same 'try'",
+                        offset + line.Length - trimmed.Length,
+                        offset + line.Length - trimmed.Length + 6);
+                }
+                sawExceptStar |= exceptStar;
+                sawExcept |= !exceptStar
+                    && trimmed.StartsWith("except", StringComparison.Ordinal);
+                if (!exceptStar
+                    && !trimmed.StartsWith("except", StringComparison.Ordinal)
+                    && !trimmed.StartsWith("finally", StringComparison.Ordinal)
+                    && trimmed.Length != 0
+                    && indent <= tryIndent) {
+                    tryIndent = -1;
+                    sawExcept = false;
+                    sawExceptStar = false;
+                }
+                offset += line.Length + 1;
+            }
+
+            Match exceptTarget = Regex.Match(
+                source,
+                @"\bexcept\b[^\n]*\bas\s+(?<target>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)");
+            if (exceptTarget.Success) {
+                Group target = exceptTarget.Groups["target"];
+                return CreateRangeSyntaxError(
+                    source,
+                    "cannot use except statement with attribute",
+                    target.Index,
+                    target.Index + target.Length);
+            }
+
+            Match patternTarget = Regex.Match(
+                source,
+                @"\bcase\b[^\n]*\bas\s+(?<target>[A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)");
+            if (patternTarget.Success) {
+                Group target = patternTarget.Groups["target"];
+                return CreateRangeSyntaxError(
+                    source,
+                    "cannot use attribute as pattern target",
+                    target.Index,
+                    target.Index + target.Length);
+            }
+
+            int diamond = source.IndexOf("<>", StringComparison.Ordinal);
+            if (diamond >= 0) {
+                return CreateRangeSyntaxError(
+                    source,
+                    "Maybe you meant '!=' instead of '<>'?",
+                    diamond,
+                    diamond + 2);
+            }
+
+            Exception barryError = TryCreateBarryAsFluflError(source);
+            if (barryError is not null) {
+                return barryError;
+            }
+
+            return null;
+        }
+
+        private Exception TryCreateBarryAsFluflError(string source) {
+            Match futureBarry = Regex.Match(
+                source,
+                @"(?m)^[ \t]*from[ \t]+__future__[ \t]+import[ \t]+[^\n]*\bbarry_as_FLUFL\b");
+            if (!futureBarry.Success) {
+                return null;
+            }
+            int notEqual = source.IndexOf(
+                "!=",
+                futureBarry.Index + futureBarry.Length,
+                StringComparison.Ordinal);
+            if (notEqual < 0) {
+                return null;
+            }
+            return CreateRangeSyntaxError(
+                source,
+                "with Barry as BDFL, use '<>' instead of '!='",
+                notEqual,
+                notEqual + 2);
+        }
+
+        private Exception CreateRangeSyntaxError(
+            string source,
+            string message,
+            int start,
+            int end) {
+            start = Math.Clamp(start, 0, source.Length);
+            end = Math.Clamp(end, start, source.Length);
+            SourceLocation startLocation = GetSourceLocation(source, start);
+            SourceLocation endLocation = GetSourceLocation(source, end);
+            return PythonOps.SyntaxError(
+                message,
+                _sourceUnit,
+                new SourceSpan(startLocation, endLocation),
+                ErrorCodes.SyntaxError);
+        }
+
+        private static SourceLocation GetSourceLocation(
+            string source,
+            int offset) {
+            int line = 1;
+            int lineStart = 0;
+            for (int i = 0; i < offset; i++) {
+                if (source[i] == '\n') {
+                    line++;
+                    lineStart = i + 1;
+                }
+            }
+            return new SourceLocation(
+                offset,
+                line,
+                offset - lineStart + 1);
         }
 
         private static SourceSpan GetGeneratedParserFailureSpan(

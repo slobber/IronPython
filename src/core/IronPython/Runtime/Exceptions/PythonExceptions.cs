@@ -1106,6 +1106,10 @@ for k, v in toError.items():
             se.filename = fileName;
             se.lineno = e.Line;
             se.offset = column;
+            if (e.RawSpan.IsValid) {
+                se.end_lineno = e.RawSpan.End.Line;
+                se.end_offset = e.RawSpan.End.Column;
+            }
             se.text = sourceLine;
             se.msg = e.Message;
 

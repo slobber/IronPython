@@ -268,7 +268,7 @@
 - [x] 15.16 Implement structural pattern matching.
 - [x] 15.17 Implement parenthesized context managers.
 - [x] 15.18 Implement `zip(strict=True)`.
-- [ ] 15.19 Implement precise expression error ranges.
+- [x] 15.19 Implement precise expression error ranges.
 - [x] 15.20 Implement exception notes.
 - [x] 15.21 Implement starred unpacking in `for`.
 - [ ] 15.22 Implement Python-level buffer protocol.
