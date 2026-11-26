@@ -199,17 +199,6 @@
             ]
         },
         {
-            "id": "frame-subprocess-isolation",
-            "category": "platform-unavailable",
-            "owner": "slobber",
-            "linkedIssue": "openspec:python-315-support#16.13",
-            "reason": "This frame teardown probe launches a fresh interpreter process and is blocked by the currently unavailable fork_exec implementation. In-process frame teardown and clearing are covered by the remaining test_frame cases.",
-            "reviewDate": "2026-12-31",
-            "tests": [
-                "test.test_frame.TestIncompleteFrameAreInvisible.test_issue95818"
-            ]
-        },
-        {
             "id": "stdlib-315-uuid-enum-introspection",
             "category": "cpython-internal",
             "owner": "slobber",
@@ -230,17 +219,6 @@
             "tests": [
                 "test.test_argparse.TestLazyImports.*",
                 "test.test_argparse.TestProgName.test_*"
-            ]
-        },
-        {
-            "id": "stdlib-315-ensurepip-process-install",
-            "category": "platform-unavailable",
-            "owner": "slobber",
-            "linkedIssue": "openspec:python-315-support#17.13",
-            "reason": "The ensurepip unit suite and version/metadata checks pass. A real bootstrap delegates installation to a child interpreter through subprocess, which is blocked by the currently unavailable fork_exec implementation.",
-            "reviewDate": "2026-12-31",
-            "tests": [
-                "test.test_ensurepip.RealInstallation.*"
             ]
         },
         {
