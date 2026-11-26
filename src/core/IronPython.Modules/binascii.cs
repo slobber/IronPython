@@ -6,7 +6,9 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Numerics;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -30,11 +32,33 @@ namespace IronPython.Modules {
         public static readonly Bytes URLSAFE_BASE64_ALPHABET = Bytes.Make(
             Encoding.ASCII.GetBytes(
                 "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"));
+        public static readonly Bytes UU_ALPHABET = Bytes.Make(Enumerable.Range(32, 64).Select(value => (byte)value).ToArray());
+        public static readonly Bytes CRYPT_ALPHABET = Bytes.Make(Encoding.ASCII.GetBytes(
+            "./0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"));
+        public static readonly Bytes BINHEX_ALPHABET = Bytes.Make(Encoding.ASCII.GetBytes(
+            "!\"#$%&'()*+,-012345689@ABCDEFGHIJKLMNPQRSTUVXYZ[`abcdefhijklmpqr"));
+        public static readonly Bytes BASE85_ALPHABET = Bytes.Make(Encoding.ASCII.GetBytes(
+            "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~"));
+        public static readonly Bytes ASCII85_ALPHABET = Bytes.Make(Enumerable.Range(33, 85).Select(value => (byte)value).ToArray());
+        public static readonly Bytes Z85_ALPHABET = Bytes.Make(Encoding.ASCII.GetBytes(
+            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#"));
+        public static readonly Bytes BASE32_ALPHABET = Bytes.Make(Encoding.ASCII.GetBytes(
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"));
+        public static readonly Bytes BASE32HEX_ALPHABET = Bytes.Make(Encoding.ASCII.GetBytes(
+            "0123456789ABCDEFGHIJKLMNOPQRSTUV"));
 
         private static readonly object _ErrorKey = new object();
         private static readonly object _IncompleteKey = new object();
 
         private static Exception Error(CodeContext/*!*/ context, params object[] args) {
+            if (args.Length > 1 && args[0] is string format) {
+                args = new object[] {
+                    string.Format(
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        format,
+                        args.Skip(1).ToArray())
+                };
+            }
             return PythonExceptions.CreateThrowable((PythonType)context.LanguageContext.GetModuleState(_ErrorKey), args);
         }
         private static Exception Incomplete(CodeContext/*!*/ context, params object[] args) {
@@ -57,56 +81,103 @@ namespace IronPython.Modules {
             return a2b_uu_impl(context, buffer.AsReadOnlySpan());
 
             static Bytes a2b_uu_impl(CodeContext/*!*/ context, ReadOnlySpan<byte> data) {
-                if (data.Length < 1) return Bytes.Make(new byte[32]);
-
-                int lenDec = (data[0] + 32) % 64; // decoded length in bytes
-                int lenEnc = (lenDec * 4 + 2) / 3; // encoded length in 6-bit chunks
-                ReadOnlySpan<byte> suffix = null;
-                if (data.Length - 1 > lenEnc) {
-                    suffix = data.Slice(1 + lenEnc);
-                    data = data.Slice(1, lenEnc);
-                } else {
-                    data = data.Slice(1);
+                if (data.Length == 0) {
+                    throw Error(context, "Missing length byte");
                 }
 
-                using MemoryStream res = DecodeWorker(context, data, true, UuDecFunc);
-                if (suffix.IsEmpty) {
-                    var pad = new byte[lenDec - res.Length];
-                    res.Write(pad, 0, pad.Length);
-                } else {
-                    ProcessSuffix(context, suffix, UuDecFunc);
+                int outputLength = (data[0] - 32) & 0x3f;
+                var output = new List<byte>(outputLength);
+                uint leftChar = 0;
+                int leftBits = 0;
+                int index = 1;
+                while (output.Count < outputLength) {
+                    byte current = index < data.Length ? data[index] : (byte)0;
+                    if (current == (byte)'\n'
+                        || current == (byte)'\r'
+                        || index >= data.Length) {
+                        current = 0;
+                    } else if (current < 32 || current > 96) {
+                        throw Error(context, "Illegal char");
+                    } else {
+                        current = (byte)((current - 32) & 0x3f);
+                    }
+
+                    leftChar = (leftChar << 6) | current;
+                    leftBits += 6;
+                    if (leftBits >= 8) {
+                        leftBits -= 8;
+                        output.Add((byte)(leftChar >> leftBits));
+                        leftChar &= (1u << leftBits) - 1;
+                    }
+                    index++;
                 }
 
-                return Bytes.Make(res.ToArray());
-
-                static int UuDecFunc(byte val) {
-                    if (val > 32 && val < 96) return val - 32;
-                    switch (val) {
-                        case (byte)'\n':
-                        case (byte)'\r':
-                        case 32:
-                        case 96:
-                            return EmptyByte;
-                        default:
-                            return InvalidByte;
+                for (; index < data.Length; index++) {
+                    byte current = data[index];
+                    if (current != 32
+                        && current != 96
+                        && current != (byte)'\n'
+                        && current != (byte)'\r') {
+                        throw Error(context, "Trailing garbage");
                     }
                 }
+                return Bytes.Make(output.ToArray());
             }
         }
 
         public static Bytes a2b_uu(CodeContext/*!*/ context, [NotNone] string data)
-            => a2b_uu(context, data.ToBytes());
+            => a2b_uu(context, AsciiBytes(data));
 
-        public static Bytes b2a_uu(CodeContext/*!*/ context, [NotNone] IBufferProtocol data) {
+        public static Bytes b2a_uu(
+            CodeContext/*!*/ context,
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
+            bool backtick = false;
+            foreach (KeyValuePair<object, object> item in kwargs) {
+                switch (item.Key) {
+                    case "backtick":
+                        backtick = PythonOps.IsTrue(item.Value);
+                        break;
+                    default:
+                        throw PythonOps.TypeError(
+                            "b2a_uu() got an unexpected keyword argument '{0}'",
+                            item.Key);
+                }
+            }
+
             using var buffer = data.GetBuffer();
-            return b2a_uu_impl(context, buffer.AsReadOnlySpan());
+            return b2a_uu_impl(context, buffer.AsReadOnlySpan(), backtick);
 
-            static Bytes b2a_uu_impl(CodeContext/*!*/ context, ReadOnlySpan<byte> data) {
+            static Bytes b2a_uu_impl(CodeContext/*!*/ context, ReadOnlySpan<byte> data, bool backtick) {
                 if (data.Length > 45) throw Error(context, "At most 45 bytes at once");
 
                 using var res = new MemoryStream();
-                res.WriteByte((byte)(32 + data.Length));
-                res.EncodeData(data, (byte)' ', (int val) => (byte)(32 + val % 64));
+                res.WriteByte((byte)(
+                    backtick && data.Length == 0
+                        ? '`'
+                        : 32 + data.Length));
+
+                int leftBits = 0;
+                uint leftChar = 0;
+                int offset = 0;
+                int remaining = data.Length;
+                while (remaining > 0 || leftBits != 0) {
+                    if (remaining > 0) {
+                        leftChar = (leftChar << 8) | data[offset++];
+                        remaining--;
+                    } else {
+                        leftChar <<= 8;
+                    }
+                    leftBits += 8;
+                    while (leftBits >= 6) {
+                        int digit = (int)((leftChar >> (leftBits - 6)) & 0x3f);
+                        leftBits -= 6;
+                        res.WriteByte((byte)(
+                            backtick && digit == 0
+                                ? '`'
+                                : 32 + digit));
+                    }
+                }
                 res.WriteByte((byte)'\n');
                 return Bytes.Make(res.ToArray());
             }
@@ -116,39 +187,42 @@ namespace IronPython.Modules {
 
         #region base64
 
-        public static Bytes a2b_base64(CodeContext/*!*/ context, [NotNone] IBufferProtocol data) {
+        public static Bytes a2b_base64(
+            CodeContext/*!*/ context,
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
             using var buffer = data.GetBufferNoThrow();
             if (buffer is null) {
                 throw PythonOps.TypeError($"argument should be bytes, buffer or ASCII string, not '{PythonOps.GetPythonTypeName(data)}'");
             }
-            return a2b_base64_impl(context, buffer.AsReadOnlySpan());
-
-            static Bytes a2b_base64_impl(CodeContext/*!*/ context, ReadOnlySpan<byte> data) {
-                data = RemovePrefix(context, data, Base64DecFunc);
-                if (data.Length == 0) return Bytes.Empty;
-                using MemoryStream res = DecodeWorker(context, data, false, Base64DecFunc);
-                return Bytes.Make(res.ToArray());
-
-                static int Base64DecFunc(byte val) {
-                    if (val >= 'A' && val <= 'Z') return val - 'A';
-                    if (val >= 'a' && val <= 'z') return val - 'a' + 26;
-                    if (val >= '0' && val <= '9') return val - '0' + 52;
-                    switch (val) {
-                        case (byte)'+':
-                            return 62;
-                        case (byte)'/':
-                            return 63;
-                        case (byte)'=':
-                            return PadByte;
-                        default:
-                            return IgnoreByte;
-                    }
-                }
-            }
+            bool strictMode = false;
+            bool strictModeSpecified = false;
+            bool padded = true;
+            bool canonical = false;
+            Bytes alphabet = BASE64_ALPHABET;
+            Bytes? ignoreChars = null;
+            ParseOptions(
+                kwargs,
+                "a2b_base64",
+                ("strict_mode", value => {
+                    strictMode = PythonOps.IsTrue(value);
+                    strictModeSpecified = true;
+                }),
+                ("padded", value => padded = PythonOps.IsTrue(value)),
+                ("canonical", value => canonical = PythonOps.IsTrue(value)),
+                ("alphabet", value => alphabet = RequireBytesOption(value, "alphabet", 64)),
+                ("ignorechars", value => ignoreChars = OptionalBytes(value, "ignorechars")));
+            bool strict = strictModeSpecified
+                ? strictMode
+                : ignoreChars is not null;
+            return DecodeBase64(context, buffer.AsReadOnlySpan(), strict, padded, alphabet, ignoreChars, canonical);
         }
 
-        public static Bytes a2b_base64(CodeContext/*!*/ context, [NotNone] string data)
-            => a2b_base64(context, data.ToBytes());
+        public static Bytes a2b_base64(
+            CodeContext/*!*/ context,
+            [NotNone] string data,
+            [ParamDictionary] IDictionary<object, object> kwargs)
+            => a2b_base64(context, AsciiBytes(data), kwargs);
 
         public static Bytes b2a_base64(
             [NotNone] IBufferProtocol data,
@@ -160,10 +234,10 @@ namespace IronPython.Modules {
             foreach (KeyValuePair<object, object> item in kwargs) {
                 switch (item.Key) {
                     case "newline":
-                        newline = Converter.ConvertToBoolean(item.Value);
+                        newline = PythonOps.IsTrue(item.Value);
                         break;
                     case "padded":
-                        padded = Converter.ConvertToBoolean(item.Value);
+                        padded = PythonOps.IsTrue(item.Value);
                         break;
                     case "wrapcol":
                         wrapcol = ConvertWrapColumn(item.Value);
@@ -274,6 +348,223 @@ namespace IronPython.Modules {
             return buffer.AsUnsafeArray() ?? buffer.ToArray();
         }
 
+        private static Bytes DecodeBase64(
+            CodeContext context,
+            ReadOnlySpan<byte> data,
+            bool strictMode,
+            bool padded,
+            Bytes alphabet,
+            Bytes? ignoreChars,
+            bool canonical) {
+            int[] decode = BuildDecodeTable(alphabet, 64);
+            bool[] ignore = BuildIgnoreTable(ignoreChars);
+            var output = new List<byte>(data.Length * 3 / 4 + 3);
+            int quadPosition = 0;
+            int leftChar = 0;
+            int pads = 0;
+
+            for (int index = 0; index < data.Length; index++) {
+                byte current = data[index];
+                if (padded && current == (byte)'=') {
+                    pads++;
+                    if (quadPosition >= 2 && quadPosition + pads <= 4) {
+                        continue;
+                    }
+                    if (!strictMode || ignore[(byte)'=']) {
+                        continue;
+                    }
+                    if (quadPosition == 1) {
+                        break;
+                    }
+                    throw Error(
+                        context,
+                        quadPosition == 0 && output.Count == 0
+                            ? "Leading padding not allowed"
+                            : "Excess padding not allowed");
+                }
+
+                int value = decode[current];
+                if (value < 0 || value >= 64) {
+                    if (strictMode && !ignore[current]) {
+                        throw Error(
+                            context,
+                            current == (byte)'='
+                                ? "Padding not allowed"
+                                : "Only base64 data is allowed");
+                    }
+                    continue;
+                }
+
+                if (pads != 0 && strictMode && !ignore[(byte)'=']) {
+                    throw Error(
+                        context,
+                        quadPosition + pads == 4
+                            ? "Excess data after padding"
+                            : "Discontinuous padding not allowed");
+                }
+                pads = 0;
+
+                switch (quadPosition) {
+                    case 0:
+                        quadPosition = 1;
+                        leftChar = value;
+                        break;
+                    case 1:
+                        quadPosition = 2;
+                        output.Add((byte)((leftChar << 2) | (value >> 4)));
+                        leftChar = value & 0x0f;
+                        break;
+                    case 2:
+                        quadPosition = 3;
+                        output.Add((byte)((leftChar << 4) | (value >> 2)));
+                        leftChar = value & 0x03;
+                        break;
+                    default:
+                        quadPosition = 0;
+                        output.Add((byte)((leftChar << 6) | value));
+                        leftChar = 0;
+                        break;
+                }
+            }
+
+            if (quadPosition == 1) {
+                throw Error(
+                    context,
+                    "Invalid base64-encoded string: number of data characters ({0}) cannot be 1 more than a multiple of 4",
+                    output.Count / 3 * 4 + 1);
+            }
+            if (padded && quadPosition != 0 && quadPosition + pads < 4) {
+                throw Error(context, "Incorrect padding");
+            }
+            if (canonical && leftChar != 0) {
+                throw Error(context, "Non-zero padding bits");
+            }
+            return Bytes.Make(output.ToArray());
+        }
+
+        public static Bytes a2b_ascii85(
+            CodeContext context,
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
+            bool foldspaces = false;
+            bool adobe = false;
+            bool canonical = false;
+            Bytes? ignoreChars = null;
+            ParseOptions(
+                kwargs,
+                "a2b_ascii85",
+                ("foldspaces", value => foldspaces = PythonOps.IsTrue(value)),
+                ("adobe", value => adobe = PythonOps.IsTrue(value)),
+                ("canonical", value => canonical = PythonOps.IsTrue(value)),
+                ("ignorechars", value => ignoreChars = OptionalBytes(value, "ignorechars")));
+            return DecodeAscii85(
+                context,
+                GetBytes(data),
+                foldspaces,
+                adobe,
+                ignoreChars,
+                canonical);
+        }
+
+        public static Bytes a2b_ascii85(
+            CodeContext context,
+            [NotNone] string data,
+            [ParamDictionary] IDictionary<object, object> kwargs)
+            => a2b_ascii85(context, AsciiBytes(data), kwargs);
+
+        public static Bytes b2a_ascii85(
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
+            bool foldspaces = false;
+            bool adobe = false;
+            bool pad = false;
+            int wrapcol = 0;
+            ParseOptions(
+                kwargs,
+                "b2a_ascii85",
+                ("foldspaces", value => foldspaces = PythonOps.IsTrue(value)),
+                ("adobe", value => adobe = PythonOps.IsTrue(value)),
+                ("pad", value => pad = PythonOps.IsTrue(value)),
+                ("wrapcol", value => wrapcol = ConvertWrapColumn(value)));
+            return EncodeAscii85(GetBytes(data), foldspaces, adobe, pad, wrapcol);
+        }
+
+        public static Bytes a2b_base85(
+            CodeContext context,
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
+            Bytes alphabet = BASE85_ALPHABET;
+            Bytes? ignoreChars = null;
+            bool canonical = false;
+            ParseOptions(
+                kwargs,
+                "a2b_base85",
+                ("alphabet", value => alphabet = RequireBufferAlphabet(value, "alphabet", 85)),
+                ("ignorechars", value => ignoreChars = OptionalBytes(value, "ignorechars")),
+                ("canonical", value => canonical = PythonOps.IsTrue(value)));
+            return DecodeBase85(context, GetBytes(data), alphabet, ignoreChars, canonical);
+        }
+
+        public static Bytes a2b_base85(
+            CodeContext context,
+            [NotNone] string data,
+            [ParamDictionary] IDictionary<object, object> kwargs)
+            => a2b_base85(context, AsciiBytes(data), kwargs);
+
+        public static Bytes b2a_base85(
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
+            bool pad = false;
+            int wrapcol = 0;
+            Bytes alphabet = BASE85_ALPHABET;
+            ParseOptions(
+                kwargs,
+                "b2a_base85",
+                ("pad", value => pad = PythonOps.IsTrue(value)),
+                ("wrapcol", value => wrapcol = ConvertWrapColumn(value)),
+                ("alphabet", value => alphabet = RequireBufferAlphabet(value, "alphabet", 85)));
+            return EncodeBase85(GetBytes(data), alphabet, pad, wrapcol);
+        }
+
+        public static Bytes a2b_base32(
+            CodeContext context,
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
+            bool padded = true;
+            bool canonical = false;
+            Bytes alphabet = BASE32_ALPHABET;
+            Bytes? ignoreChars = null;
+            ParseOptions(
+                kwargs,
+                "a2b_base32",
+                ("padded", value => padded = PythonOps.IsTrue(value)),
+                ("canonical", value => canonical = PythonOps.IsTrue(value)),
+                ("alphabet", value => alphabet = RequireBytesOption(value, "alphabet", 32)),
+                ("ignorechars", value => ignoreChars = OptionalBytes(value, "ignorechars")));
+            return DecodeBase32(context, GetBytes(data), padded, alphabet, ignoreChars, canonical);
+        }
+
+        public static Bytes a2b_base32(
+            CodeContext context,
+            [NotNone] string data,
+            [ParamDictionary] IDictionary<object, object> kwargs)
+            => a2b_base32(context, AsciiBytes(data), kwargs);
+
+        public static Bytes b2a_base32(
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
+            bool padded = true;
+            int wrapcol = 0;
+            Bytes alphabet = BASE32_ALPHABET;
+            ParseOptions(
+                kwargs,
+                "b2a_base32",
+                ("padded", value => padded = PythonOps.IsTrue(value)),
+                ("wrapcol", value => wrapcol = ConvertWrapColumn(value)),
+                ("alphabet", value => alphabet = RequireBufferAlphabet(value, "alphabet", 32)));
+            return EncodeBase32(GetBytes(data), padded, alphabet, wrapcol);
+        }
+
         #endregion
 
         #region qp
@@ -330,7 +621,7 @@ namespace IronPython.Modules {
         }
 
         public static Bytes a2b_qp([NotNone] string data, bool header = false)
-            => a2b_qp(data.ToBytes(), header);
+            => a2b_qp(AsciiBytes(data), header);
 
         [Documentation(@"b2a_qp(data, quotetabs=False, istext=True, header=False) -> s;
  Encode a string using quoted-printable encoding.
@@ -521,18 +812,55 @@ both encoded.  When quotetabs is set, space and tabs are encoded.")]
 
         #region hex
 
-        public static Bytes b2a_hex([NotNone] IBufferProtocol data) {
+        public static Bytes b2a_hex(
+            [NotNone] IBufferProtocol data,
+            [AllowNull] object sep = null,
+            int bytes_per_sep = 1) {
             using var buffer = data.GetBuffer();
-            return b2a_hex_impl(buffer.AsReadOnlySpan());
+            byte[] encoded = b2a_hex_impl(buffer.AsReadOnlySpan());
+            if (sep is null) return Bytes.Make(encoded);
+            byte[] separator;
+            if (sep is string text) {
+                if (text.Length != 1 || text[0] > 0xff) {
+                    throw PythonOps.ValueError("sep must be length 1");
+                }
+                separator = new[] { (byte)text[0] };
+            } else if (sep is IBufferProtocol separatorValue) {
+                separator = GetBytes(separatorValue);
+            } else {
+                throw PythonOps.TypeError("sep must be str or bytes-like");
+            }
+            if (separator.Length != 1) {
+                throw PythonOps.ValueError("sep must be length 1");
+            }
+            if (bytes_per_sep == 0) {
+                throw PythonOps.ValueError("bytes_per_sep must not be zero");
+            }
 
-            static Bytes b2a_hex_impl(ReadOnlySpan<byte> data) {
+            int byteCount = buffer.NumBytes();
+            bool fromRight = bytes_per_sep < 0;
+            using var output = new MemoryStream(encoded.Length + byteCount / Math.Abs(bytes_per_sep));
+            for (int index = 0; index < encoded.Length; index += 2) {
+                int bytesBefore = index / 2;
+                if (bytesBefore != 0) {
+                    int distance = fromRight ? byteCount - bytesBefore : bytesBefore;
+                    if (distance % Math.Abs(bytes_per_sep) == 0) {
+                        output.WriteByte(separator[0]);
+                    }
+                }
+                output.WriteByte(encoded[index]);
+                output.WriteByte(encoded[index + 1]);
+            }
+            return Bytes.Make(output.ToArray());
+
+            static byte[] b2a_hex_impl(ReadOnlySpan<byte> data) {
                 byte[] res = new byte[data.Length * 2];
                 for (var i = 0; i < data.Length; i++) {
                     var b = data[i];
                     res[2 * i] = ToAscii(b >> 4);
                     res[2 * i + 1] = ToAscii(b & 0xf);
                 }
-                return Bytes.Make(res);
+                return res;
 
                 static byte ToAscii(int b) {
                     return (byte)(b < 10 ? '0' + b : 'a' + (b - 10));
@@ -540,15 +868,32 @@ both encoded.  When quotetabs is set, space and tabs are encoded.")]
             }
         }
 
-        public static Bytes hexlify([NotNone] IBufferProtocol data)
-            => b2a_hex(data);
+        public static Bytes hexlify(
+            [NotNone] IBufferProtocol data,
+            [AllowNull] object sep = null,
+            int bytes_per_sep = 1)
+            => b2a_hex(data, sep, bytes_per_sep);
 
-        public static Bytes a2b_hex(CodeContext/*!*/ context, [NotNone] IBufferProtocol data) {
+        public static Bytes a2b_hex(
+            CodeContext/*!*/ context,
+            [NotNone] IBufferProtocol data,
+            [ParamDictionary] IDictionary<object, object> kwargs) {
             using var buffer = data.GetBufferNoThrow();
             if (buffer is null) {
                 throw PythonOps.TypeError($"argument should be bytes, buffer or ASCII string, not '{PythonOps.GetPythonTypeName(data)}'");
             }
-            return a2b_hex_impl(context, buffer.AsReadOnlySpan());
+            Bytes? ignoreChars = null;
+            ParseOptions(
+                kwargs,
+                "a2b_hex",
+                ("ignorechars", value => ignoreChars = OptionalBytes(value, "ignorechars")));
+            bool[] ignore = BuildIgnoreTable(ignoreChars);
+            byte[] filtered = ignoreChars is null
+                ? buffer.AsReadOnlySpan().ToArray()
+                : buffer.AsReadOnlySpan().ToArray()
+                    .Where(value => !ignore[value] || IsHexDigit(value))
+                    .ToArray();
+            return a2b_hex_impl(context, filtered);
 
             static Bytes a2b_hex_impl(CodeContext/*!*/ context, ReadOnlySpan<byte> data) {
                 if ((data.Length & 0x01) != 0) throw Error(context, "Odd-length string");
@@ -570,18 +915,546 @@ both encoded.  When quotetabs is set, space and tabs are encoded.")]
             }
         }
 
-        public static Bytes a2b_hex(CodeContext/*!*/ context, [NotNone] string data)
-            => a2b_hex(context, data.ToBytes());
+        private static bool IsHexDigit(byte value) {
+            return (value >= (byte)'0' && value <= (byte)'9')
+                || (value >= (byte)'A' && value <= (byte)'F')
+                || (value >= (byte)'a' && value <= (byte)'f');
+        }
 
-        public static Bytes unhexlify(CodeContext/*!*/ context, [NotNone] IBufferProtocol hexstr)
-            => a2b_hex(context, hexstr);
+        public static Bytes a2b_hex(
+            CodeContext/*!*/ context,
+            [NotNone] string data,
+            [ParamDictionary] IDictionary<object, object> kwargs)
+            => a2b_hex(context, AsciiBytes(data), kwargs);
 
-        public static Bytes unhexlify(CodeContext/*!*/ context, [NotNone] string hexstr)
-            => a2b_hex(context, hexstr);
+        public static Bytes unhexlify(
+            CodeContext/*!*/ context,
+            [NotNone] IBufferProtocol hexstr,
+            [ParamDictionary] IDictionary<object, object> kwargs)
+            => a2b_hex(context, hexstr, kwargs);
+
+        public static Bytes unhexlify(
+            CodeContext/*!*/ context,
+            [NotNone] string hexstr,
+            [ParamDictionary] IDictionary<object, object> kwargs)
+            => a2b_hex(context, hexstr, kwargs);
 
         #endregion
 
         #region Private implementation
+
+        private static void ParseOptions(
+            IDictionary<object, object> kwargs,
+            string functionName,
+            params (string Name, Action<object> Apply)[] options) {
+            foreach (KeyValuePair<object, object> item in kwargs) {
+                bool handled = false;
+                foreach ((string name, Action<object> apply) in options) {
+                    if (string.Equals(item.Key as string, name, StringComparison.Ordinal)) {
+                        apply(item.Value);
+                        handled = true;
+                        break;
+                    }
+                }
+                if (!handled) {
+                    throw PythonOps.TypeError(
+                        "{0}() got an unexpected keyword argument '{1}'",
+                        functionName,
+                        item.Key);
+                }
+            }
+        }
+
+        private static Bytes RequireBytesOption(object value, string name, int length) {
+            if (value is not Bytes bytes) {
+                throw PythonOps.TypeError("{0} must be bytes-like", name);
+            }
+            if (bytes.Count != length) {
+                throw PythonOps.ValueError(
+                    "{0} must have length {1}",
+                    name,
+                    length);
+            }
+            return bytes;
+        }
+
+        private static Bytes RequireBufferAlphabet(object value, string name, int length) {
+            if (value is string || value is not IBufferProtocol bufferValue) {
+                throw PythonOps.TypeError("{0} must be bytes-like", name);
+            }
+            Bytes bytes = Bytes.Make(GetBytes(bufferValue));
+            if (bytes.Count != length) {
+                throw PythonOps.ValueError(
+                    "{0} must have length {1}",
+                    name,
+                    length);
+            }
+            return bytes;
+        }
+
+        private static Bytes AsciiBytes(string value) {
+            foreach (char character in value) {
+                if (character > 0x7f) {
+                    throw PythonOps.ValueError(
+                        "string argument should contain only ASCII characters");
+                }
+            }
+            return Bytes.Make(Encoding.ASCII.GetBytes(value));
+        }
+
+        private static Bytes? OptionalBytes(object value, string name) {
+            if (value is string || value is not IBufferProtocol bufferValue) {
+                throw PythonOps.TypeError("{0} must be bytes-like", name);
+            }
+            using var buffer = bufferValue.GetBufferNoThrow();
+            if (buffer is null) {
+                throw PythonOps.TypeError("{0} must be bytes-like", name);
+            }
+            return Bytes.Make(buffer.AsReadOnlySpan().ToArray());
+        }
+
+        private static int[] BuildDecodeTable(Bytes alphabet, int pad = -1) {
+            var table = new int[256];
+            Array.Fill(table, -1);
+            for (int index = 0; index < alphabet.Count; index++) {
+                table[alphabet[index]] = index;
+            }
+            if (pad >= 0) {
+                table[(byte)'='] = pad;
+            }
+            return table;
+        }
+
+        private static bool[] BuildIgnoreTable(Bytes? ignoreChars) {
+            var result = new bool[256];
+            if (ignoreChars is null) return result;
+            foreach (byte value in ignoreChars) {
+                result[value] = true;
+            }
+            return result;
+        }
+
+        private static Bytes DecodeBase85(
+            CodeContext context,
+            byte[] data,
+            Bytes alphabet,
+            Bytes? ignoreChars,
+            bool canonical) {
+            int[] table = BuildDecodeTable(alphabet);
+            bool[] ignore = BuildIgnoreTable(ignoreChars);
+            var output = new List<byte>(data.Length * 4 / 5);
+            uint left = 0;
+            int groupPosition = 0;
+            int inputGroupPosition = 0;
+            int index = 0;
+            int remaining = data.Length;
+            while (remaining > 0 || groupPosition != 0) {
+                byte current = remaining > 0 ? data[index] : (byte)0;
+                int digit = remaining > 0 ? table[current] : 84;
+                if (digit >= 0 && digit < 85) {
+                    if (groupPosition == 4
+                        && (left > uint.MaxValue / 85
+                            || left * 85 > uint.MaxValue - (uint)digit)) {
+                        throw Error(context, "Base85 overflow in hunk starting at byte {0}", index / 5 * 5);
+                    }
+                    left = left * 85 + (uint)digit;
+                    groupPosition++;
+                    if (remaining > 0) inputGroupPosition++;
+                } else if (remaining > 0 && !ignore[current]) {
+                    throw Error(context, "bad Base85 character at position {0}", index);
+                }
+                if (groupPosition != 5) {
+                    if (remaining > 0) remaining--;
+                    index++;
+                    continue;
+                }
+
+                int chunkLength = inputGroupPosition == 5 ? 4 : inputGroupPosition - 1;
+                if (chunkLength <= 0) {
+                    throw Error(context, "Incomplete Base85 group");
+                }
+                for (int byteIndex = 0; byteIndex < chunkLength; byteIndex++) {
+                    output.Add((byte)(left >> (24 - byteIndex * 8)));
+                }
+                if (canonical && chunkLength < 4) {
+                    int padBytes = 4 - chunkLength;
+                    uint canonicalTop = (left >> (padBytes * 8)) << (padBytes * 8);
+                    uint divisor = Pow85[padBytes];
+                    if (canonicalTop / divisor != left / divisor) {
+                        throw Error(context, "Non-zero padding bits");
+                    }
+                }
+                groupPosition = 0;
+                inputGroupPosition = 0;
+                left = 0;
+                if (remaining > 0) remaining--;
+                index++;
+            }
+            return Bytes.Make(output.ToArray());
+        }
+
+        private static Bytes DecodeAscii85(
+            CodeContext context,
+            byte[] data,
+            bool foldspaces,
+            bool adobe,
+            Bytes? ignoreChars,
+            bool canonical) {
+            int start = 0;
+            int end = data.Length;
+            if (adobe) {
+                if (end < 2 || data[end - 2] != (byte)'~' || data[end - 1] != (byte)'>') {
+                    throw Error(context, "Ascii85 encoded byte sequences must end with b'~>'");
+                }
+                end -= 2;
+                if (end - start >= 2 && data[start] == (byte)'<' && data[start + 1] == (byte)'~') {
+                    start += 2;
+                }
+            }
+
+            int[] table = new int[256];
+            Array.Fill(table, -1);
+            for (int alphabetIndex = 0; alphabetIndex < ASCII85_ALPHABET.Count; alphabetIndex++) {
+                table[ASCII85_ALPHABET[alphabetIndex]] = alphabetIndex;
+            }
+            bool[] ignore = BuildIgnoreTable(ignoreChars);
+            var output = new List<byte>((end - start) * 4 / 5 + 4);
+            uint left = 0;
+            int groupPosition = 0;
+            int inputGroupPosition = 0;
+            bool fromShortForm = false;
+            int index = start;
+            int remaining = end - start;
+            while (remaining > 0 || groupPosition != 0) {
+                byte current = remaining > 0 ? data[index] : (byte)0;
+                int digit = remaining > 0 ? table[current] : 84;
+                if (digit >= 0 && digit < 85) {
+                    if (groupPosition == 4
+                        && (left > uint.MaxValue / 85
+                            || left * 85 > uint.MaxValue - (uint)digit)) {
+                        throw Error(context, "Ascii85 overflow");
+                    }
+                    left = left * 85 + (uint)digit;
+                    groupPosition++;
+                    if (remaining > 0) inputGroupPosition++;
+                } else if (remaining > 0 && ((current == (byte)'y' && foldspaces) || current == (byte)'z')) {
+                    if (groupPosition != 0) {
+                        throw Error(context, "'{0}' inside Ascii85 5-tuple", (char)current);
+                    }
+                    left = current == (byte)'y' ? 0x20202020u : 0u;
+                    fromShortForm = current == (byte)'z';
+                    groupPosition = 5;
+                    inputGroupPosition = 5;
+                } else if (remaining > 0 && !ignore[current]) {
+                    throw Error(context, "Non-Ascii85 digit found: {0}", (char)current);
+                }
+                if (groupPosition != 5) {
+                    if (remaining > 0) remaining--;
+                    index++;
+                    continue;
+                }
+
+                int chunkLength = inputGroupPosition == 5 ? 4 : inputGroupPosition - 1;
+                if (chunkLength <= 0) {
+                    throw Error(context, "Incomplete Ascii85 group");
+                }
+                for (int byteIndex = 0; byteIndex < chunkLength; byteIndex++) {
+                    output.Add((byte)(left >> (24 - byteIndex * 8)));
+                }
+                if (canonical) {
+                    if (chunkLength == 4 && left == 0 && !fromShortForm) {
+                        throw Error(context, "Non-canonical encoding, use 'z' for all-zero groups");
+                    }
+                    if (chunkLength < 4) {
+                        int padBytes = 4 - chunkLength;
+                        uint canonicalTop = (left >> (padBytes * 8)) << (padBytes * 8);
+                        uint divisor = Pow85[padBytes];
+                        if (canonicalTop / divisor != left / divisor) {
+                            throw Error(context, "Non-zero padding bits");
+                        }
+                    }
+                }
+                groupPosition = 0;
+                inputGroupPosition = 0;
+                left = 0;
+                fromShortForm = false;
+                if (remaining > 0) remaining--;
+                index++;
+            }
+            return Bytes.Make(output.ToArray());
+        }
+
+        private static Bytes EncodeBase85(
+            byte[] data,
+            Bytes alphabet,
+            bool pad,
+            int wrapcol) {
+            byte[] encoded = Encode85Core(data, alphabet, false, false, pad);
+            return Bytes.Make(WrapLines(encoded, wrapcol, 5));
+        }
+
+        private static Bytes EncodeAscii85(
+            byte[] data,
+            bool foldspaces,
+            bool adobe,
+            bool pad,
+            int wrapcol) {
+            byte[] encoded = Encode85Core(data, ASCII85_ALPHABET, true, foldspaces, pad);
+            if (adobe) {
+                encoded = Encoding.ASCII.GetBytes("<~")
+                    .Concat(encoded)
+                    .Concat(Encoding.ASCII.GetBytes("~>"))
+                    .ToArray();
+                if (wrapcol > 0) {
+                    if (wrapcol == 1) wrapcol = 2;
+                    encoded = WrapAdobe(encoded, wrapcol);
+                    if (encoded.Length >= 3
+                        && encoded[encoded.Length - 2] == (byte)'\n') {
+                        encoded[encoded.Length - 3] = (byte)'\n';
+                        encoded[encoded.Length - 2] = (byte)'~';
+                    }
+                }
+                return Bytes.Make(encoded);
+            }
+            return Bytes.Make(WrapLines(encoded, wrapcol, 1));
+        }
+
+        private static byte[] Encode85Core(
+            byte[] data,
+            Bytes alphabet,
+            bool ascii85,
+            bool foldspaces,
+            bool pad) {
+            using var output = new MemoryStream();
+            int offset = 0;
+            while (data.Length - offset >= 4) {
+                uint value = ((uint)data[offset] << 24)
+                    | ((uint)data[offset + 1] << 16)
+                    | ((uint)data[offset + 2] << 8)
+                    | data[offset + 3];
+                offset += 4;
+                if (ascii85 && value == 0) {
+                    output.WriteByte((byte)'z');
+                    continue;
+                }
+                if (ascii85 && foldspaces && value == 0x20202020u) {
+                    output.WriteByte((byte)'y');
+                    continue;
+                }
+                byte[] group = new byte[5];
+                for (int index = 4; index >= 0; index--) {
+                    group[index] = (byte)alphabet[(int)(value % 85)];
+                    value /= 85;
+                }
+                output.Write(group, 0, group.Length);
+            }
+
+            int remaining = data.Length - offset;
+            if (remaining > 0) {
+                uint value = 0;
+                for (int index = 0; index < 4; index++) {
+                    value <<= 8;
+                    if (index < remaining) value |= data[offset + index];
+                }
+                if (ascii85 && pad && value == 0) {
+                    output.WriteByte((byte)'z');
+                } else {
+                    int groupLength = pad ? 5 : remaining + 1;
+                    byte[] group = new byte[5];
+                    for (int index = 4; index >= 0; index--) {
+                        group[index] = (byte)alphabet[(int)(value % 85)];
+                        value /= 85;
+                    }
+                    output.Write(group, 0, groupLength);
+                }
+            }
+            return output.ToArray();
+        }
+
+        private static Bytes DecodeBase32(
+            CodeContext context,
+            byte[] data,
+            bool padded,
+            Bytes alphabet,
+            Bytes? ignoreChars,
+            bool canonical) {
+            int[] table = BuildDecodeTable(alphabet, 32);
+            bool[] ignore = BuildIgnoreTable(ignoreChars);
+            var output = new List<byte>(data.Length * 5 / 8);
+            int left = 0;
+            int octaPosition = 0;
+            int pads = 0;
+            for (int index = 0; index < data.Length; index++) {
+                byte current = data[index];
+                if (padded && current == (byte)'=') {
+                    pads++;
+                    if ((octaPosition == 2 || octaPosition == 4 || octaPosition == 5 || octaPosition == 7)
+                        && octaPosition + pads <= 8) {
+                        continue;
+                    }
+                    if (ignore[(byte)'=']) continue;
+                    if (octaPosition == 1 || octaPosition == 3 || octaPosition == 6) break;
+                    throw Error(
+                        context,
+                        octaPosition == 0 && output.Count == 0
+                            ? "Leading padding not allowed"
+                            : "Excess padding not allowed");
+                }
+
+                int value = table[current];
+                if (value < 0 || value >= 32) {
+                    if (!ignore[current]) {
+                        throw Error(
+                            context,
+                            current == (byte)'='
+                                ? "Padding not allowed"
+                                : "Only base32 data is allowed");
+                    }
+                    continue;
+                }
+                if (pads != 0 && !ignore[(byte)'=']) {
+                    throw Error(
+                        context,
+                        octaPosition + pads == 8
+                            ? "Excess data after padding"
+                            : "Discontinuous padding not allowed");
+                }
+                pads = 0;
+
+                switch (octaPosition) {
+                    case 0:
+                        octaPosition = 1;
+                        left = value;
+                        break;
+                    case 1:
+                        octaPosition = 2;
+                        output.Add((byte)((left << 3) | (value >> 2)));
+                        left = value & 0x03;
+                        break;
+                    case 2:
+                        octaPosition = 3;
+                        left = (left << 5) | value;
+                        break;
+                    case 3:
+                        octaPosition = 4;
+                        output.Add((byte)((left << 1) | (value >> 4)));
+                        left = value & 0x0f;
+                        break;
+                    case 4:
+                        octaPosition = 5;
+                        output.Add((byte)((left << 4) | (value >> 1)));
+                        left = value & 0x01;
+                        break;
+                    case 5:
+                        octaPosition = 6;
+                        left = (left << 5) | value;
+                        break;
+                    case 6:
+                        octaPosition = 7;
+                        output.Add((byte)((left << 2) | (value >> 3)));
+                        left = value & 0x07;
+                        break;
+                    case 7:
+                        octaPosition = 0;
+                        output.Add((byte)((left << 5) | value));
+                        left = 0;
+                        break;
+                }
+            }
+
+            if (octaPosition == 1 || octaPosition == 3 || octaPosition == 6) {
+                throw Error(
+                    context,
+                    "Invalid base32-encoded string: number of data characters ({0}) cannot be 1, 3, or 6 more than a multiple of 8",
+                    output.Count / 5 * 8 + octaPosition);
+            }
+            if (padded && octaPosition != 0 && octaPosition + pads < 8) {
+                throw Error(context, "Incorrect padding");
+            }
+            if (canonical && left != 0) {
+                throw Error(context, "Non-zero padding bits");
+            }
+            return Bytes.Make(output.ToArray());
+        }
+
+        private static Bytes EncodeBase32(
+            byte[] data,
+            bool padded,
+            Bytes alphabet,
+            int wrapcol) {
+            using var output = new MemoryStream();
+            int offset = 0;
+            while (data.Length - offset >= 5) {
+                ulong value = 0;
+                for (int index = 0; index < 5; index++) {
+                    value = (value << 8) | data[offset + index];
+                }
+                offset += 5;
+                for (int shift = 35; shift >= 0; shift -= 5) {
+                    output.WriteByte((byte)alphabet[(int)((value >> shift) & 0x1f)]);
+                }
+            }
+
+            int remaining = data.Length - offset;
+            if (remaining > 0) {
+                ulong value = 0;
+                for (int index = 0; index < 5; index++) {
+                    value <<= 8;
+                    if (index < remaining) value |= data[offset + index];
+                }
+                int chars = remaining switch {
+                    1 => 2,
+                    2 => 4,
+                    3 => 5,
+                    4 => 7,
+                    _ => 0
+                };
+                int padding = 8 - chars;
+                if (!padded) padding = 0;
+                for (int index = 0; index < chars; index++) {
+                    int shift = 35 - index * 5;
+                    output.WriteByte((byte)alphabet[(int)((value >> shift) & 0x1f)]);
+                }
+                for (int index = 0; index < padding; index++) {
+                    output.WriteByte((byte)'=');
+                }
+            }
+            return Bytes.Make(WrapLines(output.ToArray(), wrapcol, 8));
+        }
+
+        private static byte[] WrapLines(byte[] data, int wrapcol, int minimumGroup) {
+            if (wrapcol <= 0 || data.Length == 0 || data.Length <= wrapcol) return data;
+            int width = Math.Max(minimumGroup, wrapcol / minimumGroup * minimumGroup);
+            using var output = new MemoryStream(data.Length + data.Length / width);
+            for (int offset = 0; offset < data.Length; offset += width) {
+                int count = Math.Min(width, data.Length - offset);
+                output.Write(data, offset, count);
+                if (offset + count < data.Length) {
+                    output.WriteByte((byte)'\n');
+                }
+            }
+            return output.ToArray();
+        }
+
+        private static byte[] WrapAdobe(byte[] data, int wrapcol) {
+            int width = Math.Max(1, wrapcol);
+            using var output = new MemoryStream(data.Length + data.Length / width);
+            int offset = 0;
+            while (offset < data.Length) {
+                int count = Math.Min(width, data.Length - offset);
+                output.Write(data, offset, count);
+                offset += count;
+                if (offset < data.Length) output.WriteByte((byte)'\n');
+            }
+            return output.ToArray();
+        }
+
+        private static readonly uint[] Pow85 = {
+            1u,
+            85u,
+            85u * 85u,
+            85u * 85u * 85u
+        };
 
         private delegate int DecodeByte(byte val);
 
