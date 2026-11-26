@@ -1147,6 +1147,22 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void ImportsModulesUsingLazyImportsDuringNestedCompilation() {
+            var engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.SetSearchPaths(new[] { GetStdLibPath() });
+
+            engine.Execute(
+                "import shutil\n" +
+                "import tempfile\n" +
+                "import tokenize\n" +
+                "assert shutil.__name__ == 'shutil'\n" +
+                "assert tempfile.__name__ == 'tempfile'\n" +
+                "assert tokenize.__name__ == 'tokenize'\n");
+        }
+
+        [Test]
         public void ImportsGbkViaGeneratedParser() {
             var engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true

@@ -1319,7 +1319,7 @@ namespace IronPython.Compiler.PublicAst {
             PegActionContext context,
             PegActionArguments arguments) {
             AstNodes.Alias[] aliases = Sequence(arguments["a"]).OfType<AstNodes.Alias>().ToArray();
-            int? isLazy = arguments.TryGetValue("lazy", out object? lazy) && lazy is not null ? 1 : null;
+            int? isLazy = IsExplicitLazyImport(arguments) ? 1 : null;
             AstSpan span = SpanOf(aliases);
             return new AstNodes.Import(
                 aliases,
@@ -1383,7 +1383,7 @@ namespace IronPython.Compiler.PublicAst {
             if (names.Length == 0 && ContainsStar(rawNames)) {
                 names = new[] { new AstNodes.Alias("*", null, 1, 0, 1, 1) };
             }
-            int? isLazy = arguments.TryGetValue("lazy", out object? lazy) && lazy is not null ? 1 : null;
+            int? isLazy = IsExplicitLazyImport(arguments) ? 1 : null;
             AstSpan span = SpanOf(names);
             return new AstNodes.ImportFrom(
                 module,
@@ -1405,7 +1405,7 @@ namespace IronPython.Compiler.PublicAst {
             if (names.Length == 0 && ContainsStar(rawNames)) {
                 names = new[] { new AstNodes.Alias("*", null, 1, 0, 1, 1) };
             }
-            int? isLazy = arguments.TryGetValue("lazy", out object? lazy) && lazy is not null ? 1 : null;
+            int? isLazy = IsExplicitLazyImport(arguments) ? 1 : null;
             AstSpan span = SpanOf(names);
             return new AstNodes.ImportFrom(
                 null,
@@ -1416,6 +1416,18 @@ namespace IronPython.Compiler.PublicAst {
                 span.Column,
                 span.EndLine,
                 span.EndColumn);
+        }
+
+        private static bool IsExplicitLazyImport(PegActionArguments arguments) {
+            if (!arguments.TryGetValue("lazy", out object? captured)) {
+                return false;
+            }
+
+            return captured switch {
+                PegToken token => string.Equals(token.Value, "lazy", StringComparison.Ordinal),
+                string text => string.Equals(text, "lazy", StringComparison.Ordinal),
+                _ => false
+            };
         }
 
         public override object Handle_decorators_0(

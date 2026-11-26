@@ -115,8 +115,41 @@ namespace IronPython.Compiler.PublicAst {
             bool preserveSingleStatement) {
             string sourceText = context.SourceUnit.GetCode() ?? string.Empty;
             var locations = SourceLocationMap.Create(sourceText);
+            IndexSpan? previousPatternSpan = _currentPatternSpan;
+            string? previousSourceText = _sourceText;
+            SourceLocationMap? previousSourceLocations = _sourceLocations;
+            string? previousClassName = _className;
+            string? previousClassQualname = _classQualname;
+            CompilerAst.ClassDefinition? previousClassDefinition = _classDefinition;
+            bool previousInClassBody = _inClassBody;
+            int previousFunctionDepth = _functionDepth;
+            int previousTryDepth = _tryDepth;
+            HashSet<string>? previousActiveTypeParameterNames = _activeTypeParameterNames;
+            HashSet<string>? previousClassTypeParameterNames = _classTypeParameterNames;
+            bool previousModuleHasDirectAnnotations = _moduleHasDirectAnnotations;
+            string? previousFunctionQualname = _functionQualname;
+            Dictionary<string, CompilerAst.Expression>? previousTypeParameterBindings =
+                _typeParameterBindings;
+            Dictionary<string, CompilerAst.Expression>? previousComprehensionTypeParameterBindings =
+                _comprehensionTypeParameterBindings;
+            PythonContext? previousPythonContext = _pythonContext;
+            bool previousAllowLazyImportsInExec = _allowLazyImportsInExec;
+            HashSet<string>? previousCompatibilityLazyModules = _compatibilityLazyModules;
+
+            _currentPatternSpan = null;
             _sourceText = sourceText;
             _sourceLocations = locations;
+            _className = null;
+            _classQualname = null;
+            _classDefinition = null;
+            _inClassBody = false;
+            _functionDepth = 0;
+            _tryDepth = 0;
+            _activeTypeParameterNames = null;
+            _classTypeParameterNames = null;
+            _functionQualname = null;
+            _typeParameterBindings = null;
+            _comprehensionTypeParameterBindings = null;
             _pythonContext = context.SourceUnit.LanguageContext as PythonContext;
             _allowLazyImportsInExec =
                 ((PythonCompilerOptions)context.Options).AllowLazyImportsInExec;
@@ -153,10 +186,25 @@ namespace IronPython.Compiler.PublicAst {
                 ast.SkipStarredExpressionCheck = true;
                 return ast;
             } finally {
-                _sourceText = null;
-                _sourceLocations = null;
-                _pythonContext = null;
-                _compatibilityLazyModules = null;
+                _currentPatternSpan = previousPatternSpan;
+                _sourceText = previousSourceText;
+                _sourceLocations = previousSourceLocations;
+                _className = previousClassName;
+                _classQualname = previousClassQualname;
+                _classDefinition = previousClassDefinition;
+                _inClassBody = previousInClassBody;
+                _functionDepth = previousFunctionDepth;
+                _tryDepth = previousTryDepth;
+                _activeTypeParameterNames = previousActiveTypeParameterNames;
+                _classTypeParameterNames = previousClassTypeParameterNames;
+                _moduleHasDirectAnnotations = previousModuleHasDirectAnnotations;
+                _functionQualname = previousFunctionQualname;
+                _typeParameterBindings = previousTypeParameterBindings;
+                _comprehensionTypeParameterBindings =
+                    previousComprehensionTypeParameterBindings;
+                _pythonContext = previousPythonContext;
+                _allowLazyImportsInExec = previousAllowLazyImportsInExec;
+                _compatibilityLazyModules = previousCompatibilityLazyModules;
             }
         }
 
