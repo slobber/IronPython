@@ -379,6 +379,18 @@ namespace IronPython.Modules {
                 return Bytes.Make(_streams.Read(sizeInt));
             }
 
+            public override Bytes read1(CodeContext context, int length = -1) {
+                if (length == 0) {
+                    EnsureReadable();
+                    return Bytes.Empty;
+                }
+                if (length < 0) {
+                    return readall();
+                }
+                EnsureReadable();
+                return Bytes.Make(_streams.Read(length));
+            }
+
 
             [Documentation("readable() -> bool\n\nTrue if file was opened in a read mode.")]
             public override bool readable(CodeContext/*!*/ context) {
