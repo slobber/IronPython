@@ -505,6 +505,14 @@ namespace IronPython.Compiler.Syntax {
             int start = _index;
             int line = _line;
             int column = _column;
+            bool isBasedInteger = _source.Length > start + 1
+                && _source[start] == '0'
+                && (_source[start + 1] == 'x'
+                    || _source[start + 1] == 'X'
+                    || _source[start + 1] == 'o'
+                    || _source[start + 1] == 'O'
+                    || _source[start + 1] == 'b'
+                    || _source[start + 1] == 'B');
             AdvanceChar();
             while (_index < _source.Length) {
                 char current = _source[_index];
@@ -513,7 +521,7 @@ namespace IronPython.Compiler.Syntax {
                     AdvanceChar();
                     continue;
                 }
-                if (current == '.' && !IsExponent(previous)) {
+                if (current == '.' && !isBasedInteger && !IsExponent(previous)) {
                     AdvanceChar();
                     continue;
                 }

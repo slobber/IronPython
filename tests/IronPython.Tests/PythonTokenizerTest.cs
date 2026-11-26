@@ -133,6 +133,21 @@ namespace IronPython.Tests {
                 Is.EqualTo(PythonTokenKind.EndMarker));
         }
 
+        [TestCase("0xEC30A437.to_bytes")]
+        [TestCase("0o755.bit_length")]
+        [TestCase("0b1010.bit_length")]
+        public void SplitsAttributeAccessAfterBasedIntegerLiteral(string source) {
+            PythonTokenizer tokenizer = Tokenize(source);
+
+            Assert.That(
+                tokenizer.Tokens.Take(3).Select(token => (token.Kind, token.Text)),
+                Is.EqualTo(new[] {
+                    (PythonTokenKind.Number, source.Substring(0, source.IndexOf('.'))),
+                    (PythonTokenKind.Operator, "."),
+                    (PythonTokenKind.Name, source.Substring(source.IndexOf('.') + 1))
+                }));
+        }
+
         private static PythonTokenizer Tokenize(string source) {
             var tokenizer = new PythonTokenizer(source);
             tokenizer.Tokenize();
