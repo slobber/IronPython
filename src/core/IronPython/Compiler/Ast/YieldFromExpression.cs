@@ -20,7 +20,7 @@ namespace IronPython.Compiler.Ast {
 
         public YieldFromExpression(Expression expression) {
             statement = GenYieldFromStatement(expression);
-            result = new NameExpression("__yieldfromprefix_r");
+            result = new NameExpression("_yieldfromprefix_r");
 
             Expression = expression;
         }
@@ -35,55 +35,52 @@ namespace IronPython.Compiler.Ast {
                 if (_yieldFromAst is not null) return _yieldFromAst;
                 lock (YieldFromAstLock) {
                     if (_yieldFromAst is null) {
-                        bool useGeneratedParser = Parser.UseGeneratedParser;
                         bool skipBuildAstBinding = Modules._ast._skipBuildAstBinding;
-                        Parser.UseGeneratedParser = false;
                         Modules._ast._skipBuildAstBinding = true;
                         try {
                             _yieldFromAst = (Modules._ast.AST)Modules.Builtin.compile(Runtime.DefaultContext.Default, @"
-from builtins import iter as __yieldfromprefix_iter, next as __yieldfromprefix_next
-__yieldfromprefix_i = __yieldfromprefix_iter(__yieldfromprefix_EXPR)
+from builtins import iter as _yieldfromprefix_iter, next as _yieldfromprefix_next
+_yieldfromprefix_i = _yieldfromprefix_iter(_yieldfromprefix_EXPR)
 try:
-    __yieldfromprefix_y = __yieldfromprefix_next(__yieldfromprefix_i)
-except StopIteration as __yieldfromprefix_e:
-    __yieldfromprefix_r = __yieldfromprefix_e.value
+    _yieldfromprefix_y = _yieldfromprefix_next(_yieldfromprefix_i)
+except StopIteration as _yieldfromprefix_e:
+    _yieldfromprefix_r = _yieldfromprefix_e.value
 else:
     while 1:
         try:
-            __yieldfromprefix_s = yield __yieldfromprefix_y
-        except GeneratorExit as __yieldfromprefix_e:
+            _yieldfromprefix_s = yield _yieldfromprefix_y
+        except GeneratorExit as _yieldfromprefix_e:
             try:
-                __yieldfromprefix_m = __yieldfromprefix_i.close
+                _yieldfromprefix_m = _yieldfromprefix_i.close
             except AttributeError:
                 pass
             else:
-                __yieldfromprefix_m()
-            raise __yieldfromprefix_e
-        except BaseException as __yieldfromprefix_e:
-            from sys import exc_info as __yieldfromprefix_exc_info
-            __yieldfromprefix_x = __yieldfromprefix_exc_info()
+                _yieldfromprefix_m()
+            raise _yieldfromprefix_e
+        except BaseException as _yieldfromprefix_e:
+            from sys import exc_info as _yieldfromprefix_exc_info
+            _yieldfromprefix_x = _yieldfromprefix_exc_info()
             try:
-                __yieldfromprefix_m = __yieldfromprefix_i.throw
+                _yieldfromprefix_m = _yieldfromprefix_i.throw
             except AttributeError:
-                raise __yieldfromprefix_e
+                raise _yieldfromprefix_e
             else:
                 try:
-                    __yieldfromprefix_y = __yieldfromprefix_m(*__yieldfromprefix_x)
-                except StopIteration as __yieldfromprefix_e:
-                    __yieldfromprefix_r = __yieldfromprefix_e.value
+                    _yieldfromprefix_y = _yieldfromprefix_m(*_yieldfromprefix_x)
+                except StopIteration as _yieldfromprefix_e:
+                    _yieldfromprefix_r = _yieldfromprefix_e.value
                     break
         else:
             try:
-                if __yieldfromprefix_s is None:
-                    __yieldfromprefix_y = __yieldfromprefix_next(__yieldfromprefix_i)
+                if _yieldfromprefix_s is None:
+                    _yieldfromprefix_y = _yieldfromprefix_next(_yieldfromprefix_i)
                 else:
-                    __yieldfromprefix_y = __yieldfromprefix_i.send(__yieldfromprefix_s)
-            except StopIteration as __yieldfromprefix_e:
-                __yieldfromprefix_r = __yieldfromprefix_e.value
+                    _yieldfromprefix_y = _yieldfromprefix_i.send(_yieldfromprefix_s)
+            except StopIteration as _yieldfromprefix_e:
+                _yieldfromprefix_r = _yieldfromprefix_e.value
                 break
 ", "", "exec", flags: Modules._ast.PyCF_ONLY_AST);
                         } finally {
-                            Parser.UseGeneratedParser = useGeneratedParser;
                             Modules._ast._skipBuildAstBinding = skipBuildAstBinding;
                         }
                     }
@@ -97,7 +94,7 @@ else:
             Modules._ast._containsYield = false; // reset state of _ast module
 
             return new SuiteStatement(new[] {
-                new AssignmentStatement(new[] { new NameExpression("__yieldfromprefix_EXPR") }, expression),
+                new AssignmentStatement(new[] { new NameExpression("_yieldfromprefix_EXPR") }, expression),
                     expr
                 });
         }

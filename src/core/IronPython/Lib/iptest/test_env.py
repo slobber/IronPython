@@ -19,6 +19,10 @@ is_posix      =  is_linux or is_osx
 if is_windows:
     _machine = (os.environ.get('PROCESSOR_ARCHITEW6432')
                 or os.environ.get('PROCESSOR_ARCHITECTURE', ''))
+elif is_ironpython and hasattr(os, 'uname'):
+    # Avoid platform.machine() launching a subprocess on Unix.  The test
+    # harness must remain usable while fork_exec is unavailable.
+    _machine = os.uname().machine
 else:
     _machine = platform.machine()
 is_arm64      =  _machine.lower() in ['aarch64', 'arm64']

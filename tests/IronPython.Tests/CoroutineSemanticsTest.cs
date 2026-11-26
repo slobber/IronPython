@@ -17,13 +17,6 @@ namespace IronPython.Tests {
             };
             ScriptEngine engine = Python.CreateEngine(options);
             ScriptScope scope = engine.CreateScope();
-            bool useGeneratedParser = Parser.UseGeneratedParser;
-            if (string.Equals(
-                System.Environment.GetEnvironmentVariable("CYBERSTONE_IRONPYTHON_GENERATED_PARSER"),
-                "1",
-                System.StringComparison.Ordinal)) {
-                Parser.UseGeneratedParser = true;
-            }
             try {
                 engine.Execute(@"
 import clr
@@ -55,7 +48,6 @@ close_coro.close()
 close_result = 'closed'
 ", scope);
             } finally {
-                Parser.UseGeneratedParser = useGeneratedParser;
             }
 
             Assert.That(scope.GetVariable<IronPython.Runtime.PythonList>("lazy_initial"), Is.Empty);
@@ -71,13 +63,6 @@ close_result = 'closed'
             };
             ScriptEngine engine = Python.CreateEngine(options);
             ScriptScope scope = engine.CreateScope();
-            bool useGeneratedParser = Parser.UseGeneratedParser;
-            if (string.Equals(
-                System.Environment.GetEnvironmentVariable("CYBERSTONE_IRONPYTHON_GENERATED_PARSER"),
-                "1",
-                System.StringComparison.Ordinal)) {
-                Parser.UseGeneratedParser = true;
-            }
             try {
                 engine.Execute(@"
 def run_coro(coro):
@@ -147,7 +132,6 @@ aclose_result = run_coro(drive_aclose())
 aclose_log = list(close_log)
 ", scope);
             } finally {
-                Parser.UseGeneratedParser = useGeneratedParser;
             }
 
             Assert.That(
@@ -169,8 +153,6 @@ aclose_log = list(close_log)
             };
             ScriptEngine engine = Python.CreateEngine(options);
             ScriptScope scope = engine.CreateScope();
-            bool useGeneratedParser = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(@"
 def run_coro(coro):
@@ -211,7 +193,6 @@ generator_result = run_coro(generator_values())
 nested_result = run_coro(nested_values())
 ", scope);
             } finally {
-                Parser.UseGeneratedParser = useGeneratedParser;
             }
 
             Assert.That(
@@ -248,8 +229,6 @@ nested_result = run_coro(nested_values())
             };
             ScriptEngine engine = Python.CreateEngine(options);
             ScriptScope scope = engine.CreateScope();
-            bool useGeneratedParser = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(@"
 import asyncio
@@ -296,7 +275,6 @@ async def main():
 asyncio.run(main())
 ", scope);
             } finally {
-                Parser.UseGeneratedParser = useGeneratedParser;
             }
 
             var log = scope.GetVariable<IronPython.Runtime.PythonList>("log");
@@ -316,8 +294,6 @@ asyncio.run(main())
             };
             ScriptEngine engine = Python.CreateEngine(options);
             ScriptScope scope = engine.CreateScope();
-            bool useGeneratedParser = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(@"
 import asyncio
@@ -338,7 +314,6 @@ async def main():
 asyncio.run(main())
 ", scope);
             } finally {
-                Parser.UseGeneratedParser = useGeneratedParser;
             }
 
             var events = scope.GetVariable<IronPython.Runtime.PythonList>("events");

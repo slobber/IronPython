@@ -248,8 +248,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "class LazyAnnotation:\n" +
@@ -262,7 +260,6 @@ namespace IronPython.Tests {
                     "assert annotation_strings == {'value': 'int', 'return': 'LazyAnnotation'}\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -272,8 +269,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "import annotationlib\n" +
@@ -283,7 +278,6 @@ namespace IronPython.Tests {
                     "assert strings == {'value': 'int', 'return': 'list[str]'}, repr(strings)\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -292,8 +286,6 @@ namespace IronPython.Tests {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
             });
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "\"\"\"\n" +
@@ -312,7 +304,6 @@ namespace IronPython.Tests {
                     "assert function.__doc__ == '\\nfirst\\n  second\\n', repr(function.__doc__)\n" +
                     "assert Type.__doc__ == 'alpha\\nbeta\\n', repr(Type.__doc__)\n");
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -322,8 +313,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "module_value: int\n" +
@@ -337,7 +326,6 @@ namespace IronPython.Tests {
                     "assert AnnotatedValues.named == 'value', repr(AnnotatedValues.named)\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -347,8 +335,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "from __future__ import annotations\n" +
@@ -365,19 +351,15 @@ namespace IronPython.Tests {
                     "    'value': 'UndefinedName', 'return': 'UndefinedName'}\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
-        [TestCase(false)]
-        [TestCase(true)]
-        public void PositionalOnlyParametersRejectKeywords(bool useGeneratedParser) {
+        [Test]
+        public void PositionalOnlyParametersRejectKeywords() {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = useGeneratedParser;
             try {
                 engine.Execute(
                     "def positional_only(value, /, keyword):\n" +
@@ -392,7 +374,6 @@ namespace IronPython.Tests {
                     "assert \"unexpected keyword argument 'value'\" in positional_error\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -423,15 +404,12 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "import ast\n" +
                     "dumped = ast.dump(ast.parse('print(1 + 2)\\n'), include_attributes=True)\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             Assert.That(
@@ -453,8 +431,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "type Pair[T] = tuple[T, T]\n" +
@@ -467,7 +443,6 @@ namespace IronPython.Tests {
                     "pair_module = Pair.__module__\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             Assert.Multiple(() => {
@@ -489,8 +464,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "from typing import TypeAliasType, TypeVar\n" +
@@ -502,7 +475,6 @@ namespace IronPython.Tests {
                     "alias_args = Alias[int].__args__\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             Assert.Multiple(() => {
@@ -520,8 +492,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "py_func_called = False\n" +
@@ -532,13 +502,11 @@ namespace IronPython.Tests {
                 PythonFunction function = scope.GetVariable<PythonFunction>("py_func");
                 engine.Operations.Invoke(function);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             bool autoDetectResult = scope.GetVariable<bool>("py_func_called");
 
             ScriptScope statementScope = engine.CreateScope();
-            Parser.UseGeneratedParser = true;
             try {
                 engine.CreateScriptSourceFromString(
                     "py_func_called = False\n" +
@@ -549,7 +517,6 @@ namespace IronPython.Tests {
                 engine.Operations.Invoke(
                     statementScope.GetVariable<PythonFunction>("py_func"));
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
             Assert.Multiple(() => {
                 Assert.That(autoDetectResult, Is.True);
@@ -576,8 +543,6 @@ namespace IronPython.Tests {
                 sourceUnit,
                 new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
                 ErrorSink.Default);
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 using Parser parser = Parser.CreateParser(compilerContext, new PythonOptions());
                 PythonAst ast = parser.ParseFile(true, true);
@@ -618,7 +583,6 @@ namespace IronPython.Tests {
                 engine.Operations.Invoke(lookupFunction);
                 Assert.That(lookupGlobals["py_func_called"], Is.True);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -628,8 +592,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "left = (1 is 1)\n" +
@@ -637,7 +599,6 @@ namespace IronPython.Tests {
                     "result = left != right\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             Assert.That(scope.GetVariable<bool>("result"), Is.False);
@@ -649,15 +610,12 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "from typing import Pattern, Match\n" +
                     "result = Pattern is not None and Match is not None\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             Assert.That(scope.GetVariable<bool>("result"), Is.True);
@@ -669,8 +627,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "import re\n" +
@@ -681,7 +637,6 @@ namespace IronPython.Tests {
                     "typed_dict_name = Movie.__name__\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             Assert.Multiple(() => {
@@ -695,8 +650,6 @@ namespace IronPython.Tests {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
             });
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "lazy import math as lazy_math\n" +
@@ -707,7 +660,6 @@ namespace IronPython.Tests {
                     "assert lazy_math.sqrt(16.0) == 4.0\n" +
                     "assert lazy_sqrt(25.0) == 5.0\n");
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -778,8 +730,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "seen = []\n" +
@@ -840,7 +790,6 @@ namespace IronPython.Tests {
                     "assert combined == ['KeyError', 'ExceptionGroup']\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -915,8 +864,6 @@ namespace IronPython.Tests {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
             });
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                 "class Point:\n" +
@@ -1068,7 +1015,6 @@ namespace IronPython.Tests {
                 "assert decorated() == 3, 'decorator'\n" +
                 "assert continue_in_finally() == 2, 'continue finally'\n");
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
     }

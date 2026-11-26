@@ -235,8 +235,6 @@ namespace IronPython.Tests {
                 ErrorSink.Default,
                 sink);
 
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 using Parser parser = Parser.CreateParser(compilerContext, new PythonOptions());
                 var ast = parser.ParseFile(true);
@@ -249,7 +247,6 @@ namespace IronPython.Tests {
                     Is.InstanceOf<IronPython.Compiler.Ast.AssignmentStatement>());
                 Assert.That(sink.Names, Does.Contain("x"));
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -521,13 +518,10 @@ namespace IronPython.Tests {
                 new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
                 ErrorSink.Default);
             Assert.That(PublicAstLowerer.LowerModule(module, compilerContext), Is.Not.Null);
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 PublicAstLowerer.ExecuteModule(module, pythonContext, out var tracebackGlobals);
                 Assert.That(tracebackGlobals.ContainsKey("TracebackException"), Is.True);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             SourceUnit tracebackSource = pythonContext.CreateFileUnit(
@@ -536,15 +530,12 @@ namespace IronPython.Tests {
                 tracebackSource,
                 new PythonCompilerOptions(ModuleOptions.ExecOrEvalCode),
                 ErrorSink.Default);
-            bool previousFacadeParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 using Parser facade = Parser.CreateParser(
                     tracebackContext,
                     new PythonOptions());
                 Assert.That(facade.ParseFile(true), Is.Not.Null);
             } finally {
-                Parser.UseGeneratedParser = previousFacadeParserMode;
             }
         }
 
@@ -683,8 +674,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "module_value = 40\n" +
@@ -699,7 +688,6 @@ namespace IronPython.Tests {
                     "    result = exc.value\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             Assert.That(scope.GetVariable<int>("result"), Is.EqualTo(42));
@@ -711,8 +699,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "module_value = 40\n" +
@@ -721,7 +707,6 @@ namespace IronPython.Tests {
                     "result = inner()\n",
                     scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
 
             Assert.That(scope.GetVariable<int>("result"), Is.EqualTo(42));
@@ -755,14 +740,11 @@ namespace IronPython.Tests {
                 sourceUnit,
                 compilerOptions,
                 ErrorSink.Default);
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             IronPython.Compiler.Ast.PythonAst ast;
             try {
                 using Parser parser = Parser.CreateParser(compilerContext, new PythonOptions());
                 ast = parser.ParseFile(true, true);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
             ast.Bind();
 
@@ -952,8 +934,6 @@ namespace IronPython.Tests {
             var engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
             });
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute("assert eval('1 + 2 * 3') == 7");
                 engine.Execute(
@@ -964,7 +944,6 @@ namespace IronPython.Tests {
                     "assert eval(evaluated_code) == 42\n" +
                     "assert single_namespace['single_value'] == 7\n");
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -973,8 +952,6 @@ namespace IronPython.Tests {
             var engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
             });
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "_ast = __import__('_ast')\n" +
@@ -993,7 +970,6 @@ namespace IronPython.Tests {
                     "assert namespace['value'] == 2\n" +
                     "assert namespace['render'](3) == '3'\n");
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -1093,8 +1069,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             isolatedEngine.SetSearchPaths(new[] { GetStdLibPath() });
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 foreach (string module in new[] {
                     "abc", "os", "_collections_abc", "collections", "functools", "types", "warnings"
@@ -1148,7 +1122,6 @@ namespace IronPython.Tests {
                 warningsEngine.SetSearchPaths(new[] { GetStdLibPath() });
                 warningsEngine.Execute("import warnings");
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -1158,8 +1131,6 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             engine.SetSearchPaths(new[] { GetStdLibPath() });
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 try {
                     engine.Execute(
@@ -1172,7 +1143,6 @@ namespace IronPython.Tests {
                     Assert.Fail($"Generated parser typing import failed:\n{formatted}");
                 }
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 
@@ -1182,15 +1152,12 @@ namespace IronPython.Tests {
                 ["NoSite"] = true
             });
             engine.SetSearchPaths(new[] { GetStdLibPath() });
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(
                     "import encodings.gbk\n" +
                     "encoded = '\\u4e2d\\u6587'.encode('gbk')\n" +
                     "assert encoded.decode('gbk') == '\\u4e2d\\u6587'\n");
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
         }
 

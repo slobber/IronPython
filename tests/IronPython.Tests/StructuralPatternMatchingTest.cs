@@ -136,12 +136,9 @@ namespace IronPython.Tests {
             }
 
             ScriptScope scope = engine.CreateScope();
-            bool previousParserMode = Parser.UseGeneratedParser;
-            Parser.UseGeneratedParser = true;
             try {
                 engine.Execute(source, scope);
             } finally {
-                Parser.UseGeneratedParser = previousParserMode;
             }
             return scope.GetVariable<string>("result")
                 ?? throw new InvalidOperationException("Pattern matching test did not set result.");
