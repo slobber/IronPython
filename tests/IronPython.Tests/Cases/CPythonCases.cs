@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the Apache 2.0 License.
 // See the LICENSE file in the project root for more information.
 
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -36,6 +37,11 @@ namespace IronPythonTest.Cases {
                     yield break;
                 }
                 foreach (var filename in Directory.EnumerateFiles(fullPath, "test_*.py", SearchOption.AllDirectories)) {
+                    if (filename
+                        .Split(Path.DirectorySeparatorChar)
+                        .Any(part => part.Equals("regrtestdata", StringComparison.OrdinalIgnoreCase))) {
+                        continue;
+                    }
                     var altFilename = Path.GetFullPath(Path.Combine(altFullPath, Path.GetRelativePath(fullPath, filename)));
                     if (File.Exists(altFilename)) {
                         yield return new TestInfo(altFilename, category, Path.Combine(suiteFolder, altFolder), manifest);
