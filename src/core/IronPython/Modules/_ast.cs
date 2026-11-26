@@ -124,6 +124,43 @@ namespace IronPython.Modules {
                     "type_params", "values"
                 };
 
+            private static readonly Dictionary<string, HashSet<string>> OptionalFieldNames =
+                new(StringComparer.Ordinal) {
+                    ["FunctionType"] = ["returns"],
+                    ["FunctionDef"] = ["returns", "type_comment"],
+                    ["AsyncFunctionDef"] = ["returns", "type_comment"],
+                    ["Return"] = ["value"],
+                    ["Assign"] = ["type_comment"],
+                    ["AnnAssign"] = ["value"],
+                    ["For"] = ["type_comment"],
+                    ["AsyncFor"] = ["type_comment"],
+                    ["With"] = ["type_comment"],
+                    ["AsyncWith"] = ["type_comment"],
+                    ["Raise"] = ["exc", "cause"],
+                    ["Assert"] = ["msg"],
+                    ["Import"] = ["is_lazy"],
+                    ["ImportFrom"] = ["module", "level", "is_lazy"],
+                    ["DictComp"] = ["value"],
+                    ["Yield"] = ["value"],
+                    ["FormattedValue"] = ["format_spec"],
+                    ["Interpolation"] = ["format_spec"],
+                    ["Constant"] = ["kind"],
+                    ["Slice"] = ["lower", "upper", "step"],
+                    ["ExceptHandler"] = ["type", "name"],
+                    ["arguments"] = ["vararg", "kwarg"],
+                    ["arg"] = ["annotation", "type_comment"],
+                    ["keyword"] = ["arg"],
+                    ["alias"] = ["asname"],
+                    ["withitem"] = ["optional_vars"],
+                    ["match_case"] = ["guard"],
+                    ["MatchMapping"] = ["rest"],
+                    ["MatchStar"] = ["name"],
+                    ["MatchAs"] = ["pattern", "name"],
+                    ["TypeVar"] = ["bound", "default_value"],
+                    ["ParamSpec"] = ["default_value"],
+                    ["TypeVarTuple"] = ["default_value"],
+                };
+
             protected int? _lineno; // both lineno and col_offset are expected to be int, in cpython anything is accepted
             protected int? _col_offset;
             protected int? _end_lineno;
@@ -156,7 +193,7 @@ namespace IronPython.Modules {
                         continue;
                     }
                     System.Reflection.PropertyInfo property = GetType().GetProperty(name);
-                    if (property?.GetValue(this) is null) {
+                    if (property?.GetValue(this) is null && !IsOptionalField(name)) {
                         throw PythonOps.TypeError(
                             "{0} constructor missing required field {1}",
                             PythonOps.GetPythonTypeName(this),
@@ -164,6 +201,10 @@ namespace IronPython.Modules {
                     }
                 }
             }
+
+            private bool IsOptionalField(string name) =>
+                OptionalFieldNames.TryGetValue(GetType().Name, out HashSet<string> fields)
+                && fields.Contains(name);
 
             public int lineno {
                 get {
@@ -1581,6 +1622,9 @@ namespace IronPython.Modules {
 
         [PythonType]
         public class Expr : stmt {
+            public static readonly PythonTuple __match_args__ =
+                PythonTuple.MakeTuple(nameof(value));
+
             public Expr() {
                 _fields = PythonTuple.MakeTuple(new[] { nameof(value), });
             }

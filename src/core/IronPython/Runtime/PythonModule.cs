@@ -145,7 +145,9 @@ namespace IronPython.Runtime {
             }
 
             if (_dict.TryGetValue(name, out res)) {
-                return res;
+                return res is LazyImport lazyImport
+                    ? lazyImport.resolve(context)
+                    : res;
             }
             if (_dict.TryGetValue("__getattr__", out object getAttribute)) {
                 return PythonCalls.Call(context, getAttribute, name);
@@ -171,7 +173,9 @@ namespace IronPython.Runtime {
             }
 
             if (_dict.TryGetValue(name, out res)) {
-                return res;
+                return res is LazyImport lazyImport
+                    ? lazyImport.resolve(context)
+                    : res;
             } else if (_dict.TryGetValue("__getattr__", out object getAttribute)) {
                 return PythonCalls.Call(context, getAttribute, name);
             } else if (DynamicHelpers.GetPythonType(this).TryGetNonCustomMember(context, this, name, out res)) {

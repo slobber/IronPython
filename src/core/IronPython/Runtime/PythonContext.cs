@@ -194,6 +194,7 @@ namespace IronPython.Runtime {
 
             InitializeBuiltins();
             InitializeSystemState();
+            SystemState.__dict__["lazy_modules"] = SysModule.GetLazyModules(this);
 
             // sys.argv always includes at least one empty string.
             SetSystemStateValue("argv", (PythonOptions.Arguments.Count == 0) ?
@@ -1458,7 +1459,7 @@ namespace IronPython.Runtime {
             var pythonEx = PythonExceptions.ToPython(exception);
             seen.Add(pythonEx);
 
-            var chained = pythonEx.HasCause ? pythonEx.__cause__ : pythonEx.__suppress_context__ ? null : pythonEx.RawContext;
+            var chained = pythonEx.HasCause ? pythonEx.Cause : pythonEx.SuppressContext ? null : pythonEx.RawContext;
             if (chained is not null && !seen.Contains(chained)) {
                 result.AppendLine(FormatException(chained.GetClrException(), seen));
                 result.AppendLine();

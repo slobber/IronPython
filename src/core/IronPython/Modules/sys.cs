@@ -53,6 +53,8 @@ namespace IronPython.Modules {
             return null;
         }
 
+        public static bool is_finalizing() => false;
+
         /// <summary>
         /// Handles output of the expression statement.
         /// Prints the value and sets the __builtin__._
@@ -124,6 +126,115 @@ namespace IronPython.Modules {
         private sealed class AsyncGeneratorHookState {
             public object FirstIter;
             public object Finalizer;
+        }
+
+        private sealed class LazyImportState {
+            public string Mode = "normal";
+            public object Filter;
+            public readonly SetCollection Modules = new();
+        }
+
+        private static readonly ConditionalWeakTable<PythonContext, LazyImportState> _lazyImportStates =
+            new();
+
+        internal static SetCollection GetLazyModules(PythonContext context)
+            => _lazyImportStates.GetOrCreateValue(context).Modules;
+
+        internal static void TrackLazyModule(CodeContext context, string name) {
+            LazyImportState state = _lazyImportStates.GetOrCreateValue(context.LanguageContext);
+            lock (state) {
+                state.Modules.add(name);
+            }
+        }
+
+        internal static void UntrackLazyModule(CodeContext context, string name) {
+            LazyImportState state = _lazyImportStates.GetOrCreateValue(context.LanguageContext);
+            lock (state) {
+                state.Modules.discard(name);
+            }
+        }
+
+        public static void set_lazy_imports(CodeContext context, object mode) {
+            if (mode is not string value) {
+                throw PythonOps.TypeError("set_lazy_imports() argument must be str");
+            }
+            if (value is not ("normal" or "all")) {
+                throw PythonOps.ValueError(
+                    "invalid lazy imports mode: {0}",
+                    value);
+            }
+            LazyImportState state = _lazyImportStates.GetOrCreateValue(context.LanguageContext);
+            lock (state) {
+                state.Mode = value;
+            }
+        }
+
+        public static string get_lazy_imports(CodeContext context) {
+            LazyImportState state = _lazyImportStates.GetOrCreateValue(context.LanguageContext);
+            lock (state) {
+                return state.Mode;
+            }
+        }
+
+        public static void set_lazy_imports_filter(CodeContext context, object filter) {
+            if (filter is not null && !PythonOps.IsCallable(context, filter)) {
+                throw PythonOps.TypeError("lazy imports filter must be callable or None");
+            }
+            LazyImportState state = _lazyImportStates.GetOrCreateValue(context.LanguageContext);
+            lock (state) {
+                state.Filter = filter;
+            }
+        }
+
+        public static object get_lazy_imports_filter(CodeContext context) {
+            LazyImportState state = _lazyImportStates.GetOrCreateValue(context.LanguageContext);
+            lock (state) {
+                return state.Filter;
+            }
+        }
+
+        internal static bool ShouldUseExplicitLazyImport(
+            CodeContext context,
+            string name,
+            object fromlist) {
+            LazyImportState state = _lazyImportStates.GetOrCreateValue(context.LanguageContext);
+            object filter;
+            lock (state) {
+                filter = state.Filter;
+            }
+            return filter is null
+                || PythonOps.IsTrue(PythonCalls.Call(
+                    context,
+                    filter,
+                    context.GlobalDict.TryGetValue(
+                        "__name__",
+                        out object moduleName)
+                        ? moduleName
+                        : null!,
+                    name,
+                    fromlist));
+        }
+
+        internal static bool ShouldImportLazily(
+            CodeContext context,
+            string name,
+            object fromlist,
+            bool moduleLevel) {
+            LazyImportState state = _lazyImportStates.GetOrCreateValue(context.LanguageContext);
+            object filter;
+            lock (state) {
+                if (!moduleLevel || state.Mode != "all") {
+                    return false;
+                }
+                filter = state.Filter;
+            }
+            return filter is null
+                || PythonOps.IsTrue(PythonCalls.Call(
+                    context,
+                    filter,
+                    null!,
+                    name,
+                    fromlist));
         }
 
         private static readonly ConditionalWeakTable<PythonContext, AsyncGeneratorHookState> _asyncGeneratorHooks = new();
@@ -428,20 +539,24 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
 
                 for (int i = 0; i < stack.Count - depth; i++) {
                     var elem = stack[i];
+                    CodeContext frameContext =
+                        elem.Context;
 
                     if (elem.Frame != null) {
                         // we previously handed out a frame here, hand out the same one now
                         cur = elem.Frame;
+                        cur._lineNo = elem.Line;
                     } else {
                         // create a new frame and save it for future calls
                         cur = new TraceBackFrame(
-                            context,
-                            Builtin.globals(elem.Context),
-                            Builtin.locals(elem.Context),
+                            frameContext,
+                            Builtin.globals(frameContext),
+                            Builtin.locals(frameContext),
                             elem.Code,
                             cur
                         );
 
+                        cur._lineNo = elem.Line;
                         stack[i] = new FunctionStack(elem.Context, elem.Code, cur);
                     }
                 }
@@ -592,6 +707,16 @@ Handle an exception by displaying it with a traceback on sys.stderr._")]
 
         [PythonHidden, PythonType("flags"), DontMapIEnumerableToIter]
         public sealed class SysFlags : PythonTuple {
+            public static readonly PythonTuple __match_args__ = PythonTuple.MakeTuple(
+                nameof(debug), nameof(inspect), nameof(interactive), nameof(optimize),
+                nameof(dont_write_bytecode), nameof(no_user_site), nameof(no_site),
+                nameof(ignore_environment), nameof(verbose), nameof(bytes_warning),
+                nameof(quiet), nameof(hash_randomization), nameof(isolated),
+                nameof(dev_mode), nameof(utf8_mode), nameof(warn_default_encoding),
+                nameof(safe_path), nameof(int_max_str_digits), nameof(gil),
+                nameof(lazy_imports), nameof(context_aware_warnings),
+                nameof(thread_inherit_context));
+
             internal SysFlags() : base(new object[n_fields] {
                 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                 false, 1, 0, true, 4300,

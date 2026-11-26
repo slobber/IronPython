@@ -3455,12 +3455,17 @@ namespace IronPython.Compiler.PublicAst {
                 : arguments.Count > 0 ? arguments[0] : null;
             string text = rawValue is PegToken token ? token.Value : ToText(rawValue);
             AstSpan span = SpanOf(rawValue);
+            bool isRaw = text.Length > 0
+                && text[0] == PythonTokenizer.RawInterpolatedMiddleMarker;
+            if (isRaw) {
+                text = text.Substring(1);
+            }
             return new AstNodes.Constant(
                 IronPython.Runtime.LiteralParser.ParseString(
                     text.Replace("{{", "{", StringComparison.Ordinal)
                         .Replace("}}", "}", StringComparison.Ordinal)
                         .AsSpan(),
-                    isRaw: false),
+                    isRaw),
                 null,
                 span.Line,
                 span.Column,

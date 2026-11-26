@@ -10,8 +10,13 @@ using System.Runtime.Serialization;
 namespace IronPython.Runtime {
     [Serializable]
     public class UnboundNameException : Exception {
+        public string? Name { get; internal set; }
+
         public UnboundNameException() : base() { }
         public UnboundNameException(string msg) : base(msg) { }
+        public UnboundNameException(string msg, string name) : base(msg) {
+            Name = name;
+        }
         public UnboundNameException(string message, Exception innerException)
             : base(message, innerException) {
         }

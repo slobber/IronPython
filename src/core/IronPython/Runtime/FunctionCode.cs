@@ -394,6 +394,29 @@ namespace IronPython.Runtime {
             return result;
         }
 
+        internal bool ContainsLocalVariable(string name)
+            => _lambda?.Variables?.ContainsKey(name) == true;
+
+        internal IEnumerable<string> LocalVariableNames
+            => _lambda?.Variables is { } variables
+                ? variables.Keys
+                : Array.Empty<string>();
+
+        internal bool IsFreeVariable(string name) {
+            if (_lambda?.FreeVariables is null) {
+                return false;
+            }
+            foreach (var variable in _lambda.FreeVariables) {
+                if (variable.Name == name) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        internal bool HasFreeVariables
+            => _lambda?.FreeVariables is { Count: > 0 };
+
         internal bool IsModule {
             get {
                 return _lambda is Compiler.Ast.PythonAst;
@@ -508,11 +531,29 @@ namespace IronPython.Runtime {
         }
 
         public IEnumerable<object> co_positions() {
-            yield return PythonTuple.MakeTuple(
-                Span.Start.Line,
-                Span.End.Line,
-                Math.Max(Span.Start.Column - 1, 0),
-                Math.Max(Span.End.Column - 1, 0));
+            foreach (SourceSpan span in GetTracebackSpans()) {
+                yield return PythonTuple.MakeTuple(
+                    span.Start.Line,
+                    span.End.Line,
+                    Math.Max(span.Start.Column - 1, 0),
+                    Math.Max(span.End.Column - 1, 0));
+            }
+        }
+
+        internal int GetTracebackPositionIndex(int line) {
+            IReadOnlyList<SourceSpan> spans = GetTracebackSpans();
+            for (int i = 1; i < spans.Count; i++) {
+                if (spans[i].Start.Line == line) {
+                    return i;
+                }
+            }
+            return -1;
+        }
+
+        private IReadOnlyList<SourceSpan> GetTracebackSpans() {
+            var spans = new List<SourceSpan> { Span };
+            spans.AddRange(_lambda.TracebackSpans);
+            return spans;
         }
 
         /// <summary>
@@ -556,11 +597,15 @@ namespace IronPython.Runtime {
         /// </summary>
         public string co_name {
             get {
-                return _lambda.Name;
+                return _lambda.Name.StartsWith(
+                    "<lambda$",
+                    StringComparison.Ordinal)
+                    ? "<lambda>"
+                    : _lambda.Name;
             }
         }
 
-        public string co_qualname => _lambda.Name;
+        public string co_qualname => co_name;
 
         /// <summary>
         /// Returns a list of global variable names accessed by the code.

@@ -25,7 +25,6 @@ def load_tests(loader, standard_tests, pattern):
         if sys.version_info >= (3, 6):
             failing_tests += [
                 test.test_sys.SysModuleTest('test_c_locale_surrogateescape'), # AssertionError
-                test.test_sys.SysModuleTest('test_is_finalizing'), # AttributeError: 'module' object has no attribute 'is_finalizing'
                 test.test_sys.SysModuleTest('test_sys_tracebacklimit'), # AssertionError
             ]
 

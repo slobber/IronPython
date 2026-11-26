@@ -100,7 +100,7 @@ namespace IronPython.Modules {
 
         public static bool _is_main_interpreter() => true;
 
-        public static void set_name(int ident, [NotNone] string name) { }
+        public static void set_name([NotNone] string name) { }
 
         /// <summary>
         /// Stops execution of Python or other .NET code on the main thread.  If the thread is
@@ -337,6 +337,9 @@ namespace IronPython.Modules {
                     GC.KeepAlive(this);
                 }
             }
+
+            public bool locked()
+                => curHolder is not null;
 
             public string __repr__() {
                 if (curHolder is null) {

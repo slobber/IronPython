@@ -202,6 +202,8 @@ namespace IronPython.Compiler.Syntax {
     }
 
     public sealed class PythonTokenizer : IPegTokenSource {
+        public const char RawInterpolatedMiddleMarker = '\u0001';
+
         private static readonly HashSet<string> SoftKeywords =
             new HashSet<string>(StringComparer.Ordinal) { "match", "case", "type", "_" };
 
@@ -618,6 +620,7 @@ namespace IronPython.Compiler.Syntax {
             int quoteLength = triple ? 3 : 1;
             for (int i = 0; i < quoteLength; i++) AdvanceChar();
             bool template = prefix.Contains('t') || prefix.Contains('T');
+            bool raw = prefix.Contains('r') || prefix.Contains('R');
             AddToken(
                 template ? PythonTokenKind.TStringStart : PythonTokenKind.FStringStart,
                 start,
@@ -630,7 +633,7 @@ namespace IronPython.Compiler.Syntax {
             int middleColumn = _column;
             while (_index < _source.Length) {
                 if (IsStringTerminator(quote, triple)) {
-                    FlushInterpolatedMiddle(template, middleStart, middleLine, middleColumn);
+                    FlushInterpolatedMiddle(template, raw, middleStart, middleLine, middleColumn);
                     int endStart = _index;
                     int endLine = _line;
                     int endColumn = _column;
@@ -661,13 +664,13 @@ namespace IronPython.Compiler.Syntax {
                     continue;
                 }
                 if (current == '{') {
-                    FlushInterpolatedMiddle(template, middleStart, middleLine, middleColumn);
+                    FlushInterpolatedMiddle(template, raw, middleStart, middleLine, middleColumn);
                     int braceStart = _index;
                     int braceLine = _line;
                     int braceColumn = _column;
                     AdvanceChar();
                     AddToken(PythonTokenKind.Operator, braceStart, braceLine, braceColumn, "{");
-                    ScanInterpolationExpression(template);
+                    ScanInterpolationExpression(template, raw);
                     middleStart = _index;
                     middleLine = _line;
                     middleColumn = _column;
@@ -677,7 +680,7 @@ namespace IronPython.Compiler.Syntax {
             }
 
             NeedsMoreInput = true;
-            FlushInterpolatedMiddle(template, middleStart, middleLine, middleColumn);
+            FlushInterpolatedMiddle(template, raw, middleStart, middleLine, middleColumn);
             AddToken(
                 PythonTokenKind.Error,
                 _index,
@@ -686,7 +689,7 @@ namespace IronPython.Compiler.Syntax {
                 "unterminated interpolated string");
         }
 
-        private void ScanInterpolationExpression(bool template) {
+        private void ScanInterpolationExpression(bool template, bool raw) {
             int expressionStart = _index;
             int depth = 1;
             while (_index < _source.Length) {
@@ -705,7 +708,7 @@ namespace IronPython.Compiler.Syntax {
                     int column = _column;
                     AdvanceChar();
                     AddToken(PythonTokenKind.Operator, colonStart, line, column, ":");
-                    ScanInterpolatedFormatSpec(template);
+                    ScanInterpolatedFormatSpec(template, raw);
                     return;
                 }
                 if (current == '(' || current == '[' || current == '{') {
@@ -784,7 +787,7 @@ namespace IronPython.Compiler.Syntax {
             NeedsMoreInput = true;
         }
 
-        private void ScanInterpolatedFormatSpec(bool template) {
+        private void ScanInterpolatedFormatSpec(bool template, bool raw) {
             int middleStart = _index;
             int middleLine = _line;
             int middleColumn = _column;
@@ -793,6 +796,7 @@ namespace IronPython.Compiler.Syntax {
                 if (current == '}') {
                     FlushInterpolatedMiddle(
                         template,
+                        raw,
                         middleStart,
                         middleLine,
                         middleColumn,
@@ -805,13 +809,13 @@ namespace IronPython.Compiler.Syntax {
                     return;
                 }
                 if (current == '{') {
-                    FlushInterpolatedMiddle(template, middleStart, middleLine, middleColumn);
+                    FlushInterpolatedMiddle(template, raw, middleStart, middleLine, middleColumn);
                     int braceStart = _index;
                     int braceLine = _line;
                     int braceColumn = _column;
                     AdvanceChar();
                     AddToken(PythonTokenKind.Operator, braceStart, braceLine, braceColumn, "{");
-                    ScanInterpolationExpression(template);
+                    ScanInterpolationExpression(template, raw);
                     middleStart = _index;
                     middleLine = _line;
                     middleColumn = _column;
@@ -821,22 +825,27 @@ namespace IronPython.Compiler.Syntax {
             }
 
             NeedsMoreInput = true;
-            FlushInterpolatedMiddle(template, middleStart, middleLine, middleColumn);
+            FlushInterpolatedMiddle(template, raw, middleStart, middleLine, middleColumn);
         }
 
         private void FlushInterpolatedMiddle(
             bool template,
+            bool raw,
             int start,
             int line,
             int column,
             bool includeEmpty = false) {
             if (_index < start || (_index == start && !includeEmpty)) return;
+            string value = _source.Substring(start, _index - start);
             AddToken(
                 template ? PythonTokenKind.TStringMiddle : PythonTokenKind.FStringMiddle,
                 start,
                 line,
                 column,
-                _source.Substring(start, _index - start));
+                raw && !template
+                    ? RawInterpolatedMiddleMarker + value
+                    : value,
+                textOverride: value);
         }
 
         private bool ScanOrdinaryString() {

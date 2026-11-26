@@ -9,6 +9,7 @@ using Microsoft.Scripting.Runtime;
 using NUnit.Framework;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 
 namespace IronPython.Tests {
     [TestFixture]
@@ -74,6 +75,36 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void ClassLocalsAreLiveWhileFunctionLocalsRemainSnapshots() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            engine.Execute(
+                "closure_value = 42\n" +
+                "class ClassNamespace:\n" +
+                "    locals()['closure_value'] = 43\n" +
+                "    from_closure = closure_value\n" +
+                "class_locals_value = ClassNamespace.from_closure\n" +
+                "\n" +
+                "def function_locals():\n" +
+                "    local_value = 1\n" +
+                "    snapshot = locals()\n" +
+                "    local_value = 2\n" +
+                "    snapshot['local_value'] = 3\n" +
+                "    return local_value, snapshot['local_value']\n" +
+                "\n" +
+                "function_local, snapshot_local = function_locals()\n",
+                scope);
+
+            Assert.Multiple(() => {
+                Assert.That(scope.GetVariable<int>("class_locals_value"), Is.EqualTo(43));
+                Assert.That(scope.GetVariable<int>("function_local"), Is.EqualTo(2));
+                Assert.That(scope.GetVariable<int>("snapshot_local"), Is.EqualTo(3));
+            });
+        }
+
+        [Test]
         public void ContextVarsSupportDefaultsTokensAndContextIsolation() {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
@@ -109,7 +140,32 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void ContextVarsFlowAcrossDotNetTaskContinuations() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "import clr\n" +
+                "from System.Threading.Tasks import Task\n" +
+                "from _contextvars import ContextVar\n" +
+                "current = ContextVar('current', default='missing')\n" +
+                "async def flow():\n" +
+                "    current.set('parent')\n" +
+                "    await Task.Delay(1)\n" +
+                "    after_delay = current.get()\n" +
+                "    async def child():\n" +
+                "        return current.get()\n" +
+                "    child_value = await child()\n" +
+                "    return after_delay, child_value\n" +
+                "assert flow().AsTask().Result == ('parent', 'parent')\n");
+        }
+
+        [Test]
         public void WindowsSubprocessConstantsAreComplete() {
+            if (!RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+                Assert.Ignore("Windows-only runtime surface");
+            }
+
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
             });
@@ -205,6 +261,56 @@ namespace IronPython.Tests {
                     "assert annotation_values == {'value': int, 'return': LazyAnnotation}\n" +
                     "assert annotation_strings == {'value': 'int', 'return': 'LazyAnnotation'}\n",
                     scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void InteractiveCompilationPreservesAnnotationSourceText() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "import annotationlib\n" +
+                    "source = 'def annotated(value: int) -> list[str]:\\n    return []\\n'\n" +
+                    "exec(compile(source, '<interactive>', 'single'), globals())\n" +
+                    "strings = annotated.__annotate__(annotationlib.Format.STRING)\n" +
+                    "assert strings == {'value': 'int', 'return': 'list[str]'}, repr(strings)\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
+        public void DocstringsUseCompilerWhitespaceNormalization() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "\"\"\"\n" +
+                    "  module\n" +
+                    "\"\"\"\n" +
+                    "def function():\n" +
+                    "    \"\"\"\n" +
+                    "      first\n" +
+                    "        second\n" +
+                    "    \"\"\"\n" +
+                    "class Type:\n" +
+                    "    '''  alpha\n" +
+                    "      beta\n" +
+                    "    '''\n" +
+                    "assert __doc__ == '\\nmodule\\n', repr(__doc__)\n" +
+                    "assert function.__doc__ == '\\nfirst\\n  second\\n', repr(function.__doc__)\n" +
+                    "assert Type.__doc__ == 'alpha\\nbeta\\n', repr(Type.__doc__)\n");
             } finally {
                 Parser.UseGeneratedParser = previousParserMode;
             }
@@ -667,6 +773,78 @@ namespace IronPython.Tests {
         }
 
         [Test]
+        public void ExceptStarSplitsGroupsAndCombinesUnhandledErrors() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            ScriptScope scope = engine.CreateScope();
+            bool previousParserMode = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(
+                    "seen = []\n" +
+                    "try:\n" +
+                    "    raise ExceptionGroup('errors', [ValueError('v'), TypeError('t')])\n" +
+                    "except* ValueError as group:\n" +
+                    "    seen.append(('value', group.message, [type(item).__name__ for item in group.exceptions]))\n" +
+                    "except* TypeError as group:\n" +
+                    "    seen.append(('type', group.message, [type(item).__name__ for item in group.exceptions]))\n" +
+                    "assert seen == [('value', 'errors', ['ValueError']), ('type', 'errors', ['TypeError'])]\n" +
+                    "unhandled = None\n" +
+                    "try:\n" +
+                    "    try:\n" +
+                    "        raise ExceptionGroup('errors', [ValueError('v'), TypeError('t')])\n" +
+                    "    except* ValueError:\n" +
+                    "        pass\n" +
+                    "except BaseExceptionGroup as group:\n" +
+                    "    unhandled = (group.message, [type(item).__name__ for item in group.exceptions])\n" +
+                    "assert unhandled == ('errors', ['TypeError'])\n" +
+                    "import clr\n" +
+                    "from System.Threading.Tasks import Task\n" +
+                    "def run_coro(coro):\n" +
+                    "    value = None\n" +
+                    "    while True:\n" +
+                    "        try:\n" +
+                    "            task = coro.send(value)\n" +
+                    "            task.Wait()\n" +
+                    "            value = None\n" +
+                    "        except StopIteration as exc:\n" +
+                    "            return exc.value\n" +
+                    "async def async_handler():\n" +
+                    "    result = []\n" +
+                    "    try:\n" +
+                    "        raise ExceptionGroup('async', [ValueError('v')])\n" +
+                    "    except* ValueError as group:\n" +
+                    "        await Task.FromResult(None)\n" +
+                    "        result.append(group.message)\n" +
+                    "    return result\n" +
+                    "assert run_coro(async_handler()) == ['async']\n" +
+                    "invalid_except_star = 0\n" +
+                    "for source in [\n" +
+                    "    'def f():\\n try: pass\\n except* ValueError: return 1\\n',\n" +
+                    "    'while True:\\n try: pass\\n except* ValueError: break\\n',\n" +
+                    "    'while True:\\n try: pass\\n except* ValueError: continue\\n']:\n" +
+                    "    try:\n" +
+                    "        compile(source, '<except-star>', 'exec')\n" +
+                    "    except SyntaxError:\n" +
+                    "        invalid_except_star += 1\n" +
+                    "assert invalid_except_star == 3\n" +
+                    "combined = None\n" +
+                    "try:\n" +
+                    "    try:\n" +
+                    "        raise ExceptionGroup('errors', [ValueError('v'), TypeError('t')])\n" +
+                    "    except* ValueError:\n" +
+                    "        raise KeyError('handler')\n" +
+                    "except BaseExceptionGroup as group:\n" +
+                    "    combined = [type(item).__name__ for item in group.exceptions]\n" +
+                    "assert combined == ['KeyError', 'ExceptionGroup']\n",
+                    scope);
+            } finally {
+                Parser.UseGeneratedParser = previousParserMode;
+            }
+        }
+
+        [Test]
         public void ItertoolsBatchedSupportsStrictMode() {
             ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
                 ["NoSite"] = true
@@ -679,6 +857,20 @@ namespace IronPython.Tests {
                 "except ValueError as exc:\n" +
                 "    batched_error = str(exc)\n" +
                 "assert 'incomplete batch' in batched_error\n");
+        }
+
+        [Test]
+        public void PurePython315StandardLibrarySmokeTests() {
+            ScriptEngine engine = Python.CreateEngine(new Dictionary<string, object> {
+                ["NoSite"] = true
+            });
+            engine.Execute(
+                "from graphlib import TopologicalSorter\n" +
+                "graph = {'deploy': {'build'}, 'build': {'prepare'}, 'prepare': set()}\n" +
+                "assert list(TopologicalSorter(graph).static_order()) == ['prepare', 'build', 'deploy']\n" +
+                "import tomllib\n" +
+                "document = tomllib.loads('title = \"Iron\"\\n[build]\\nvalue = 42\\n')\n" +
+                "assert document == {'title': 'Iron', 'build': {'value': 42}}\n");
         }
 
         [Test]
@@ -805,6 +997,32 @@ namespace IronPython.Tests {
                 "        super().__init_subclass__(*args, **kwargs)\n" +
                 "class MetaclassHookChild(MetaclassHook, metaclass=InitSubclassMeta):\n" +
                 "    pass\n" +
+                "from abc import ABCMeta\n" +
+                "class ClassMethodHook(metaclass=ABCMeta):\n" +
+                "    subclass_name = None\n" +
+                "    @classmethod\n" +
+                "    def __init_subclass__(cls, **kwargs):\n" +
+                "        ClassMethodHook.subclass_name = cls.__name__\n" +
+                "        super().__init_subclass__(**kwargs)\n" +
+                "class ClassMethodHookChild(ClassMethodHook):\n" +
+                "    pass\n" +
+                "init_subclass_chain = []\n" +
+                "class ChainHookFirst:\n" +
+                "    def __init_subclass__(cls, **kwargs):\n" +
+                "        init_subclass_chain.append('first:' + cls.__name__)\n" +
+                "        super().__init_subclass__(**kwargs)\n" +
+                "class ChainHookSecond:\n" +
+                "    def __init_subclass__(cls, **kwargs):\n" +
+                "        init_subclass_chain.append('second:' + cls.__name__)\n" +
+                "        super().__init_subclass__(**kwargs)\n" +
+                "class ChainHookChild(ChainHookFirst, ChainHookSecond):\n" +
+                "    pass\n" +
+                "def make_nested_class():\n" +
+                "    class NestedOuter:\n" +
+                "        class NestedInner:\n" +
+                "            pass\n" +
+                "    return NestedOuter\n" +
+                "NestedOuter = make_nested_class()\n" +
                 "class NamedDescriptor:\n" +
                 "    def __set_name__(self, owner, name):\n" +
                 "        self.owner_name = owner.__name__\n" +
@@ -842,6 +1060,9 @@ namespace IronPython.Tests {
                 "assert CooperativeHook.calls == ['CooperativeChild'], 'cooperative init subclass'\n" +
                 "assert KeywordHook.keyword == 42, 'init subclass keywords'\n" +
                 "assert MetaclassHook.called, 'metaclass init subclass'\n" +
+                "assert ClassMethodHook.subclass_name == 'ClassMethodHookChild', 'classmethod init subclass'\n" +
+                "assert init_subclass_chain == ['first:ChainHookChild', 'second:ChainHookChild'], 'init subclass chain'\n" +
+                "assert NestedOuter.NestedInner.__qualname__.endswith('.NestedOuter.NestedInner'), 'nested class qualname'\n" +
                 "assert Described.value.owner_name == 'Described', 'set name owner'\n" +
                 "assert Described.value.attribute_name == 'value', 'set name attribute'\n" +
                 "assert decorated() == 3, 'decorator'\n" +

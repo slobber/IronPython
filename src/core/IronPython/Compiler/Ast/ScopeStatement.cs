@@ -27,6 +27,7 @@ namespace IronPython.Compiler.Ast {
     using AstUtils = Microsoft.Scripting.Ast.Utils;
 
     public abstract class ScopeStatement : Statement {
+        private readonly List<SourceSpan> _tracebackSpans = new();
         private FunctionCode? _funcCode;            // the function code object created for this scope
 
         private ClosureInfo[]? _closureVariables;                       // closed over variables, bool indicates if we accessed it in this scope.
@@ -470,6 +471,14 @@ namespace IronPython.Compiler.Ast {
             return AddDebugInfo(expression, location);
         }
 
+        internal void AddTracebackSpan(SourceSpan span) {
+            if (!_tracebackSpans.Contains(span)) {
+                _tracebackSpans.Add(span);
+            }
+        }
+
+        internal IReadOnlyList<SourceSpan> TracebackSpans => _tracebackSpans;
+
         #endregion
 
         #region Runtime Line Number Tracing
@@ -612,7 +621,7 @@ namespace IronPython.Compiler.Ast {
             }
 
             return Ast.Call(
-                AstMethods.CreateLocalContext,
+                newNamespace ? AstMethods.CreateLocalContext : AstMethods.CreateClassLocalContext,
                 parentContext,
                 MutableTuple.Create(ArrayUtils.ConvertAll(closureVariables, x => GetClosureCell(x))),
                 Ast.Constant(ArrayUtils.ConvertAll(
@@ -639,6 +648,18 @@ namespace IronPython.Compiler.Ast {
 
             Debug.Assert(_variableMapping.ContainsKey(variable.LimitVariable!));
             return _variableMapping[variable.LimitVariable!];
+        }
+
+        internal bool TryGetVariableExpression(
+            PythonVariable variable,
+            out MSAst.Expression expression) {
+            PythonVariable? limitVariable = variable.LimitVariable;
+            if (limitVariable is not null
+                && _variableMapping.TryGetValue(limitVariable, out expression!)) {
+                return true;
+            }
+            expression = null!;
+            return false;
         }
 
         internal virtual MSAst.Expression LookupVariableExpression(PythonVariable variable)

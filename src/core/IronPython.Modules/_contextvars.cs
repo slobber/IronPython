@@ -199,6 +199,10 @@ namespace IronPython.Modules {
         private readonly Dictionary<ContextVar, object?> _values;
         private int _entered;
 
+        public Context()
+            : this(new Dictionary<ContextVar, object?>(ReferenceEqualityComparer.Instance)) {
+        }
+
         internal Context(Dictionary<ContextVar, object?> values) {
             _values = values;
         }

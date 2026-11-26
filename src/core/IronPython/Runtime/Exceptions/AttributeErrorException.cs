@@ -17,6 +17,9 @@ namespace IronPython.Runtime.Exceptions {
 
     [Serializable]
     public class AttributeErrorException : MissingMemberException, IPythonAwareException {
+        public string? PythonName { get; internal set; }
+        public object? PythonObject { get; internal set; }
+
         private PythonExceptions.BaseException? _pyExceptionObject;
         private List<DynamicStackFrame>? _frames;
         private TraceBack? _traceback;
@@ -25,6 +28,15 @@ namespace IronPython.Runtime.Exceptions {
         public AttributeErrorException(string msg) : base(msg) { }
         public AttributeErrorException(string message, Exception innerException)
             : base(message, innerException) {
+        }
+
+        internal AttributeErrorException(
+            string message,
+            string name,
+            object? pythonObject)
+            : base(message) {
+            PythonName = name;
+            PythonObject = pythonObject;
         }
 #if FEATURE_SERIALIZATION
         protected AttributeErrorException(SerializationInfo info, StreamingContext context) : base(info, context) { }

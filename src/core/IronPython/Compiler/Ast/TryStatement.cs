@@ -193,6 +193,7 @@ namespace IronPython.Compiler.Ast {
                 MSAst.ParameterExpression locException = Ast.Variable(typeof(Exception), "$localException");
 
                 MSAst.Expression? @finally = Finally;
+                bool awaitingFinally = FinallyContainsAwait();
 
                 // lots is going on here.  We need to consider:
                 //      1. Exceptions propagating out of try/except/finally.  Here we need to save the line #
@@ -219,7 +220,9 @@ namespace IronPython.Compiler.Ast {
                             // currently handled exception when we catch it
                             Ast.Call(AstMethods.SetCurrentException, Parent.LocalContext, locException),
                             Ast.Assign(tryThrows, locException),
-                            Expression.Rethrow()
+                            awaitingFinally
+                                ? AstUtils.Empty()
+                                : Expression.Rethrow()
                         )
                     )
                 ).FinallyWithJumps(
@@ -238,6 +241,15 @@ namespace IronPython.Compiler.Ast {
                             Expression.Equal(locException, tryThrows),
                             UpdateLineUpdated(true)
                         ),
+                        AstUtils.IfThen(
+                            Expression.NotEqual(
+                                tryThrows,
+                                AstUtils.Constant(null, typeof(Exception))),
+                            Ast.Call(
+                                typeof(PythonOps).GetMethod(
+                                    nameof(PythonOps.SetFinallyExceptionContext))!,
+                                locException,
+                                tryThrows)),
                         Expression.Rethrow()
                     ),
 
@@ -249,10 +261,42 @@ namespace IronPython.Compiler.Ast {
                         UpdateLineUpdated(true)
                     )
                 );
-                body = Ast.Block(new[] { tryThrows }, body);
+                body = Ast.Block(
+                    new[] { tryThrows },
+                    body,
+                    awaitingFinally
+                        ? AstUtils.IfThen(
+                            Expression.NotEqual(
+                                tryThrows,
+                                AstUtils.Constant(null, typeof(Exception))),
+                            Ast.Throw(
+                                Expression.Call(
+                                    typeof(ExceptionHelpers).GetMethod(
+                                        nameof(ExceptionHelpers.UpdateForRethrow))!,
+                                    tryThrows)))
+                        : AstUtils.Empty());
             }
 
             return body;
+        }
+
+        private bool FinallyContainsAwait() {
+            if (Finally is null) return false;
+            var finder = new AwaitFinder();
+            Finally.Walk(finder);
+            return finder.Found;
+        }
+
+        private sealed class AwaitFinder : PythonWalker {
+            public bool Found { get; private set; }
+
+            public override bool Walk(AwaitExpression node) {
+                Found = true;
+                return false;
+            }
+
+            public override bool Walk(FunctionDefinition node) => false;
+            public override bool Walk(ClassDefinition node) => false;
         }
 
 

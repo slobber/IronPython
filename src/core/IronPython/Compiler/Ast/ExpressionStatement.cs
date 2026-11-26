@@ -23,6 +23,13 @@ namespace IronPython.Compiler.Ast {
         }
 
         private MSAst.Expression ReduceWorker(MSAst.Expression expression) {
+            if (Expression is NameExpression) {
+                expression = Ast.Call(
+                    typeof(IronPython.Runtime.Operations.PythonOps).GetMethod(
+                        nameof(IronPython.Runtime.Operations.PythonOps.ResolveLazyImport))!,
+                    Parent.LocalContext,
+                    expression);
+            }
             if (Parent.PrintExpressions) {
                 expression = Ast.Call(
                     AstMethods.PrintExpressionValue,

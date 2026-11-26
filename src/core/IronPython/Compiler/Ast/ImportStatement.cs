@@ -18,13 +18,20 @@ namespace IronPython.Compiler.Ast {
         private readonly ModuleName[] _names;
         private readonly string[] _asNames;
 
-        public ImportStatement(ModuleName[] names, string[] asNames, bool isLazy = false) {
+        public ImportStatement(
+            ModuleName[] names,
+            string[] asNames,
+            bool isLazy = false,
+            bool allowGlobalLazyMode = false) {
             _names = names;
             _asNames = asNames;
             IsLazy = isLazy;
+            AllowGlobalLazyMode = allowGlobalLazyMode;
         }
 
         public bool IsLazy { get; }
+
+        public bool AllowGlobalLazyMode { get; }
 
         internal PythonVariable[] Variables { get; set; }
 
@@ -45,7 +52,9 @@ namespace IronPython.Compiler.Ast {
                                 Expression.Call(
                                     IsLazy
                                         ? (_asNames[i] == null ? AstMethods.LazyImportTop : AstMethods.LazyImportBottom)
-                                        : (_asNames[i] == null ? AstMethods.ImportTop : AstMethods.ImportBottom),
+                                        : AllowGlobalLazyMode
+                                            ? (_asNames[i] == null ? AstMethods.ImportTopOrLazy : AstMethods.ImportBottomOrLazy)
+                                            : (_asNames[i] == null ? AstMethods.ImportTop : AstMethods.ImportBottom),
                                     Parent.LocalContext,                                    // 1st arg - code context
                                     AstUtils.Constant(_names[i].MakeString()),              // 2nd arg - module name
                                     AstUtils.Constant(0)                                    // 3rd arg - absolute imports

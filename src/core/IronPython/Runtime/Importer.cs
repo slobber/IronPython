@@ -66,6 +66,38 @@ namespace IronPython.Runtime {
             );
         }
 
+        internal static object ImportWithGlobals(
+            CodeContext context,
+            string fullName,
+            PythonTuple from,
+            int level,
+            PythonDictionary globals) {
+            return LightExceptions.CheckAndThrow(
+                ImportLightThrowWithGlobals(context, fullName, from, level, globals));
+        }
+
+        [LightThrowing]
+        private static object ImportLightThrowWithGlobals(
+            CodeContext context,
+            string fullName,
+            PythonTuple from,
+            int level,
+            PythonDictionary globals) {
+            Debug.Assert(level >= 0);
+
+            PythonContext pc = context.LanguageContext;
+            var site = pc.ImportSite;
+            return site.Target(
+                site,
+                context,
+                FindImportFunction(context, globals),
+                fullName,
+                globals,
+                globals,
+                from,
+                level);
+        }
+
         /// <summary>
         /// Gateway into importing ... called from Ops.  This is called after
         /// importing the module and is used to return individual items from
@@ -797,6 +829,24 @@ namespace IronPython.Runtime {
             }
 
             throw PythonOps.ImportError("cannot find __import__");
+        }
+
+        private static object FindImportFunction(
+            CodeContext context,
+            PythonDictionary globals) {
+            if (globals.TryGetValue("__builtins__", out object builtinsValue)) {
+                if (builtinsValue is PythonDictionary builtins
+                    && builtins.TryGetValue("__import__", out object import)
+                    && import is not null) {
+                    return import;
+                }
+                if (builtinsValue is PythonModule module
+                    && module.__dict__.TryGetValue("__import__", out import)
+                    && import is not null) {
+                    return import;
+                }
+            }
+            return FindImportFunction(context);
         }
 
         internal static object ImportBuiltin(CodeContext/*!*/ context, string/*!*/ name) {

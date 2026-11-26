@@ -17,6 +17,7 @@ using System.Text;
 using System.Threading;
 
 using IronPython.Runtime.Binding;
+using IronPython.Runtime.Exceptions;
 using IronPython.Runtime.Operations;
 
 using Microsoft.Scripting;
@@ -65,6 +66,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         private Dictionary<CallSignature, LateBoundInitBinder> _lateBoundInitBinders;
         private string[] _optimizedInstanceNames;           // optimized names stored in a custom dictionary
         private int _optimizedInstanceVersion;
+        private string _moduleName;
         private Dictionary<string, List<MethodInfo>> _extensionMethods;         // extension methods defined on the type
 
         private readonly PythonSiteCache _siteCache = new PythonSiteCache();
@@ -495,8 +497,14 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                     ? alias.__origin__
                     : baseObject;
                 PythonType metaCls = DynamicHelpers.GetPythonType(dt);
+                if (metaCls.Name == "_ClassGetItemMeta") {
+                    metaCls = TypeCache.PythonType;
+                }
 
-                if (meta.IsSubclassOf(metaCls)) continue;
+                if (meta.IsSubclassOf(metaCls)
+                    || DynamicHelpers.GetPythonType(meta).IsSubclassOf(metaCls)) {
+                    continue;
+                }
 
                 if (metaCls.IsSubclassOf(meta)) {
                     meta = metaCls;
@@ -514,7 +522,29 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             foreach (KeyValuePair<object, object> item in namespaceValues) {
                 if (item.Key is not string name || item.Value is null) continue;
                 if (PythonOps.TryGetBoundAttr(context, item.Value, "__set_name__", out object callback)) {
-                    PythonCalls.Call(context, callback, type, name);
+                    try {
+                        PythonCalls.Call(context, callback, type, name);
+                    } catch (Exception exception) {
+                        string note =
+                            $"Error calling __set_name__ on " +
+                            $"'{DynamicHelpers.GetPythonType(item.Value).Name}' " +
+                            $"instance '{name}' in '{type.Name}'";
+                        PythonExceptions.BaseException pythonException =
+                            exception.GetPythonException();
+                        if (pythonException is not null) {
+                            pythonException.add_note(note);
+                        } else if (PythonOps.TryGetBoundAttr(
+                                context,
+                                exception,
+                                "add_note",
+                                out object addNote)) {
+                            PythonCalls.Call(
+                                context,
+                                addNote,
+                                note);
+                        }
+                        throw;
+                    }
                 }
             }
         }
@@ -538,7 +568,7 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             }
             if (slot is null || declaringType is null) return;
 
-            object callback = slot.TryGetValue(context, null, declaringType, out object bound)
+            object callback = slot.TryGetValue(context, null, type, out object bound)
                 ? bound
                 : null;
             if (callback is null) return;
@@ -787,11 +817,15 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         }
 
         public object __or__(object other) {
-            return new UnionType(this, other);
+            return UnionType.MakeUnion(this, other);
         }
 
         public object this[[NotNone] params object[] args] {
             get {
+                if (this == PythonExceptions.Exception) {
+                    throw PythonOps.TypeError(
+                        "type 'Exception' is not subscriptable");
+                }
                 if (args.Length == 1 && args[0] is PythonTuple tuple && tuple.Count != 0) {
                     args = tuple.ToArray();
                 }
@@ -900,6 +934,12 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         public object this[string member] {
             get {
                 if (!UnderlyingSystemType.IsEnum) {
+                    if (IsSubscriptableGenericType()) {
+                        return new GenericAlias(
+                            (object)this,
+                            PythonTuple.MakeTuple(member),
+                            false);
+                    }
                     throw PythonOps.TypeError("'type' object is not subscriptable");
                 }
                 if (member == null) {
@@ -919,8 +959,14 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             object res;
             if (self._dict != null &&
                 self._dict.TryGetValue("__module__", out pts) &&
-                pts.TryGetValue(context, self, DynamicHelpers.GetPythonType(self), out res)) {
+                pts.TryGetValue(context, self, DynamicHelpers.GetPythonType(self), out res)
+                && res is string) {
                 return res;
+            }
+            if (self._moduleName is not null) {
+                return self._moduleName == "_typing"
+                    ? "typing"
+                    : self._moduleName;
             }
             if (self.IsSystemType && !self.IsPythonType) return self.UnderlyingSystemType.Namespace;
             return PythonTypeOps.GetModuleName(context, self.UnderlyingSystemType);
@@ -995,14 +1041,9 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 }
                 return string.Format("<class '{0}'>", Name);
             } else {
-                PythonTypeSlot dts;
-                string module = "unknown";
-                object modObj;
-                if (TryLookupSlot(context, "__module__", out dts) &&
-                    dts.TryGetValue(context, this, this, out modObj)) {
-                    module = modObj as string;
-                }
-                return string.Format("<class '{0}.{1}'>", module, name);
+                string module = Get__module__(context, this) as string
+                    ?? "unknown";
+                return string.Format("<class '{0}.{1}'>", module, QualName);
             }
         }
 
@@ -1768,9 +1809,10 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 return res;
             }
 
-            throw new MissingMemberException(string.Format(CultureInfo.CurrentCulture,
-                Resources.CantFindMember,
-                name));
+            throw new AttributeErrorException(
+                string.Format(CultureInfo.CurrentCulture, Resources.CantFindMember, name),
+                name,
+                instance);
         }
 
         internal void SetMember(CodeContext context, object instance, string name, object value) {
@@ -2188,6 +2230,10 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             bases = ValidateBases(bases);
 
             Name = name;
+            if (context.GlobalDict.TryGetValue("__name__", out object moduleName)
+                && moduleName is string moduleNameString) {
+                _moduleName = moduleNameString;
+            }
             bool hasQualName = vars.TryGetValue("__qualname__", out object qualName);
             QualName = hasQualName
                 && qualName is string qualNameString
@@ -2196,10 +2242,9 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
             if (hasQualName && qualName is string) {
                 vars.Remove("__qualname__");
             }
-            if (!vars.ContainsKey("__parameters__")
-                && vars.TryGetValue("__orig_bases__", out object originalBases)
-                && originalBases is PythonTuple originalBasesTuple) {
-                vars["__parameters__"] = PythonOps.InferTypeParameters(originalBasesTuple);
+            if (vars.TryGetValue("__init_subclass__", out object initSubclass)
+                && initSubclass is PythonFunction) {
+                vars["__init_subclass__"] = new classmethod(context, initSubclass);
             }
             _bases = GetBasesAsList(bases).ToArray();
             _pythonContext = context.LanguageContext;
@@ -2350,6 +2395,13 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
                 res = new List<string>(seq.Count);
                 for (int i = 0; i < seq.Count; i++) {
                     res.Add(GetSlotName(seq[i]));
+                }
+
+                res.Sort();
+            } else if (slots is IDictionary<object, object> mapping) {
+                res = new List<string>(mapping.Count);
+                foreach (object name in mapping.Keys) {
+                    res.Add(GetSlotName(name));
                 }
 
                 res.Sort();
@@ -2560,6 +2612,11 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
         }
 
         private static PythonTuple ValidateBases(PythonTuple bases) {
+            foreach (object baseObject in bases) {
+                if (baseObject is not PythonType) {
+                    throw PythonOps.TypeError("bases must be types");
+                }
+            }
             PythonTuple newBases = PythonTypeOps.EnsureBaseType(bases);
             for (int i = 0; i < newBases.__len__(); i++) {
 
@@ -2573,7 +2630,9 @@ type(name, bases, dict) -> creates a new type instance with the given name, base
 
                 for (int j = 0; j < newBases.__len__(); j++) {
                     if (i != j && newBases[i] == newBases[j]) {
-                        throw PythonOps.TypeError("duplicate base class {0}", ((PythonType)newBases[i]).Name);
+                        throw PythonOps.TypeError(
+                            "duplicate base class {0}",
+                            ((PythonType)newBases[i]!).Name);
                     }
                 }
             }

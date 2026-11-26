@@ -5,6 +5,7 @@
 #nullable enable
 
 using System;
+using System.Collections;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
@@ -38,6 +39,21 @@ namespace IronPython.Runtime {
         private readonly AsyncInterruptSource _interrupts;
         private readonly AsyncSuspensionCoordinator _coordinator;
         private readonly CodeContext _context;
+        [ThreadStatic]
+        private static PythonCoroutine? _current;
+        internal static PythonCoroutine? Current => _current;
+        internal FunctionCode? Code => _code;
+        private static readonly ConditionalWeakTable<Task, PythonCoroutine> AwaitableTasks = new();
+        private static readonly BuiltinFunction CompleteFutureIfPendingCallback =
+            BuiltinFunction.MakeFunction(
+                nameof(CompleteFutureIfPending),
+                [
+                    typeof(PythonCoroutine).GetMethod(
+                        nameof(CompleteFutureIfPending),
+                        System.Reflection.BindingFlags.NonPublic
+                            | System.Reflection.BindingFlags.Static)!
+                ],
+                typeof(PythonCoroutine));
         private WeakRefTracker? _tracker;
 
         internal PythonCoroutine(
@@ -58,6 +74,7 @@ namespace IronPython.Runtime {
         private Task<object?> EnsureTask() {
             if (_task is null) {
                 _task = _factory();
+                AwaitableTasks.AddOrUpdate(_task, this);
                 _task.ContinueWith(
                     _ => _coordinator.NotifyCompleted(),
                     CancellationToken.None,
@@ -70,18 +87,23 @@ namespace IronPython.Runtime {
 
         [LightThrowing]
         public object? send(object? value) {
-            if (_task is not null) _coordinator.ResumeAndWait(_task);
-            var task = EnsureTask();
-            if (!task.IsCompleted) {
-                if (_coordinator.TryGetAwait(out Task? awaited)) {
-                    if (AsyncSuspensionCoordinator.IsYield(awaited)) return null;
-                    return WaitForCoroutine(awaited);
+            PythonCoroutine? previous = _current;
+            _current = this;
+            try {
+                if (_task is not null) _coordinator.ResumeAndWait(_task);
+                var task = EnsureTask();
+                if (!task.IsCompleted) {
+                    if (_coordinator.TryGetAwait(out Task? awaited)) {
+                        if (AsyncSuspensionCoordinator.IsYield(awaited)) return null;
+                        return WaitForCoroutine(awaited);
+                    }
+                    return WaitForCoroutine(task);
                 }
-                return WaitForCoroutine(task);
+                return SettleCompletedTask(task);
+            } finally {
+                _current = previous;
             }
-            return SettleCompletedTask(task);
         }
-
 
         [LightThrowing]
         public object? @throw(object? value) => @throw(value, null, null);
@@ -107,15 +129,40 @@ namespace IronPython.Runtime {
             // Validate up front so we don't mutate any state on bad input.
             if (PythonOps.ValidateThrowArguments(type, value, traceback) is Exception error) return LightExceptions.Throw(error);
 
+            // The Task driving this coroutine can complete concurrently with the
+            // asyncio Task deciding to inject a cancellation at its next step.
+            // Settle the already-completed body first so its real result or
+            // exception is not overwritten by the later interruption.
+            if (_task is { IsCompleted: true } completedTask) {
+                return SettleCompletedTask(completedTask);
+            }
+
             // Construct the actual exception object. DefaultContext.Default suffices here — throw()'s
             // CodeContext role is limited to resolving class-form exception construction, and the
             // coroutine's own context will re-bind the chain when the exception unwinds inside the body.
             Exception ex = PythonOps.MakeExceptionForGenerator(DefaultContext.Default, type, value, traceback);
 
+            // `await` of another Python coroutine is lowered through that coroutine's Task.
+            // In CPython, throw() at that await enters the awaited coroutine first, so its
+            // try/except/finally blocks observe the injected exception. Interrupt the
+            // nested body, then keep waiting on this coroutine so its await can observe
+            // the nested result or exception and continue normal exception handling.
+            bool interruptedNested = false;
+            if (_task is not null
+                && _coordinator.TryGetAwait(out Task? nestedAwaited)) {
+                if (AwaitableTasks.TryGetValue(
+                        nestedAwaited,
+                        out PythonCoroutine? awaitedCoroutine)) {
+                    interruptedNested = awaitedCoroutine.InterruptCurrentAwait(ex);
+                } else if (IsCancellation(ex)) {
+                    interruptedNested = PythonOps.TryCancelObservedFuture(nestedAwaited, ex);
+                }
+            }
+
             // The body sees `ex` raised at the await it is suspended at, or at its next await if it is running.
             // If the body hasn't started, it doesn't run at all: its task fails with `ex`, as in CPython.
-            bool interrupted = _interrupts.Interrupt(ex);
-            _coordinator.Resume();
+            bool interrupted = interruptedNested || _interrupts.Interrupt(ex);
+            if (!interruptedNested) _coordinator.Resume();
             if (!interrupted) {
                 // The coroutine has finished. throw() raises the exception immediately —
                 // the body has nothing left to observe it. Matches CPython.
@@ -133,6 +180,44 @@ namespace IronPython.Runtime {
             return SettleCompletedTask(task);
         }
 
+        /// <summary>
+        /// Delivers an exception at this coroutine's current await. Nested Python
+        /// coroutine awaits are traversed first, matching the inline execution of
+        /// <c>await</c> in CPython.
+        /// </summary>
+        private bool InterruptCurrentAwait(Exception exception) {
+            // The awaited body already produced its outcome. Let the outer await
+            // observe that outcome instead of injecting a later cancellation into
+            // a coroutine that can no longer run.
+            if (_task is { IsCompleted: true }) {
+                return true;
+            }
+            if (_task is not null
+                && _coordinator.TryGetAwait(out Task? nestedAwaited)
+                && AwaitableTasks.TryGetValue(nestedAwaited, out PythonCoroutine? awaitedCoroutine)
+                && awaitedCoroutine.InterruptCurrentAwait(exception)) {
+                return true;
+            }
+            if (_task is not null
+                && _coordinator.TryGetAwait(out Task? observedFutureTask)
+                && IsCancellation(exception)) {
+                bool cancelled = PythonOps.TryCancelObservedFuture(
+                    observedFutureTask,
+                    exception);
+                if (cancelled) return true;
+            }
+            if (!_interrupts.Interrupt(exception)) {
+                return false;
+            }
+            _coordinator.Resume();
+            return true;
+        }
+
+        private static bool IsCancellation(Exception exception) {
+            object pythonException = PythonExceptions.ToPython(exception);
+            return DynamicHelpers.GetPythonType(pythonException).Name == "CancelledError";
+        }
+
         private object WaitForCoroutine(Task task) {
             object events = Importer.ImportModule(
                 _context,
@@ -141,14 +226,16 @@ namespace IronPython.Runtime {
                 false,
                 0)!;
             if (!PythonOps.TryGetBoundAttr(_context, events, "get_running_loop", out object? getRunningLoop)) {
-                return LightExceptions.Throw(PythonOps.RuntimeError("no running event loop"));
+                return null!;
             }
 
             object loop;
             try {
                 loop = PythonCalls.Call(_context, getRunningLoop)!;
-            } catch (Exception exception) {
-                return LightExceptions.Throw(exception);
+            } catch (Exception) {
+                // Manual coroutine.send() outside an event loop is allowed to observe
+                // the current suspension instead of requiring asyncio to drive it.
+                return null!;
             }
 
             if (!PythonOps.TryGetBoundAttr(_context, loop, "create_future", out object? createFuture)) {
@@ -173,16 +260,28 @@ namespace IronPython.Runtime {
 
         private void NotifyFuture(object loop, object future) {
             try {
-                if (!PythonOps.TryGetBoundAttr(_context, loop, "call_soon_threadsafe", out object? callSoon) ||
-                    !PythonOps.TryGetBoundAttr(_context, future, "set_result", out object? setResult) ||
-                    !PythonOps.TryGetBoundAttr(_context, future, "cancelled", out object? cancelled)) {
+                if (!PythonOps.TryGetBoundAttr(_context, loop, "call_soon_threadsafe", out object? callSoon)) {
                     return;
                 }
-                if (PythonOps.IsTrue(PythonCalls.Call(_context, cancelled))) return;
-                PythonCalls.Call(_context, callSoon, setResult, null!);
+                PythonCalls.Call(
+                    _context,
+                    callSoon,
+                    CompleteFutureIfPendingCallback,
+                    future);
             } catch {
                 // The event loop may already be closed while the coroutine finishes.
             }
+        }
+
+        [PythonHidden]
+        private static void CompleteFutureIfPending(object future) {
+            CodeContext context = DefaultContext.Default;
+            if (!PythonOps.TryGetBoundAttr(context, future, "done", out object? done) ||
+                PythonOps.IsTrue(PythonCalls.Call(context, done)) ||
+                !PythonOps.TryGetBoundAttr(context, future, "set_result", out object? setResult)) {
+                return;
+            }
+            PythonCalls.Call(context, setResult, (object?)null);
         }
 
 
@@ -345,7 +444,7 @@ namespace IronPython.Runtime {
 
 
     [PythonType("coroutine_wrapper")]
-    public sealed class CoroutineWrapper {
+    public sealed class CoroutineWrapper : IEnumerable {
         private readonly PythonCoroutine _coroutine;
 
         internal CoroutineWrapper(PythonCoroutine coroutine) {
@@ -383,6 +482,37 @@ namespace IronPython.Runtime {
 
         public CoroutineWrapper __iter__() {
             return this;
+        }
+
+        IEnumerator IEnumerable.GetEnumerator() => new CoroutineWrapperEnumerator(_coroutine);
+
+        private sealed class CoroutineWrapperEnumerator : IEnumerator {
+            private readonly PythonCoroutine _coroutine;
+            private object? _current;
+
+            public CoroutineWrapperEnumerator(PythonCoroutine coroutine) {
+                _coroutine = coroutine;
+            }
+
+            public object? Current => _current;
+
+            public bool MoveNext() {
+                object? result = _coroutine.send(null);
+                if (LightExceptions.IsLightException(result)) {
+                    Exception exception = LightExceptions.GetLightException(result);
+                    if (exception is StopIterationException) {
+                        return false;
+                    }
+                    throw exception;
+                }
+
+                _current = result;
+                return true;
+            }
+
+            public void Reset() => throw new NotSupportedException();
+
+            public void Dispose() { }
         }
     }
 }

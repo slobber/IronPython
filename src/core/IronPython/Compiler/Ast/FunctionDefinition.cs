@@ -320,6 +320,14 @@ namespace IronPython.Compiler.Ast {
                 }
             }
 
+            if (Parent is ClassDefinition classScope
+                && binder.IsAnnotationReference(this, reference)
+                && classScope.TryGetVariable(reference.Name, out PythonVariable classVariable)
+                && classVariable.Scope == classScope
+                && classVariable.Kind is VariableKind.Local) {
+                return null;
+            }
+
             // Try to bind in outer scopes
             bool stopAtGlobal = variable?.Kind == VariableKind.Nonlocal;
             if (TryBindOuterScopes(this, reference, out variable, stopAtGlobal)) {
@@ -334,8 +342,8 @@ namespace IronPython.Compiler.Ast {
             base.Bind(binder);
             Verify(binder);
 
-            if (((PythonContext)binder.Context.SourceUnit.LanguageContext).PythonOptions.FullFrames) {
-                // force a dictionary if we have enabled full frames for sys._getframe support
+            if (((PythonContext)binder.Context.SourceUnit.LanguageContext).PythonOptions.Frames) {
+                // Python frame locals must be materialized whenever frame APIs are enabled.
                 NeedsLocalsDictionary = true;
             }
         }
@@ -391,6 +399,15 @@ namespace IronPython.Compiler.Ast {
                     kwdefaults.Add(AstUtils.Convert(param.DefaultValue, typeof(object)));
                 }
 
+            }
+            foreach (var param in _parameters
+                .OrderBy(param => param.Kind switch {
+                    ParameterKind.PositionalOnly or ParameterKind.Normal => 0,
+                    ParameterKind.List => 1,
+                    ParameterKind.KeywordOnly => 2,
+                    ParameterKind.Dictionary => 3,
+                    _ => 4
+                })) {
                 if (param.Annotation != null) {
                     AddAnnotation(
                         param.Name,
@@ -407,6 +424,18 @@ namespace IronPython.Compiler.Ast {
                     TypeParameters is null);
             }
 
+            var annotationCaptureNames = new List<string>();
+            var annotationCaptureCells = new List<MSAst.Expression>();
+            foreach (PythonVariable variable in AnnotationCaptureVariables) {
+                if (Parent.TryGetVariableExpression(
+                        variable,
+                        out MSAst.Expression expression)
+                    && expression is ClosureExpression closure) {
+                    annotationCaptureNames.Add(variable.Name);
+                    annotationCaptureCells.Add(closure.ClosureCell);
+                }
+            }
+
             MSAst.Expression annotationFunction = annotationNames.Count == 0
                 ? AstUtils.Constant(null, typeof(object))
                 : Ast.Call(
@@ -417,18 +446,11 @@ namespace IronPython.Compiler.Ast {
                         Parent.LocalContext,
                         Ast.NewArrayInit(
                             typeof(string),
-                            AnnotationCaptureVariables.Select(variable =>
-                                Ast.Constant(variable.Name, typeof(string)))),
+                            annotationCaptureNames.Select(name =>
+                                Ast.Constant(name, typeof(string)))),
                         Ast.NewArrayInit(
                             typeof(ClosureCell),
-                            AnnotationCaptureVariables.Select(variable => {
-                                if (Parent.GetVariableExpression(variable)
-                                    is not ClosureExpression closure) {
-                                    throw new InvalidOperationException(
-                                        $"Annotation capture variable '{variable.Name}' is not stored in a closure cell.");
-                                }
-                                return (MSAst.Expression)closure.ClosureCell;
-                            }))),
+                            annotationCaptureCells)),
                     Ast.NewArrayInit(typeof(string), annotationNames),
                     Ast.NewArrayInit(typeof(string), annotationSources),
                     Ast.NewArrayInit(typeof(Func<object>), annotationEvaluators),

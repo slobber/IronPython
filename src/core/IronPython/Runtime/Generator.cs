@@ -40,6 +40,17 @@ namespace IronPython.Runtime {
         /// </summary>
         private static GeneratorFinalizer? _LastFinalizer;
 
+        [ThreadStatic]
+        private static Stack<PythonGenerator>? _activeGenerators;
+
+        internal static PythonGenerator? Current
+            => _activeGenerators is { Count: > 0 }
+                ? _activeGenerators.Peek()
+                : null;
+
+        internal bool IsFinished => Closed;
+        internal bool IsActive => Active;
+
         /// <summary>
         /// Fields set by Throw() to communicate an exception to the yield point.
         /// These are plumbed through the generator to become parameters to Raise(...) invoked
@@ -126,6 +137,11 @@ namespace IronPython.Runtime {
         [LightThrowing]
         // The signature (type[, value[, traceback]]) is deprecated in CPython 3.12
         public object? @throw(object? type, object? value, object? traceback) {
+            PythonOps.Warn(
+                Context,
+                PythonExceptions.DeprecationWarning,
+                "the (type, exc, tb) signature of throw() is deprecated, "
+                + "use the single-arg form");
             return @throw(type, value, traceback, false);
         }
 
@@ -258,7 +274,13 @@ namespace IronPython.Runtime {
 
         public TraceBackFrame gi_frame {
             get {
-                return new TraceBackFrame(_function.Context, _function.Context.GlobalDict, new PythonDictionary(), gi_code);
+                var frame = new TraceBackFrame(
+                    _function.Context,
+                    _function.Context.GlobalDict,
+                    _function.Context.Dict,
+                    gi_code);
+                frame.SetGenerator(this);
+                return frame;
             }
         }
 
@@ -623,8 +645,14 @@ namespace IronPython.Runtime {
         private int _active; // 1 while a thread is running the body; set by CheckSetActive, cleared by ClearActive
 
         private bool GetNext() {
-            _next(_data);
-            return State != GeneratorRewriter.Finished;
+            _activeGenerators ??= new Stack<PythonGenerator>();
+            _activeGenerators.Push(this);
+            try {
+                _next(_data);
+                return State != GeneratorRewriter.Finished;
+            } finally {
+                _activeGenerators.Pop();
+            }
         }
 
         internal bool CanSetSysExcInfo {

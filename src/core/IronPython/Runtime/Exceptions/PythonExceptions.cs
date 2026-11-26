@@ -305,6 +305,7 @@ namespace IronPython.Runtime.Exceptions {
                 internal const int EEXIST = 17;
                 internal const int EXDEV = 18;
                 internal const int ENOTDIR = 20;
+                internal const int EISDIR = 21;
                 internal const int EMFILE = 24;
                 internal const int ENOSPC = 28;
                 internal const int EPIPE = 32;
@@ -611,6 +612,8 @@ for k, v in toError.items():
         }
 
         public partial class _ImportError {
+            private object _msg;
+
             [MultiRuntimeAware]
             private static PythonType ImportCycleErrorStorage;
 
@@ -627,8 +630,11 @@ for k, v in toError.items():
                 }
             }
 
-            public void __init__([ParamDictionary] IDictionary<string, object> kwargs, [NotNone] params object[] args) {
+            public new void __init__([ParamDictionary] IDictionary<string, object> kwargs, [NotNone] params object[] args) {
                 base.__init__(args);
+                _msg = args.Length > 0 ? args[0] : null;
+                name = null;
+                path = null;
 
                 foreach (var pair in kwargs) {
                     switch (pair.Key) {
@@ -639,9 +645,52 @@ for k, v in toError.items():
                             path = pair.Value;
                             break;
                         default:
-                            throw PythonOps.TypeError($"'{pair.Key}' is an invalid keyword argument for this function");
+                            throw PythonOps.TypeError(
+                                "{0}() got an unexpected keyword argument '{1}'",
+                                DynamicHelpers.GetPythonType(this).Name,
+                                pair.Key);
                     }
                 }
+            }
+
+            public object msg {
+                get => _msg;
+                set => _msg = value;
+            }
+
+            public override string __repr__(CodeContext context) {
+                var parts = new List<string>();
+                if (args is PythonTuple tuple) {
+                    foreach (object arg in tuple) {
+                        parts.Add(PythonOps.Repr(context, arg));
+                    }
+                }
+                if (name is not null) {
+                    parts.Add("name=" + PythonOps.Repr(context, name));
+                }
+                if (path is not null) {
+                    parts.Add("path=" + PythonOps.Repr(context, path));
+                }
+                return $"{DynamicHelpers.GetPythonType(this).Name}({string.Join(", ", parts)})";
+            }
+
+            public override object __reduce__() {
+                var state = new PythonDictionary();
+                if (name is not null) {
+                    state["name"] = name;
+                }
+                if (path is not null) {
+                    state["path"] = path;
+                }
+                return state.Count == 0
+                    ? PythonTuple.MakeTuple(DynamicHelpers.GetPythonType(this), args)
+                    : PythonTuple.MakeTuple(DynamicHelpers.GetPythonType(this), args, state);
+            }
+
+            public void __setstate__(PythonDictionary state) {
+                if (state is null) return;
+                name = state.TryGetValue("name", out object value) ? value : null;
+                path = state.TryGetValue("path", out value) ? value : null;
             }
         }
 
@@ -891,9 +940,28 @@ for k, v in toError.items():
                 res = ToPythonNewStyle(clrException);
                 if (clrException.InnerException?.GetPythonException() is BaseException inner) {
                     // e.g. a Python exception wrapped in a AggregateException
-                    res.__context__ = inner;
+                    res.Context = inner;
                 }
                 clrException.SetPythonException(res);
+            }
+
+            if (res.RawContext is null) {
+                PythonExceptions.BaseException? context =
+                    PythonOps.GetRawContextException();
+                if (context is not null && !ReferenceEquals(res, context)) {
+                    bool createsCycle = false;
+                    for (var current = context;
+                         current is not null;
+                         current = current.RawContext) {
+                        if (ReferenceEquals(current, res)) {
+                            createsCycle = true;
+                            break;
+                        }
+                    }
+                    if (!createsCycle) {
+                        res.Context = context;
+                    }
+                }
             }
 
             return res;

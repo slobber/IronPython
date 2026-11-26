@@ -31,6 +31,8 @@ namespace IronPython.Compiler.Ast {
 
         public bool IsLazy { get; }
 
+        public bool AllowGlobalLazyMode { get; }
+
         internal PythonVariable[] Variables { get; set; }
 
         public FromImportStatement(
@@ -38,12 +40,14 @@ namespace IronPython.Compiler.Ast {
             string[] names,
             string[] asNames,
             bool fromFuture,
-            bool isLazy = false) {
+            bool isLazy = false,
+            bool allowGlobalLazyMode = false) {
             _root = root;
             _names = names;
             _asNames = asNames;
             IsFromFuture = fromFuture;
             IsLazy = isLazy;
+            AllowGlobalLazyMode = allowGlobalLazyMode;
         }
 
         public override MSAst.Expression Reduce() {
@@ -64,10 +68,12 @@ namespace IronPython.Compiler.Ast {
                 ReadOnlyCollectionBuilder<MSAst.Expression> statements = new ReadOnlyCollectionBuilder<MSAst.Expression>();
                 MSAst.ParameterExpression module = Ast.Variable(typeof(object), "module");
 
-                if (IsLazy) {
+                if (IsLazy || AllowGlobalLazyMode) {
                     for (int i = 0; i < _names.Length; i++) {
                         MSAst.Expression lazyValue = Ast.Call(
-                            AstMethods.LazyImportFrom,
+                            IsLazy
+                                ? AstMethods.LazyImportFrom
+                                : AstMethods.ImportFromOrLazy,
                             Parent.LocalContext,
                             AstUtils.Constant(_root.MakeString()),
                             AstUtils.Constant(_names[i]),

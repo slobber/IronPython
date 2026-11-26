@@ -46,7 +46,7 @@ namespace IronPython.Runtime.Exceptions {
 
         public int tb_lasti {
             get {
-                return 0;   // not presently tracked
+                return _frame.f_code.GetTracebackPositionIndex(_line) * 2;
             }
         }
 
@@ -88,13 +88,23 @@ namespace IronPython.Runtime.Exceptions {
         private readonly object _locals;
         private readonly FunctionCode _code;
         private readonly CodeContext/*!*/ _context;
-        private readonly TraceBackFrame _back;
+        private TraceBackFrame _back;
+        private FrameLocalsProxy _localsProxy;
+        private PythonDictionary _traceLocals;
+        private bool _cleared;
+        private bool _traceLines = true;
+        private bool _traceOpcodes;
+        private PythonGenerator _generator;
 
         internal TraceBackFrame(CodeContext/*!*/ context, PythonDictionary globals, object locals, FunctionCode code) {
             _globals = globals;
             _locals = locals;
             _code = code;
             _context = context;
+            PythonGenerator current = PythonGenerator.Current;
+            if (current is not null && current.gi_code == code) {
+                _generator = current;
+            }
         }
 
         internal TraceBackFrame(CodeContext/*!*/ context, PythonDictionary globals, object locals, FunctionCode code, TraceBackFrame back) {
@@ -103,6 +113,10 @@ namespace IronPython.Runtime.Exceptions {
             _code = code;
             _context = context;
             _back = back;
+            PythonGenerator current = PythonGenerator.Current;
+            if (current is not null && current.gi_code == code) {
+                _generator = current;
+            }
         }
 
         internal TraceBackFrame(PythonTracebackListener traceAdapter, FunctionCode code, TraceBackFrame back, PythonDebuggingPayload debugProperties, Func<IDictionary<object, object>> scopeCallback, bool pushedByCaller) {
@@ -124,18 +138,16 @@ namespace IronPython.Runtime.Exceptions {
         internal bool PushedByCaller { get; }
 
         [SpecialName, PropertyMethod]
-        public object Getf_trace() {
-            if (_traceAdapter != null) {
-                return _traceObject;
-            } else {
-                return null;
-            }
-        }
+        public object Getf_trace() => _traceObject;
 
         [SpecialName, PropertyMethod]
         public void Setf_trace(object value) {
             _traceObject = value;
-            _trace = (TracebackDelegate)Converter.ConvertToDelegate(value, typeof(TracebackDelegate));
+            if (_traceAdapter != null && value is not null) {
+                _trace = (TracebackDelegate)Converter.ConvertToDelegate(value, typeof(TracebackDelegate));
+            } else {
+                _trace = null;
+            }
         }
 
         [SpecialName, PropertyMethod]
@@ -144,7 +156,26 @@ namespace IronPython.Runtime.Exceptions {
         }
 
         public void clear() {
-            // TODO: add actual implementation of clear
+            if (IsExecuting()) {
+                throw PythonOps.RuntimeError(
+                    "cannot clear an executing frame");
+            }
+            if (_generator is not null && !_generator.IsFinished) {
+                throw PythonOps.RuntimeError(
+                    "cannot clear a suspended frame");
+            }
+            PythonDictionary locals = GetLocalsDictionary();
+            var names = new List<object>(locals.Count);
+            foreach (KeyValuePair<object, object> item in locals) {
+                names.Add(item.Key);
+            }
+            foreach (object key in names) {
+                if (!Converter.TryConvertToString(key, out string name)
+                    || !_code.IsFreeVariable(name)) {
+                    locals.Remove(key);
+                }
+            }
+            _cleared = true;
         }
 
         internal CodeContext Context {
@@ -177,17 +208,59 @@ namespace IronPython.Runtime.Exceptions {
 
         public object f_locals {
             get {
-                if (_traceAdapter != null && _scopeCallback != null) {
-                    if (_code.IsModule) {
-                        // don't use the scope callback for locals in a module, use our globals dictionary instead
-                        return f_globals;
-                    }
+                return _localsProxy ??= new FrameLocalsProxy(this);
+            }
+        }
 
-                    return new PythonDictionary(new DebuggerDictionaryStorage(_scopeCallback()));
-                } else {
-                    return _locals;
+        internal PythonDictionary GetLocalsDictionary() {
+            if (_cleared) {
+                return _localsProxy is not null
+                    ? GetClearedDictionary()
+                    : new PythonDictionary();
+            }
+            if (_context is not null) {
+                return _context.Dict;
+            }
+            if (_scopeCallback is not null) {
+                return _traceLocals ??=
+                    new PythonDictionary(
+                        new DebuggerDictionaryStorage(
+                            _scopeCallback()));
+            }
+            if (_locals is PythonDictionary dictionary) {
+                return dictionary;
+            }
+            return _traceLocals ??=
+                new PythonDictionary(
+                    new ObjectAttributesAdapter(
+                        DefaultContext.Default,
+                        _locals));
+        }
+
+        private PythonDictionary _clearedDictionary;
+
+        private PythonDictionary GetClearedDictionary() {
+            return _clearedDictionary ??= new PythonDictionary();
+        }
+
+        internal bool IsTrackedLocal(object key) {
+            return Converter.TryConvertToString(key, out string name)
+                && name is not null
+                && _code.ContainsLocalVariable(name);
+        }
+
+        internal bool IsExecuting() {
+            IList<FunctionStack> stack = PythonOps.GetFunctionStackNoCreate();
+            if (stack is null) {
+                return false;
+            }
+            foreach (FunctionStack entry in stack) {
+                if (ReferenceEquals(entry.Frame, this)
+                    || entry.Code == _code) {
+                    return true;
                 }
             }
+            return false;
         }
 
         public FunctionCode f_code {
@@ -206,17 +279,107 @@ namespace IronPython.Runtime.Exceptions {
 
         public TraceBackFrame f_back {
             get {
-                return _back;
+                if (_back is not null) {
+                    return _back;
+                }
+                IList<FunctionStack> stack = PythonOps.GetFunctionStackNoCreate();
+                if (stack is null) {
+                    return null;
+                }
+                for (int i = 1; i < stack.Count; i++) {
+                    FunctionStack current = stack[i];
+                    if (current.Code == _code
+                        && _context is not null
+                        && ReferenceEquals(
+                            current.Context.Dict,
+                            _context.Dict)) {
+                        FunctionStack previous = stack[i - 1];
+                        TraceBackFrame back = previous.Frame
+                            ?? new TraceBackFrame(
+                                previous.Context,
+                                previous.Context.GlobalDict,
+                                previous.Context.Dict,
+                                previous.Code);
+                        back._lineNo = previous.Line;
+                        stack[i - 1] = new FunctionStack(
+                            previous.Context,
+                            previous.Code,
+                            back);
+                        _back = back;
+                        return back;
+                    }
+                }
+                return null;
             }
+        }
+
+        [SpecialName, PropertyMethod]
+        public void Deletef_trace_lines()
+            => throw PythonOps.TypeError(
+                "can't delete numeric/char attribute");
+
+        [SpecialName, PropertyMethod]
+        public void Deletef_trace_opcodes()
+            => throw PythonOps.AttributeError(
+                "cannot be deleted");
+
+        public object f_trace_lines {
+            get => _traceLines;
+            set {
+                if (value is not bool enabled) {
+                    throw PythonOps.TypeError(
+                        "attribute value type must be bool");
+                }
+                _traceLines = enabled;
+            }
+        }
+
+        public object f_trace_opcodes {
+            get => _traceOpcodes;
+            set {
+                if (value is not bool enabled) {
+                    throw PythonOps.TypeError(
+                        "attribute value type must be bool");
+                }
+                _traceOpcodes = enabled;
+            }
+        }
+
+        public object f_generator {
+            get {
+                if (_generator is not null) {
+                    return _generator;
+                }
+                PythonGenerator current = PythonGenerator.Current;
+                if (current is not null && current.gi_code == _code) {
+                    return current;
+                }
+                PythonCoroutine coroutine = PythonCoroutine.Current;
+                return coroutine is not null && coroutine.Code == _code
+                    ? coroutine
+                    : null;
+            }
+        }
+
+        internal void SetGenerator(PythonGenerator generator) {
+            _generator = generator;
+        }
+
+        public string __repr__(CodeContext context) {
+            return string.Format(
+                "<frame at 0x{0:x}, file '{1}', line {2}, code {3}>",
+                PythonOps.Id(this),
+                _code.co_filename,
+                f_lineno,
+                _code.co_name);
         }
 
         public object f_lineno {
             get {
-                if (_traceAdapter != null) {
+                if (_lineNo > 0) {
                     return _lineNo;
-                } else {
-                    return 1;
                 }
+                return 1;
             }
             set {
                 if (!(value is int)) {

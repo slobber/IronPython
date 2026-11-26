@@ -8,7 +8,7 @@
 
 import sys
 
-from iptest import is_ironpython, generate_suite, run_test, is_netcoreapp
+from iptest import is_ironpython, generate_suite, run_test
 
 import test.test_types
 
@@ -33,11 +33,6 @@ def load_tests(loader, standard_tests, pattern):
                 test.test_types.CoroutineTests('test_genfunc'), # https://github.com/IronLanguages/ironpython3/issues/98
                 test.test_types.CoroutineTests('test_returning_itercoro'), # https://github.com/IronLanguages/ironpython3/issues/98
             ]
-            if is_netcoreapp:
-                failing_tests += [
-                    test.test_types.CoroutineTests('test_duck_functional_gen'), # https://github.com/IronLanguages/ironpython3/issues/2054#issuecomment-4722599371 - TypeError: object of type 'str' can't be used in 'await' expression
-                ]
-
         skip_tests = []
 
         return generate_suite(tests, failing_tests, skip_tests)

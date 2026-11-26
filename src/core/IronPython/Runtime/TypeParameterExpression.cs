@@ -15,6 +15,7 @@ namespace IronPython.Runtime {
         private readonly string _source;
         private readonly object? _fallback;
         private PythonTuple _typeParameters = PythonTuple.EMPTY;
+        private object? _classOwner;
 
         internal TypeParameterExpression(
             CodeContext context,
@@ -30,7 +31,8 @@ namespace IronPython.Runtime {
                 return LightExceptions.CheckAndThrow(PythonOps.EvalAnnotationSource(
                     _context,
                     _source,
-                    _typeParameters));
+                    _typeParameters,
+                    classOwner: _classOwner));
             } catch (System.Exception) when (_fallback is not null) {
                 return LightExceptions.CheckAndThrow(
                     PythonCalls.Call(_context, _fallback));
@@ -39,6 +41,10 @@ namespace IronPython.Runtime {
 
         public void _set_type_parameters([NotNone] PythonTuple typeParameters) {
             _typeParameters = typeParameters;
+        }
+
+        internal void SetClassOwner(object owner) {
+            _classOwner = owner;
         }
 
         public override string ToString() => $"<type parameter expression {_source}>";

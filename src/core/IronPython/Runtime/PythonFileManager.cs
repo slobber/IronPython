@@ -283,6 +283,22 @@ namespace IronPython.Runtime {
             if (TryGetStreams(id, out StreamBox? streams)) {
                return streams;
             }
+
+            if ((RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+                    || RuntimeInformation.IsOSPlatform(OSPlatform.OSX))
+                && id >= 0
+                && Mono.Unix.Native.Syscall.fstat(id, out _) == 0) {
+                lock (_synchObject) {
+                    if (_table.TryGetValue(id, out streams)) {
+                        return streams;
+                    }
+                    streams = new StreamBox(
+                        new PosixFileStream(id));
+                    streams.Id = id;
+                    _table.Add(id, streams);
+                    return streams;
+                }
+            }
             throw PythonOps.OSError(PythonErrno.EBADF, "Bad file descriptor");
         }
 

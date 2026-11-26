@@ -608,7 +608,7 @@ namespace IronPython.Runtime.Binding {
                 }
 
                 string name = _binder.Name;
-                return (site, self, context) => { throw PythonOps.AttributeErrorForMissingAttribute(((IPythonObject)self).PythonType.Name, name); };
+                return (site, self, context) => { throw PythonOps.AttributeErrorForObjectMissingAttribute(self, name); };
             }
 
             protected override void MakeDictionaryAccess() {

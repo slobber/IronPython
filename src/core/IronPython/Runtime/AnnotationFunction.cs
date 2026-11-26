@@ -32,6 +32,7 @@ namespace IronPython.Runtime {
         private PythonTuple _typeParameters = PythonTuple.EMPTY;
         private PythonTuple _enclosingTypeParameters = PythonTuple.EMPTY;
         private object? _owner;
+        private object? _classOwner;
         private string _qualname = "__annotate__";
         private int _version;
 
@@ -107,6 +108,8 @@ namespace IronPython.Runtime {
 
         public void SetOwner([NotNone] object value) => _owner = value;
 
+        internal void SetClassOwner(object value) => _classOwner = value;
+
         public string __qualname__ {
             get => _qualname;
             internal set => _qualname = value;
@@ -156,7 +159,7 @@ namespace IronPython.Runtime {
         [SpecialName]
         public object Call(CodeContext context, [NotNone] object format) {
             int annotationFormat = Converter.ConvertToInt32(format);
-            if (annotationFormat != 1) {
+            if (annotationFormat is < 1 or > 4) {
                 throw PythonOps.NotImplementedError(
                     "unsupported annotation format: {0}",
                     annotationFormat);
@@ -172,7 +175,10 @@ namespace IronPython.Runtime {
 
         internal PythonDictionary Evaluate(int annotationFormat = 1, bool forceValues = false) {
             PythonDictionary annotations = new();
-            if (_stringOnly && !forceValues) {
+            if (_stringOnly
+                && !forceValues
+                && _typeParameters.Count == 0
+                && _enclosingTypeParameters.Count == 0) {
                 for (int i = 0; i < _names.Count; i++) {
                     annotations.Add(
                         _names[i],
@@ -184,8 +190,68 @@ namespace IronPython.Runtime {
             if (_context is not null
                 && (_capturedLocals is not null || _typeParameters.Count != 0)) {
                 locals = new PythonDictionary();
+                ClassAnnotationScope? annotationScope =
+                    (_context.Dict._storage as RuntimeVariablesDictionaryStorage)?.AnnotationScope;
+                if (annotationScope is not null) {
+                    foreach (object key in annotationScope.OuterLocals.Keys) {
+                        if (annotationScope.OuterLocals.TryGetValueNoMissing(
+                                key,
+                                out object? value)) {
+                            if (value is ClosureCell cell) {
+                                if (cell.Value == Uninitialized.Instance) continue;
+                                value = cell.Value;
+                            }
+                            locals[key] = value;
+                        }
+                    }
+                }
+                if (_context.Dict._storage is RuntimeVariablesDictionaryStorage {
+                        IsClassNamespace: true
+                    }) {
+                    foreach (object key in _context.Dict.Keys) {
+                        if (_context.Dict.TryGetValueNoMissing(key, out object? value)) {
+                            locals[key] = value;
+                        }
+                    }
+                }
+                if (_classOwner is not null
+                    && PythonOps.TryGetBoundAttr(
+                        _context,
+                        _classOwner,
+                        "__type_params__",
+                        out object? ownerTypeParameters)
+                    && ownerTypeParameters is PythonTuple ownerParameters) {
+                    foreach (object parameter in ownerParameters) {
+                        if (PythonOps.TryGetBoundAttr(
+                                _context,
+                                parameter,
+                                "__name__",
+                                out object? name)
+                            && name is string parameterName) {
+                            locals[parameterName] = parameter;
+                        }
+                    }
+                }
+                if (_classOwner is not null && annotationScope is not null) {
+                    foreach (string classBoundName in annotationScope.ClassBoundNames) {
+                        if (PythonOps.TryGetBoundAttr(
+                                _context,
+                                _classOwner,
+                                classBoundName,
+                                out object? classValue)) {
+                            locals[classBoundName] = classValue;
+                        } else {
+                            locals.Remove(classBoundName);
+                        }
+                    }
+                }
                 PythonDictionary scopeLocals = _capturedLocals ?? _context.Dict;
                 foreach (object key in scopeLocals.Keys) {
+                    if (annotationScope is not null
+                        && key is string shadowedName
+                        && annotationScope.ShadowedNames.Contains(shadowedName)) {
+                        continue;
+                    }
                     if (scopeLocals.TryGetValueNoMissing(key, out object? value)) {
                         if (value is ClosureCell cell) {
                             if (cell.Value == Uninitialized.Instance) {

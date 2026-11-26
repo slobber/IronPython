@@ -35,9 +35,17 @@ namespace IronPython.Compiler.Ast {
                 return GlobalParent.AddDebugInfo(AstUtils.YieldReturn(GeneratorLabel, TransformOrConstantNull(Expression, typeof(object)), -2), Span);
             }
 
+            MSAst.Expression returnValue = TransformOrConstantNull(Expression, typeof(object));
+            if (Expression is NameExpression) {
+                returnValue = Ast.Call(
+                    typeof(IronPython.Runtime.Operations.PythonOps).GetMethod(
+                        nameof(IronPython.Runtime.Operations.PythonOps.ResolveLazyImport))!,
+                    Parent.LocalContext,
+                    returnValue);
+            }
             MSAst.Expression result = Ast.Return(
                 FunctionDefinition._returnLabel,
-                TransformOrConstantNull(Expression, typeof(object))
+                returnValue
             );
             return SuppressDebugInfo ? result : GlobalParent.AddDebugInfo(result, Span);
         }

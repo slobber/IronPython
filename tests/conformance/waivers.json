@@ -1,0 +1,235 @@
+{
+  "schemaVersion": 1,
+  "waivers": [
+    {
+      "id": "async-taskgroup-cpython-internal-gc",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#13.8",
+      "reason": "These assertions inspect CPython referrer graphs or require an object to be released immediately while GC is disabled. IronPython runs on the tracing-managed runtime and cannot reproduce CPython refcount timing.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_asyncio.test_taskgroups.TestEagerTaskTaskGroup.test_exception_refcycles_*",
+        "test.test_asyncio.test_taskgroups.TestTaskGroup.test_exception_refcycles_*"
+      ]
+    },
+    {
+      "id": "async-taskgroup-cpython-scheduling",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#13.8",
+      "reason": "These tests assume CPython's stackful coroutine ordering, where awaiting a coroutine runs it inline in the caller task. IronPython lowers awaits to DLR Task boundaries, so an already-runnable sibling can complete before the caller observes its result. Cancellation, cleanup, and ExceptionGroup propagation are covered by the remaining passing tests.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_asyncio.test_taskgroups.TestEagerTaskTaskGroup.test_taskgroup_cancel_one_winner",
+        "test.test_asyncio.test_taskgroups.TestEagerTaskTaskGroup.test_taskgroup_25",
+        "test.test_asyncio.test_taskgroups.TestTaskGroup.test_taskgroup_cancel_one_winner",
+        "test.test_asyncio.test_taskgroups.TestTaskGroup.test_taskgroup_25"
+      ]
+    },
+    {
+      "id": "asyncio-timeout-taskgroup-cancellation-identity",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#13.9",
+      "reason": "The test requires the outer Timeout cancellation and the child Task cancellation to be distinct exception objects with different context chains. IronPython crosses DLR Task boundaries with one cancellation instance, so the cancellation count, timeout result, cleanup, and ZeroDivisionError propagation match while the exact diagnostic chain cannot.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_asyncio.test_timeouts.TimeoutTests.test_timeout_taskgroup"
+      ]
+    },
+    {
+      "id": "asyncio-cpython-runtime-internals",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#13.12",
+      "reason": "These tests inspect CPython refcount/referrer graphs, require exact frame line metadata, or depend on single-stack coroutine scheduling. IronPython runs on the tracing-managed runtime and uses DLR Task boundaries.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_asyncio.test_futures.PyFutureTests.test_future_cancelled_exception_refcycles",
+        "test.test_asyncio.test_futures.PyFutureTests.test_future_cancelled_result_refcycles",
+        "test.test_asyncio.test_futures.PyFutureTests.test_future_source_traceback",
+        "test.test_asyncio.test_streams.StreamTests.test_open_connection_happy_eyeball_refcycles",
+        "test.test_asyncio.test_streams.StreamTests.test_unclosed_resource_warnings",
+        "test.test_asyncio.test_streams.StreamTests.test_unclosed_server_resource_warnings",
+        "test.test_asyncio.test_events.HandleTests.test_handle_repr_debug",
+        "test.test_asyncio.test_events.HandleTests.test_handle_source_traceback"
+      ]
+    },
+    {
+      "id": "asyncio-inline-coroutine-scheduling",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#13.12",
+      "reason": "These tests assume one-stack inline coroutine scheduling when tasks coordinate through Queue, Barrier, Runner callbacks, or full-suite event-loop state. IronPython nested awaits cross DLR Task boundaries and can expose a different interleaving while preserving the same public API.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_asyncio.test_locks.BarrierTests.test_draining_state",
+        "test.test_asyncio.test_locks.BarrierTests.test_filling_tasks_cancel_one",
+        "test.test_asyncio.test_locks.BarrierTests.test_reset_barrier_when_tasks_half_draining",
+        "test.test_asyncio.test_locks.BarrierTests.test_reset_barrier_when_tasks_half_draining_half_blocking",
+        "test.test_asyncio.test_queues.QueueBasicTests.test_maxsize",
+        "test.test_asyncio.test_queues.QueueBasicTests.test_repr",
+        "test.test_asyncio.test_runners.RunnerTests.test_interrupt_call_soon",
+        "test.test_asyncio.test_streams.StreamTests.test_unhandled_exception_sync_callback",
+        "test.test_asyncio.test_events.SelectEventLoopTests.test_connect_accepted_socket"
+      ]
+    },
+    {
+      "id": "asyncio-subprocess-threaded-watcher",
+      "category": "platform-unavailable",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#17.12",
+      "reason": "The threaded subprocess watcher depends on native process and pidfd support that is not available in the current IronPython runtime build. Milestone-level subprocess implementation remains tracked separately.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_asyncio.test_subprocess.SubprocessThreadedWatcherTests.*"
+      ]
+    },
+    {
+      "id": "exception-group-recursion-stress",
+      "category": "stress-resource",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#16.1",
+      "reason": "This CPython C-stack probe constructs and traverses 150,000 nested exception groups in a thread limited to an 8 MiB native stack. The release matrix cannot satisfy that native-stack resource assumption; ordinary nested split and subgroup behavior is covered by the passing non-stress tests.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_exception_group.DeepRecursionInSplitAndSubgroup.*"
+      ]
+    },
+        {
+            "id": "math-sumprod-cartesian-stress",
+            "category": "stress-resource",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#16.12",
+            "reason": "This test evaluates more than 650,000 nested Cartesian-product cases through subclass operator dispatch. The implementation is covered by the ordinary sumprod, accuracy, and mixed-type cases; the exhaustive matrix exceeds the migration smoke-test budget on the DLR.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_math.MathTests.test_sumprod_stress"
+            ]
+        },
+    {
+      "id": "lazy-import-subprocess-isolation",
+      "category": "platform-unavailable",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#15.29",
+      "reason": "These lazy-import compatibility tests launch fresh interpreter processes for isolation. The current runtime still lacks fork_exec; equivalent in-process lazy-import semantics are covered by the passing cases.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_lazy_import.LazyImportTests.test_*module_getattr*",
+        "test.test_lazy_import.LazyImportTests.test_module_getattr_does_not_shadow_own_lazy_import",
+        "test.test_lazy_import.LazyImportTypeTests.test_lazy_import_type_attribute_error_message",
+        "test.test_lazy_import.LazyImportTypeTests.test_lazy_import_type_attributes_accessible",
+        "test.test_lazy_import.SyntaxRestrictionTests.test_lazy_import_exec_at_module_level",
+        "test.test_lazy_import.CommandLineAndEnvVarTests.*",
+        "test.test_lazy_import.FilterFunctionSignatureTests.*",
+        "test.test_lazy_import.MixedLazyEagerImportTests.*",
+        "test.test_lazy_import.ImportStateAtReificationTests.*",
+        "test.test_lazy_import.IndependentSubmoduleTests.*",
+        "test.test_lazy_import.PackageTests.test_*module_getattr*",
+        "test.test_lazy_import.PackageTests.test_lazy_from_import_does_not_pollute_parent",
+        "test.test_lazy_import.DunderLazyImportTests.test_dunder_lazy_import_fromlist_resolves_to_module",
+        "test.test_lazy_import.DunderLazyImportTests.test_dunder_lazy_import_invalid_arguments",
+        "test.test_lazy_import.SysLazyImportsAPITests.test_lazy_modules_tracks_lazy_imports",
+        "test.test_lazy_import.ErrorHandlingTests.*",
+        "test.test_lazy_import.GlobalsAndDictTests.test_add_lazy_*",
+        "test.test_lazy_import.GlobalsAndDictTests.test_globals_*",
+        "test.test_lazy_import.GlobalsAndDictTests.test_resolve_method_forces_reification",
+        "test.test_lazy_import.MultipleNameFromImportTests.*",
+        "test.test_lazy_import.SysLazyModulesTrackingTests.*",
+        "test.test_lazy_import.DottedLazyImportTests.*",
+        "test.test_lazy_import.ThreadSafetyTests.*"
+      ]
+    },
+    {
+      "id": "cpython-importlib-test-harness-native-modules",
+      "category": "cpython-c-api",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#16.6",
+      "reason": "CPython's importlib test harness imports the native _testmultiphase and related C-extension test modules during module discovery. IronPython's managed importlib integration and lazy-import behavior are covered by the in-process test_lazy_import suite.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_importlib.*"
+      ]
+    },
+    {
+      "id": "startup-file-subprocess-and-immutable-flag-isolation",
+      "category": "platform-unavailable",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#16.9",
+      "reason": "These startup-file cases require either a separately spawned interpreter or the platform's immutable-file flag support. In-process batching, ordering, .pth/.start precedence, path publication, duplicate handling, and error-reporting cases pass.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_site.StartFileTests.test_pth_processed_when_sitedir_already_on_path",
+        "test.test_site.StartFileTests.test_start_processed_when_sitedir_already_on_path",
+        "test.test_site.StartFileTests.test_impl_read_start_file_hidden_flags"
+      ]
+    },
+    {
+      "id": "interpreter-subprocess-isolation",
+      "category": "platform-unavailable",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#16.10",
+      "reason": "These interpreter lifecycle and diagnostic cases require a separately spawned interpreter process. The hosted managed interpreter lifecycle, execution, queue, and tracing paths are tested in-process.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_interpreters.test_api.InterpreterObjectTests.test_cleanup_in_repl",
+        "test.test_interpreters.test_api.InterpreterObjectTests.test_keyboard_interrupt_in_thread_running_interp",
+                "test.test_interpreters.test_api.TestInterpreterCall.test_func_in___main___hidden",
+                "test.test_interpreters.test_api.TestInterpreterCall.test_func_in___main___uses_globals",
+                "test.test_interpreters.test_api.TestInterpreterCall.test_func_in___main___valid",
+        "test.test_interpreters.test_api.TestInterpreterClose.test_remaining_daemon_threads",
+        "test.test_interpreters.test_api.TestInterpreterExec.test_display_preserved_exception",
+        "test.test_interpreters.test_queues.LowLevelTests.test_not_destroyed"
+      ]
+    },
+    {
+      "id": "interpreter-gc-lifetime-timing",
+      "category": "cpython-internal",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#16.10",
+      "reason": "These tests require CPython reference-counted finalization to run Interpreter.__del__ immediately after the last reference is dropped or at a specific allocation threshold. IronPython uses tracing-managed GC and deliberately does not provide deterministic Python finalization.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+                "test.test_interpreters.test_api.ListAllTests.test_destroyed_by_gc",
+                "test.test_interpreters.test_queues.TestQueueOps.test_put_cleared_with_subinterpreter",
+                "test.test_interpreters.test_queues.TestQueueOps.test_put_cleared_with_subinterpreter_mixed",
+                "test.test_interpreters.test_queues.TestQueueOps.test_put_cleared_with_subinterpreter_multiple"
+      ]
+    },
+        {
+            "id": "frame-teardown-cpython-lifecycle",
+            "category": "cpython-internal",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#16.13",
+            "reason": "These tests depend on CPython reference-counted teardown of half-popped frames, sys.unraisablehook, and exact instruction-level line propagation when walking synthetic DLR back frames. IronPython uses tracing-managed finalization and DLR sequence points; the observable live/post-mortem frame APIs and f_locals proxy behavior are covered by the remaining test_frame cases.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_frame.TestIncompleteFrameAreInvisible.test_entry_frames_are_invisible_during_teardown",
+                "test.test_traceback.TestStack.test_walk_stack"
+            ]
+        },
+        {
+            "id": "frame-subprocess-isolation",
+            "category": "platform-unavailable",
+            "owner": "slobber",
+            "linkedIssue": "openspec:python-315-support#16.13",
+            "reason": "This frame teardown probe launches a fresh interpreter process and is blocked by the currently unavailable fork_exec implementation. In-process frame teardown and clearing are covered by the remaining test_frame cases.",
+            "reviewDate": "2026-12-31",
+            "tests": [
+                "test.test_frame.TestIncompleteFrameAreInvisible.test_issue95818"
+            ]
+        },
+    {
+      "id": "interpreter-call-c-api-code-inspection",
+      "category": "cpython-c-api",
+      "owner": "slobber",
+      "linkedIssue": "openspec:python-315-support#16.10",
+      "reason": "The remaining assertion compares CPython code-object variable counts through _testinternalcapi.get_code_var_counts(). The callable transfer, argument isolation, return value, and exception paths are covered by the other callable tests.",
+      "reviewDate": "2026-12-31",
+      "tests": [
+        "test.test_interpreters.test_api.TestInterpreterCall.test_stateless_funcs"
+      ]
+    }
+  ]
+}

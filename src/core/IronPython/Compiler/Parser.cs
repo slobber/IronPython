@@ -408,6 +408,11 @@ namespace IronPython.Compiler {
             PegParseResult result = parser.Parse(PythonGeneratedParser.InteractiveStartRule);
             if (!result.Success
                 || result.Value is not IronPython.Compiler.Syntax.Ast.Interactive interactive) {
+                if (TryParseGeneratedInteractiveModule(
+                        source,
+                        out PythonAst moduleAst)) {
+                    return moduleAst;
+                }
                 if (tokenizer.NeedsMoreInput) {
                     _errorCode = ErrorCodes.IncompleteStatement;
                     properties = ScriptCodeParseResult.IncompleteStatement;
@@ -419,6 +424,11 @@ namespace IronPython.Compiler {
             }
 
             if (tokenizer.NeedsMoreInput) {
+                if (TryParseGeneratedInteractiveModule(
+                        source,
+                        out PythonAst moduleAst)) {
+                    return moduleAst;
+                }
                 properties = ScriptCodeParseResult.IncompleteStatement;
                 return null;
             }
@@ -430,6 +440,35 @@ namespace IronPython.Compiler {
             return CreateGeneratedStatementAst(
                 interactive.Body,
                 printExpressions: true);
+        }
+
+        private bool TryParseGeneratedInteractiveModule(
+            string source,
+            out PythonAst ast) {
+            PegParser parser = CreateGeneratedParser(source, out PythonTokenizer tokenizer);
+            PegParseResult result = parser.Parse(PythonGeneratedParser.ModuleStartRule);
+            if (result.Success
+                && result.Value is IronPython.Compiler.Syntax.Ast.Module module
+                && module.Body.Count != 0) {
+                NotifyGeneratedParserSink(module);
+                SourceUnit statementUnit =
+                    _context.SourceUnit.LanguageContext.CreateSnippet(
+                        source,
+                        _context.SourceUnit.Path,
+                        SourceCodeKind.Statements);
+                var statementContext = new CompilerContext(
+                    statementUnit,
+                    _context.Options,
+                    _context.Errors,
+                    _context.ParserSink);
+                ast = CreateGeneratedStatementAst(
+                    module.Body,
+                    printExpressions: false,
+                    statementContext);
+                return true;
+            }
+            ast = null;
+            return false;
         }
 
         private PythonAst ParseGeneratedSingleStatement() {
@@ -474,18 +513,12 @@ namespace IronPython.Compiler {
 
         private PythonAst CreateGeneratedStatementAst(
             IReadOnlyList<IronPython.Compiler.Syntax.Ast.Stmt> statements,
-            bool printExpressions) {
-            Statement body = statements.Count == 1
-                ? PublicAstLowerer.LowerStatement(statements[0])
-                : new SuiteStatement(
-                    statements.Select(PublicAstLowerer.LowerStatement).ToArray());
-            return new PythonAst(
-                body,
-                false,
-                _languageFeatures,
-                printExpressions,
-                _context,
-                Array.Empty<int>());
+            bool printExpressions,
+            CompilerContext compilerContext = null) {
+            return PublicAstLowerer.LowerStatements(
+                statements,
+                compilerContext ?? _context,
+                printExpressions);
         }
 
         /// <summary>

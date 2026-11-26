@@ -21,6 +21,10 @@ namespace IronPython.Runtime.Operations {
 
     public static partial class Int32Ops {
 
+        public static int bit_count(int self)
+            => System.Numerics.BitOperations.PopCount(
+                (ulong)Math.Abs((long)self));
+
         #region Unary Operations
 
         public static object __getnewargs__(CodeContext context, int self) {
@@ -129,7 +133,7 @@ namespace IronPython.Runtime.Operations {
             if (power == 0) return 1;
             if (power < 0) {
                 if (x == 0)
-                    throw PythonOps.ZeroDivisionError("0.0 cannot be raised to a negative power");
+                    throw PythonOps.ZeroDivisionError("zero to a negative power");
                 return DoubleOps.Power(x, power);
             }
             int factor = x;

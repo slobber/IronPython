@@ -3,7 +3,9 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
+using IronPython.Modules;
 using IronPython.Runtime;
+using IronPython.Runtime.Exceptions;
 using IronPython.Runtime.Operations;
 using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
@@ -14,6 +16,7 @@ namespace IronPython.Compiler.PublicAst {
     public static class PublicAstLowerer {
         private static int _matchTemp;
         private static int _typeParameterTemp;
+        private static int _tryStarId;
         [ThreadStatic]
         private static IndexSpan? _currentPatternSpan;
         [ThreadStatic]
@@ -29,12 +32,27 @@ namespace IronPython.Compiler.PublicAst {
         [ThreadStatic]
         private static bool _inClassBody;
         [ThreadStatic]
+        private static int _functionDepth;
+        [ThreadStatic]
+        private static int _tryDepth;
+        [ThreadStatic]
         private static HashSet<string>? _activeTypeParameterNames;
+        [ThreadStatic]
+        private static HashSet<string>? _classTypeParameterNames;
         private static bool _moduleHasDirectAnnotations;
         [ThreadStatic]
         private static string? _functionQualname;
         [ThreadStatic]
         private static Dictionary<string, CompilerAst.Expression>? _typeParameterBindings;
+        [ThreadStatic]
+        private static Dictionary<string, CompilerAst.Expression>?
+            _comprehensionTypeParameterBindings;
+        [ThreadStatic]
+        private static PythonContext? _pythonContext;
+        [ThreadStatic]
+        private static bool _allowLazyImportsInExec;
+        [ThreadStatic]
+        private static HashSet<string>? _compatibilityLazyModules;
 
         public static CompilerAst.PythonAst LowerModule(
             AstNodes.Module module,
@@ -63,18 +81,54 @@ namespace IronPython.Compiler.PublicAst {
                 ((PythonCompilerOptions)context.Options).FutureAnnotations = true;
             }
 
+            return LowerStatementsCore(
+                module.Body,
+                context,
+                makeModule,
+                printExpressions: false,
+                returnValue,
+                preserveSingleStatement: false);
+        }
+
+        public static CompilerAst.PythonAst LowerStatements(
+            IReadOnlyList<AstNodes.Stmt> statements,
+            CompilerContext context,
+            bool printExpressions) {
+            if (statements == null) throw new ArgumentNullException(nameof(statements));
+            if (context == null) throw new ArgumentNullException(nameof(context));
+
+            return LowerStatementsCore(
+                statements,
+                context,
+                makeModule: false,
+                printExpressions,
+                returnValue: false,
+                preserveSingleStatement: true);
+        }
+
+        private static CompilerAst.PythonAst LowerStatementsCore(
+            IReadOnlyList<AstNodes.Stmt> statements,
+            CompilerContext context,
+            bool makeModule,
+            bool printExpressions,
+            bool returnValue,
+            bool preserveSingleStatement) {
             string sourceText = context.SourceUnit.GetCode() ?? string.Empty;
             var locations = SourceLocationMap.Create(sourceText);
             _sourceText = sourceText;
             _sourceLocations = locations;
+            _pythonContext = context.SourceUnit.LanguageContext as PythonContext;
+            _allowLazyImportsInExec =
+                ((PythonCompilerOptions)context.Options).AllowLazyImportsInExec;
+            _compatibilityLazyModules = GetCompatibilityLazyModules(statements);
             _moduleHasDirectAnnotations = false;
             try {
-                CompilerAst.Statement[] statements = module.Body
+                CompilerAst.Statement[] loweredStatements = statements
                     .Select(LowerStatement)
                     .ToArray();
-                if (returnValue && statements.Length > 0
-                    && statements[statements.Length - 1] is CompilerAst.ExpressionStatement expression) {
-                    statements[statements.Length - 1] = new CompilerAst.ReturnStatement(
+                if (returnValue && loweredStatements.Length > 0
+                    && loweredStatements[loweredStatements.Length - 1] is CompilerAst.ExpressionStatement expression) {
+                    loweredStatements[loweredStatements.Length - 1] = new CompilerAst.ReturnStatement(
                         expression.Expression) {
                         IndexSpan = expression.Expression.IndexSpan
                     };
@@ -84,9 +138,12 @@ namespace IronPython.Compiler.PublicAst {
                 var ast = new CompilerAst.PythonAst(
                     makeModule,
                     languageFeatures,
-                    false,
+                    printExpressions,
                     context);
-                var loweredBody = new CompilerAst.SuiteStatement(statements);
+                CompilerAst.Statement loweredBody =
+                    preserveSingleStatement && loweredStatements.Length == 1
+                        ? loweredStatements[0]
+                        : new CompilerAst.SuiteStatement(loweredStatements);
                 ast.HasDirectAnnotations = _moduleHasDirectAnnotations;
                 ast.ParsingFinished(
                     locations.LineStarts,
@@ -98,7 +155,33 @@ namespace IronPython.Compiler.PublicAst {
             } finally {
                 _sourceText = null;
                 _sourceLocations = null;
+                _pythonContext = null;
+                _compatibilityLazyModules = null;
             }
+        }
+
+        private static HashSet<string>? GetCompatibilityLazyModules(
+            IReadOnlyList<AstNodes.Stmt> statements) {
+            foreach (AstNodes.Stmt statement in statements) {
+                if (statement is not AstNodes.Assign assignment
+                    || assignment.Targets.Count != 1
+                    || assignment.Targets[0] is not AstNodes.Name
+                        {
+                            Id: "__lazy_modules__"
+                        }
+                    || assignment.Value is not AstNodes.List list) {
+                    continue;
+                }
+
+                var modules = new HashSet<string>(StringComparer.Ordinal);
+                foreach (AstNodes.ExprBase element in list.Elts) {
+                    if (element is AstNodes.Constant { Value: string module }) {
+                        modules.Add(module);
+                    }
+                }
+                return modules;
+            }
+            return null;
         }
 
         public static CompilerAst.Statement LowerStatement(AstNodes.Stmt statement) {
@@ -108,21 +191,25 @@ namespace IronPython.Compiler.PublicAst {
                 throw PythonOps.TypeError(
                     "cannot rebind __conditional_annotations__");
             }
+            ValidateLazyImport(statement);
             RemoveAssignedTypeParameters(statement);
             CompilerAst.Statement lowered = statement switch {
                 AstNodes.Assign assign => new CompilerAst.AssignmentStatement(
-                    assign.Targets.Select(LowerExpression).ToArray(),
-                    LowerExpression(assign.Value)),
+                    assign.Targets.Select(LowerAssignmentTarget).ToArray(),
+                    LowerClassAssignmentValue(assign.Value)),
                 AstNodes.TypeAlias typeAlias => LowerTypeAlias(typeAlias),
                 AstNodes.AugAssign assign => new CompilerAst.AugmentedAssignStatement(
                     LowerOperator(assign.Op),
-                    LowerExpression(assign.Target),
+                    LowerAssignmentTarget(assign.Target),
                     LowerExpression(assign.Value)),
                 AstNodes.AnnAssign assign => LowerAnnotatedAssign(assign),
                 AstNodes.Import import => new CompilerAst.ImportStatement(
                     import.Names.Select(alias => new CompilerAst.ModuleName(alias.Name.Split('.'))).ToArray(),
                     import.Names.Select(alias => alias.Asname).ToArray(),
-                    import.IsLazy == 1),
+                    import.IsLazy == 1
+                        || CanUseCompatibilityLazyMode(
+                            import.Names.Select(alias => alias.Name)),
+                    CanUseGlobalLazyMode()),
                 AstNodes.ImportFrom importFrom => LowerImportFrom(importFrom),
                 AstNodes.Expr expression => new CompilerAst.ExpressionStatement(
                     LowerExpression(expression.Value)),
@@ -164,11 +251,7 @@ namespace IronPython.Compiler.PublicAst {
                     @try.Handlers,
                     @try.Orelse,
                     @try.Finalbody),
-                AstNodes.TryStar @try => LowerTry(
-                    @try.Body,
-                    @try.Handlers,
-                    @try.Orelse,
-                    @try.Finalbody),
+                AstNodes.TryStar @try => LowerTryStar(@try),
                 AstNodes.FunctionDef function => LowerFunction(function),
                 AstNodes.AsyncFunctionDef function => LowerFunction(function),
                 AstNodes.ClassDef @class => LowerClass(@class),
@@ -218,6 +301,67 @@ namespace IronPython.Compiler.PublicAst {
             }
         }
 
+        private static HashSet<string> CollectAssignedNames(
+            System.Collections.Generic.IReadOnlyList<AstNodes.Stmt> body) {
+            var finder = new AssignedNameFinder();
+            foreach (AstNodes.Stmt statement in body) {
+                finder.Visit(statement);
+            }
+            return finder.Names;
+        }
+
+        private sealed class AssignedNameFinder : AstNodes.PythonAstWalker {
+            public HashSet<string> Names { get; } =
+                new HashSet<string>(StringComparer.Ordinal);
+
+            protected override void VisitNode(AstNodes.PythonAstNode node) {
+                if (node is AstNodes.FunctionDef
+                    or AstNodes.AsyncFunctionDef
+                    or AstNodes.ClassDef
+                    or AstNodes.Lambda) {
+                    return;
+                }
+                switch (node) {
+                    case AstNodes.Assign assign:
+                        foreach (AstNodes.ExprBase target in assign.Targets) {
+                            AddTarget(target);
+                        }
+                        break;
+                    case AstNodes.AnnAssign assign:
+                        AddTarget(assign.Target);
+                        break;
+                    case AstNodes.AugAssign assign:
+                        AddTarget(assign.Target);
+                        break;
+                    case AstNodes.NamedExpr named:
+                        AddTarget(named.Target);
+                        break;
+                }
+                base.VisitNode(node);
+            }
+
+            private void AddTarget(AstNodes.ExprBase target) {
+                switch (target) {
+                    case AstNodes.Name name:
+                        Names.Add(name.Id);
+                        break;
+                    case AstNodes.Starred starred:
+                        AddTarget(starred.Value);
+                        break;
+                    case AstNodes.Tuple tuple:
+                        foreach (AstNodes.ExprBase item in tuple.Elts) {
+                            AddTarget(item);
+                        }
+                        break;
+                    case AstNodes.List list:
+                        foreach (AstNodes.ExprBase item in list.Elts) {
+                            AddTarget(item);
+                        }
+                        break;
+                }
+            }
+        }
+
         private static CompilerAst.Statement LowerNonlocal(AstNodes.Nonlocal nonlocal) {
             if (_activeTypeParameterNames is not null) {
                 string[] invalid = nonlocal.Names
@@ -253,7 +397,90 @@ namespace IronPython.Compiler.PublicAst {
                 names,
                 importFrom.Names.Select(alias => alias.Asname).ToArray(),
                 string.Equals(importFrom.Module, "__future__", StringComparison.Ordinal),
-                importFrom.IsLazy == 1);
+                importFrom.IsLazy == 1
+                    || CanUseCompatibilityLazyMode(importFrom.Module),
+                CanUseGlobalLazyMode());
+        }
+
+        private static bool CanUseCompatibilityLazyMode(
+            IEnumerable<string> moduleNames)
+            => CanUseGlobalLazyMode()
+                && _compatibilityLazyModules is not null
+                && moduleNames.All(_compatibilityLazyModules.Contains);
+
+        private static bool CanUseCompatibilityLazyMode(string? moduleName)
+            => moduleName is not null
+                && CanUseCompatibilityLazyMode(new[] { moduleName });
+
+        private static bool CanUseGlobalLazyMode()
+            => _pythonContext is not null
+                && _functionDepth == 0
+                && !_inClassBody
+                && _tryDepth == 0
+                && _allowLazyImportsInExec;
+
+        private static void ValidateLazyImport(AstNodes.Stmt statement) {
+            bool isLazy = statement switch {
+                AstNodes.Import import => import.IsLazy == 1,
+                AstNodes.ImportFrom importFrom => importFrom.IsLazy == 1,
+                _ => false
+            };
+            if (!isLazy) return;
+
+            if (_functionDepth != 0 || _inClassBody || _tryDepth != 0) {
+                throw LazyImportSyntaxError(
+                    statement,
+                    "lazy import is only allowed at module level");
+            }
+            if (!_allowLazyImportsInExec) {
+                throw LazyImportSyntaxError(
+                    statement,
+                    "lazy import is only allowed at module level");
+            }
+            if (statement is AstNodes.ImportFrom lazyFrom) {
+                if (string.Equals(lazyFrom.Module, "__future__", StringComparison.Ordinal)) {
+                    throw LazyImportSyntaxError(
+                        statement,
+                        "lazy import is not allowed for __future__ imports");
+                }
+                if (lazyFrom.Names.Any(alias => alias.Name == "*")) {
+                    throw LazyImportSyntaxError(
+                        statement,
+                        "lazy import is not allowed for star imports");
+                }
+            }
+        }
+
+        private static Exception LazyImportSyntaxError(
+            AstNodes.Stmt statement,
+            string message) {
+            var error = new SyntaxErrorException(message);
+            if (PythonExceptions.ToPython(error) is PythonExceptions._SyntaxError pyError) {
+                int start = GetStartOffset(statement);
+                string source = _sourceText ?? string.Empty;
+                int lineStart = source.LastIndexOf('\n', Math.Max(start - 1, 0));
+                lineStart = lineStart < 0 ? 0 : lineStart + 1;
+                int lazyIndex = start > lineStart
+                    ? source.LastIndexOf(
+                        "lazy",
+                        start - 1,
+                        start - lineStart,
+                        StringComparison.Ordinal)
+                    : -1;
+                if (lazyIndex >= lineStart) {
+                    start = lazyIndex;
+                }
+                int line = 1;
+                for (int i = 0; i < start && i < source.Length; i++) {
+                    if (source[i] == '\n') line++;
+                }
+                int column = start - lineStart + 1;
+                pyError.lineno = line;
+                pyError.offset = column;
+                pyError.end_lineno = line;
+                pyError.end_offset = column + 4;
+            }
+            return error;
         }
 
         private static CompilerAst.Statement LowerTypeAlias(AstNodes.TypeAlias typeAlias) {
@@ -266,32 +493,41 @@ namespace IronPython.Compiler.PublicAst {
                 .Select(GetTypeParameterName)
                 .Select(MangleIdentifier)
                 .ToArray();
-            var thunk = new CompilerAst.LambdaExpression(
-                new CompilerAst.FunctionDefinition(
-                    null,
-                    parameterNames.Select(parameterName => new CompilerAst.Parameter(
-                        parameterName,
-                        CompilerAst.ParameterKind.Normal)).ToArray(),
-                    new CompilerAst.ReturnStatement(LowerExpression(typeAlias.Value))) {
-                    GeneratorStop = true
-                });
+            bool containsLambda = ContainsLambda(typeAlias.Value);
+            bool directLambda = containsLambda;
             var typeParameters = new CompilerAst.TupleExpression(
                 false,
                 typeAlias.TypeParams.Select(LowerTypeParameter).ToArray());
             SetLocation(typeParameters, typeAlias);
-            bool containsLambda = ContainsLambda(typeAlias.Value);
             bool containsComprehension = ContainsComprehension(typeAlias.Value);
             bool containsNestedScope = containsLambda || containsComprehension;
-            bool useSource = (_inClassBody && typeAlias.TypeParams.Count == 0)
+            bool useSource = (_inClassBody
+                    && typeAlias.TypeParams.Count == 0
+                    && !directLambda)
                 || containsComprehension
-                || containsLambda;
+                || (containsLambda && !directLambda)
+                || (typeAlias.TypeParams.Count != 0 && !directLambda);
+            bool evaluateThunk = !useSource && !directLambda;
+            CompilerAst.Expression thunk = evaluateThunk
+                ? new CompilerAst.LambdaExpression(
+                    new CompilerAst.FunctionDefinition(
+                        null,
+                        parameterNames.Select(parameterName => new CompilerAst.Parameter(
+                            parameterName,
+                            CompilerAst.ParameterKind.Normal)).ToArray(),
+                        new CompilerAst.ReturnStatement(LowerExpression(typeAlias.Value))) {
+                        GeneratorStop = true
+                    })
+                : Constant(null);
             CompilerAst.Expression enclosingTypeParameters =
-                containsNestedScope && _classDefinition?.TypeParameters is not null
+                containsNestedScope
+                    && !directLambda
+                    && _classDefinition?.TypeParameters is not null
                     ? _classDefinition.TypeParameters
                     : new CompilerAst.TupleExpression(
                         false,
                         Array.Empty<CompilerAst.Expression>());
-            return new CompilerAst.AssignmentStatement(
+            var aliasAssignment = new CompilerAst.AssignmentStatement(
                 new CompilerAst.Expression[] { name },
                 Call(
                     "__build_type_alias__",
@@ -307,7 +543,11 @@ namespace IronPython.Compiler.PublicAst {
                     Constant(GetSourceText(typeAlias.Value)),
                     Constant(useSource),
                     enclosingTypeParameters,
-                    Constant(!containsNestedScope)));
+                    Constant(!containsNestedScope),
+                    Constant(!_inClassBody),
+                    Constant(evaluateThunk)));
+            SetLocation(aliasAssignment, typeAlias);
+            return aliasAssignment;
         }
 
         private static CompilerAst.Expression LowerTypeParameter(
@@ -475,25 +715,36 @@ namespace IronPython.Compiler.PublicAst {
                     LowerExpression(yieldFrom.Value)),
                 AstNodes.Await await => new CompilerAst.AwaitExpression(
                     LowerExpression(await.Value)),
-                AstNodes.ListComp comprehension => comprehension.Elt is AstNodes.Starred starred
-                    ? LowerStarredComprehension(starred.Value, comprehension.Generators, "list")
-                    : new CompilerAst.ListComprehension(
-                        LowerExpression(comprehension.Elt),
-                        LowerComprehensionIterators(comprehension.Generators)),
-                AstNodes.SetComp comprehension => comprehension.Elt is AstNodes.Starred starred
-                    ? LowerStarredComprehension(starred.Value, comprehension.Generators, "set")
-                    : new CompilerAst.SetComprehension(
-                        LowerExpression(comprehension.Elt),
-                        LowerComprehensionIterators(comprehension.Generators)),
-                AstNodes.DictComp comprehension => comprehension.Value is null
-                    ? LowerDictionaryUnpackingComprehension(
-                        comprehension,
-                        comprehension.Key)
-                    : new CompilerAst.DictionaryComprehension(
-                        LowerExpression(comprehension.Key),
-                        LowerExpression(comprehension.Value),
-                        LowerComprehensionIterators(comprehension.Generators)),
-                AstNodes.GeneratorExp generator => LowerGeneratorExpression(generator),
+                AstNodes.ListComp comprehension => LowerInComprehensionScope(
+                    GetComprehensionTargetNames(comprehension.Generators),
+                    () =>
+                    comprehension.Elt is AstNodes.Starred starred
+                        ? LowerStarredComprehension(starred.Value, comprehension.Generators, "list")
+                        : new CompilerAst.ListComprehension(
+                            LowerExpression(comprehension.Elt),
+                            LowerComprehensionIterators(comprehension.Generators))),
+                AstNodes.SetComp comprehension => LowerInComprehensionScope(
+                    GetComprehensionTargetNames(comprehension.Generators),
+                    () =>
+                    comprehension.Elt is AstNodes.Starred starred
+                        ? LowerStarredComprehension(starred.Value, comprehension.Generators, "set")
+                        : new CompilerAst.SetComprehension(
+                            LowerExpression(comprehension.Elt),
+                            LowerComprehensionIterators(comprehension.Generators))),
+                AstNodes.DictComp comprehension => LowerInComprehensionScope(
+                    GetComprehensionTargetNames(comprehension.Generators),
+                    () =>
+                    comprehension.Value is null
+                        ? LowerDictionaryUnpackingComprehension(
+                            comprehension,
+                            comprehension.Key)
+                        : new CompilerAst.DictionaryComprehension(
+                            LowerExpression(comprehension.Key),
+                            LowerExpression(comprehension.Value),
+                            LowerComprehensionIterators(comprehension.Generators))),
+                AstNodes.GeneratorExp generator => LowerInComprehensionScope(
+                    GetComprehensionTargetNames(generator.Generators),
+                    () => LowerGeneratorExpression(generator)),
                 AstNodes.Lambda lambda => LowerLambda(lambda),
                 AstNodes.NamedExpr named => new CompilerAst.NamedExpression(
                     LowerExpression(named.Target) as CompilerAst.NameExpression
@@ -517,6 +768,96 @@ namespace IronPython.Compiler.PublicAst {
             };
             SetLocation(lowered, expression);
             return lowered;
+        }
+
+        private static CompilerAst.Expression LowerAssignmentTarget(
+            AstNodes.ExprBase target) {
+            Dictionary<string, CompilerAst.Expression>? bindings =
+                _typeParameterBindings;
+            _typeParameterBindings = null;
+            try {
+                return LowerExpression(target);
+            } finally {
+                _typeParameterBindings = bindings;
+            }
+        }
+
+        private static CompilerAst.Expression LowerClassAssignmentValue(
+            AstNodes.ExprBase value) {
+            if (!_inClassBody
+                || _classTypeParameterNames is null
+                || _typeParameterBindings is null) {
+                return LowerExpression(value);
+            }
+            var bindings = new Dictionary<string, CompilerAst.Expression>(
+                _typeParameterBindings,
+                StringComparer.Ordinal);
+            foreach (string name in _classTypeParameterNames) {
+                bindings.Remove(name);
+            }
+            Dictionary<string, CompilerAst.Expression>? previous =
+                _typeParameterBindings;
+            _typeParameterBindings = bindings;
+            try {
+                return LowerExpression(value);
+            } finally {
+                _typeParameterBindings = previous;
+            }
+        }
+
+        private static CompilerAst.Expression LowerInComprehensionScope(
+            IReadOnlyCollection<string> shadowedNames,
+            Func<CompilerAst.Expression> lower) {
+            Dictionary<string, CompilerAst.Expression>? bindings =
+                _typeParameterBindings;
+            if (_comprehensionTypeParameterBindings is not null) {
+                _typeParameterBindings =
+                    new Dictionary<string, CompilerAst.Expression>(
+                        _comprehensionTypeParameterBindings,
+                        StringComparer.Ordinal);
+                foreach (string name in shadowedNames) {
+                    _typeParameterBindings.Remove(name);
+                }
+            }
+            try {
+                return lower();
+            } finally {
+                _typeParameterBindings = bindings;
+            }
+        }
+
+        private static IReadOnlyCollection<string>
+            GetComprehensionTargetNames(
+                System.Collections.Generic.IReadOnlyList<AstNodes.Comprehension>
+                    generators) {
+            var names = new HashSet<string>(StringComparer.Ordinal);
+            foreach (AstNodes.Comprehension generator in generators) {
+                AddTargetNames(generator.Target, names);
+            }
+            return names;
+
+            static void AddTargetNames(
+                AstNodes.ExprBase target,
+                HashSet<string> result) {
+                switch (target) {
+                    case AstNodes.Name name:
+                        result.Add(name.Id);
+                        break;
+                    case AstNodes.Starred starred:
+                        AddTargetNames(starred.Value, result);
+                        break;
+                    case AstNodes.Tuple tuple:
+                        foreach (AstNodes.ExprBase item in tuple.Elts) {
+                            AddTargetNames(item, result);
+                        }
+                        break;
+                    case AstNodes.List list:
+                        foreach (AstNodes.ExprBase item in list.Elts) {
+                            AddTargetNames(item, result);
+                        }
+                        break;
+                }
+            }
         }
 
         public static object? ExecuteModule(
@@ -1462,8 +1803,16 @@ namespace IronPython.Compiler.PublicAst {
             System.Collections.Generic.IReadOnlyList<AstNodes.ExceptHandlerBase> handlers,
             System.Collections.Generic.IReadOnlyList<AstNodes.Stmt> orelse,
             System.Collections.Generic.IReadOnlyList<AstNodes.Stmt> finalbody) {
+            WarnOnFinallyControlFlow(finalbody);
+            CompilerAst.Statement loweredBody;
+            _tryDepth++;
+            try {
+                loweredBody = LowerSuite(body);
+            } finally {
+                _tryDepth--;
+            }
             return new CompilerAst.TryStatement(
-                LowerSuite(body),
+                loweredBody,
                 handlers.Select(handler => {
                     AstNodes.ExceptHandler typedHandler = (AstNodes.ExceptHandler)handler;
                     var loweredHandler = new CompilerAst.TryStatementHandler(
@@ -1479,6 +1828,276 @@ namespace IronPython.Compiler.PublicAst {
                 }).ToArray(),
                 orelse.Count == 0 ? null : LowerSuite(orelse),
                 finalbody.Count == 0 ? null : LowerSuite(finalbody));
+        }
+
+        private static CompilerAst.Statement LowerTryStar(AstNodes.TryStar tryStar) {
+            WarnOnFinallyControlFlow(tryStar.Finalbody);
+            int id = Interlocked.Increment(ref _tryStarId);
+            int headerIndex = GetStartOffset(tryStar);
+            string originalName = "__trystar_original" + id;
+            string remainingName = "__trystar_remaining" + id;
+            string matchName = "__trystar_match" + id;
+            string restName = "__trystar_rest" + id;
+            string matchedName = "__trystar_matched" + id;
+            string errorsName = "__trystar_errors" + id;
+            string handlerErrorName = "__trystar_handler_error" + id;
+
+            T Located<T>(T node) where T : CompilerAst.Node {
+                SetLocation(node, tryStar);
+                return node;
+            }
+
+            CompilerAst.NameExpression Name(string name) =>
+                Located(new CompilerAst.NameExpression(name));
+            CompilerAst.ConstantExpression Constant(object? value) =>
+                Located(new CompilerAst.ConstantExpression(value));
+            CompilerAst.CallExpression Call(
+                CompilerAst.Expression target,
+                params CompilerAst.Expression[] args) =>
+                Located(new CompilerAst.CallExpression(target, args, null));
+            CompilerAst.MemberExpression Attribute(
+                CompilerAst.Expression target,
+                string name) =>
+                Located(new CompilerAst.MemberExpression(target, name));
+            CompilerAst.BinaryExpression Compare(
+                PythonOperator op,
+                CompilerAst.Expression left,
+                CompilerAst.Expression right) =>
+                Located(new CompilerAst.BinaryExpression(op, left, right));
+            CompilerAst.IfStatement MakeIf(
+                CompilerAst.Expression test,
+                CompilerAst.Statement body,
+                CompilerAst.Statement? elseBody) {
+                var condition = Located(new CompilerAst.IfStatementTest(
+                    test,
+                    body));
+                condition.HeaderIndex = headerIndex;
+                return Located(new CompilerAst.IfStatement(
+                    new[] { condition },
+                    elseBody!));
+            }
+            CompilerAst.IfStatement If(
+                CompilerAst.Expression test,
+                params CompilerAst.Statement[] body) =>
+                MakeIf(
+                    test,
+                    body.Length == 1
+                        ? body[0]
+                        : Located(new CompilerAst.SuiteStatement(body)),
+                    null);
+            CompilerAst.IfStatement IfElse(
+                CompilerAst.Expression test,
+                CompilerAst.Statement body,
+                CompilerAst.Statement elseBody) =>
+                MakeIf(test, body, elseBody);
+            CompilerAst.Expression IsNotNone(CompilerAst.Expression expression) =>
+                Compare(PythonOperator.IsNot, expression, Constant(null));
+            CompilerAst.Expression CallBuiltin(
+                string name,
+                params CompilerAst.Expression[] arguments) =>
+                Call(Name(name), arguments);
+
+            var handlerStatements = new System.Collections.Generic.List<CompilerAst.Statement> {
+                Located(new CompilerAst.AssignmentStatement(
+                    new CompilerAst.Expression[] { Name(errorsName) },
+                    Located(new CompilerAst.ListExpression()))),
+                Located(new CompilerAst.AssignmentStatement(
+                    new CompilerAst.Expression[] { Name(remainingName) },
+                    Located(new CompilerAst.ConditionalExpression(
+                        CallBuiltin(
+                            "isinstance",
+                            Name(originalName),
+                            Name(nameof(IronPython.Runtime.Exceptions.PythonExceptions.BaseExceptionGroup))),
+                        Name(originalName),
+                        CallBuiltin(
+                            nameof(IronPython.Runtime.Exceptions.PythonExceptions.ExceptionGroup),
+                            Constant(string.Empty),
+                            Located(new CompilerAst.TupleExpression(
+                                false,
+                                new CompilerAst.Expression[] { Name(originalName) }))))))),
+                Located(new CompilerAst.AssignmentStatement(
+                    new CompilerAst.Expression[] { Name(matchedName) },
+                    Constant(false)))
+            };
+
+            foreach (AstNodes.ExceptHandlerBase genericHandler in tryStar.Handlers) {
+                var handler = (AstNodes.ExceptHandler)genericHandler;
+                var controlFlow = new TryStarControlFlowFinder();
+                foreach (AstNodes.Stmt statement in handler.Body) {
+                    controlFlow.Visit(statement);
+                }
+                if (controlFlow.Found) {
+                    throw PythonOps.SyntaxError(
+                        "'break', 'continue' and 'return' cannot appear in an except* block");
+                }
+                CompilerAst.Expression split = Call(
+                    Attribute(Name(remainingName), "split"),
+                    LowerExpression(handler.Type!));
+                handlerStatements.Add(Located(new CompilerAst.AssignmentStatement(
+                    new CompilerAst.Expression[] {
+                        Located(new CompilerAst.TupleExpression(
+                            false,
+                            new CompilerAst.Expression[] {
+                                Name(matchName),
+                                Name(restName)
+                            }))
+                    },
+                    split)));
+                handlerStatements.Add(Located(new CompilerAst.AssignmentStatement(
+                    new CompilerAst.Expression[] { Name(remainingName) },
+                    Name(restName))));
+
+                var matchedStatements = new System.Collections.Generic.List<CompilerAst.Statement> {
+                    Located(new CompilerAst.AssignmentStatement(
+                        new CompilerAst.Expression[] { Name(matchedName) },
+                        Constant(true)))
+                };
+                if (handler.Name is not null) {
+                    matchedStatements.Add(Located(new CompilerAst.AssignmentStatement(
+                        new CompilerAst.Expression[] {
+                            Located(new CompilerAst.NameExpression(MangleIdentifier(handler.Name)))
+                        },
+                        Name(matchName))));
+                }
+
+                var handlerFailure = Located(new CompilerAst.TryStatementHandler(
+                    Name(nameof(IronPython.Runtime.Exceptions.PythonExceptions.BaseException)),
+                    Name(handlerErrorName),
+                    Located(new CompilerAst.SuiteStatement(new CompilerAst.Statement[] {
+                        Located(new CompilerAst.ExpressionStatement(
+                            Call(
+                                Attribute(Name(errorsName), "append"),
+                                Name(handlerErrorName))))
+                    }))));
+                handlerFailure.HeaderIndex = headerIndex;
+                matchedStatements.Add(Located(new CompilerAst.TryStatement(
+                    LowerSuite(handler.Body),
+                    new[] { handlerFailure },
+                    null,
+                    null)));
+                handlerStatements.Add(If(IsNotNone(Name(matchName)), matchedStatements.ToArray()));
+            }
+
+            handlerStatements.Add(If(
+                IsNotNone(Name(remainingName)),
+                IfElse(
+                    Located(new CompilerAst.OrExpression(
+                        CallBuiltin(
+                            "isinstance",
+                            Name(originalName),
+                            Name(nameof(IronPython.Runtime.Exceptions.PythonExceptions.BaseExceptionGroup))),
+                        Name(matchedName))),
+                    Located(new CompilerAst.ExpressionStatement(
+                        Call(
+                            Attribute(Name(errorsName), "append"),
+                            Name(remainingName)))),
+                    Located(new CompilerAst.ExpressionStatement(
+                        Call(
+                            Attribute(Name(errorsName), "append"),
+                            Name(originalName)))))));
+
+            CompilerAst.Expression ErrorCount() =>
+                CallBuiltin("len", Name(errorsName));
+            CompilerAst.Statement raiseErrors = IfElse(
+                Compare(PythonOperator.Equal, ErrorCount(), Constant(1)),
+                Located(new CompilerAst.RaiseStatement(
+                    Located(new CompilerAst.IndexExpression(
+                        Name(errorsName),
+                        Constant(0))),
+                    null)),
+                If(
+                    Compare(PythonOperator.GreaterThan, ErrorCount(), Constant(1)),
+                    Located(new CompilerAst.RaiseStatement(
+                        CallBuiltin(
+                            nameof(IronPython.Runtime.Exceptions.PythonExceptions.BaseExceptionGroup),
+                            Constant(string.Empty),
+                            CallBuiltin("tuple", Name(errorsName))),
+                        null))));
+
+            var catchBody = Located(new CompilerAst.SuiteStatement(
+                handlerStatements.Append(raiseErrors).ToArray()));
+            var catchHandler = Located(new CompilerAst.TryStatementHandler(
+                Name(nameof(IronPython.Runtime.Exceptions.PythonExceptions.BaseException)),
+                Name(originalName),
+                catchBody));
+            catchHandler.HeaderIndex = headerIndex;
+
+            CompilerAst.Statement loweredTryBody;
+            _tryDepth++;
+            try {
+                loweredTryBody = LowerSuite(tryStar.Body);
+            } finally {
+                _tryDepth--;
+            }
+            return Located(new CompilerAst.TryStatement(
+                loweredTryBody,
+                new[] { catchHandler },
+                tryStar.Orelse.Count == 0 ? null : LowerSuite(tryStar.Orelse),
+                tryStar.Finalbody.Count == 0 ? null : LowerSuite(tryStar.Finalbody)));
+        }
+
+        private sealed class TryStarControlFlowFinder : AstNodes.PythonAstWalker {
+            public bool Found { get; private set; }
+
+            protected override void VisitNode(AstNodes.PythonAstNode node) {
+                if (node is AstNodes.Return or AstNodes.Break or AstNodes.Continue) {
+                    Found = true;
+                    return;
+                }
+                if (node is AstNodes.FunctionDef
+                    or AstNodes.AsyncFunctionDef
+                    or AstNodes.ClassDef
+                    or AstNodes.Lambda) {
+                    return;
+                }
+                base.VisitNode(node);
+            }
+        }
+
+        private static void WarnOnFinallyControlFlow(
+            System.Collections.Generic.IReadOnlyList<AstNodes.Stmt> finalbody) {
+            if (_pythonContext is null || finalbody.Count == 0) {
+                return;
+            }
+            var finder = new FinallyControlFlowFinder();
+            foreach (AstNodes.Stmt statement in finalbody) {
+                finder.Visit(statement);
+            }
+            if (finder.Found is not null) {
+                PythonOps.Warn(
+                    _pythonContext.SharedContext,
+                    IronPython.Runtime.Exceptions.PythonExceptions.SyntaxWarning,
+                    $"'{finder.Found}' in a 'finally' block");
+            }
+        }
+
+        private sealed class FinallyControlFlowFinder : AstNodes.PythonAstWalker {
+            public string? Found { get; private set; }
+
+            protected override void VisitNode(AstNodes.PythonAstNode node) {
+                if (Found is not null) {
+                    return;
+                }
+                if (node is AstNodes.Return) {
+                    Found = "return";
+                    return;
+                }
+                if (node is AstNodes.Break) {
+                    Found = "break";
+                    return;
+                }
+                if (node is AstNodes.Continue) {
+                    Found = "continue";
+                    return;
+                }
+                if (node is AstNodes.FunctionDef
+                    or AstNodes.AsyncFunctionDef
+                    or AstNodes.ClassDef
+                    or AstNodes.Lambda) {
+                    return;
+                }
+                base.VisitNode(node);
+            }
         }
 
         private static CompilerAst.FunctionDefinition LowerFunction(
@@ -1521,11 +2140,16 @@ namespace IronPython.Compiler.PublicAst {
             string[] rawTypeParameterNames = typeParameters
                 .Select(GetTypeParameterName)
                 .ToArray();
-            string functionQualname = _functionQualname is null
-                ? _className is null
-                    ? name
-                    : (_classQualname ?? _className) + "." + name
-                : _functionQualname + ".<locals>." + name;
+            bool classIsCloserScope = _classQualname is not null
+                && (_functionQualname is null
+                    || !_functionQualname.StartsWith(
+                        _classQualname + ".",
+                        StringComparison.Ordinal));
+            string functionQualname = classIsCloserScope
+                ? _classQualname + "." + name
+                : _functionQualname is not null
+                    ? _functionQualname + ".<locals>." + name
+                    : name;
             _functionQualname = functionQualname;
             bool previousInClassBody = _inClassBody;
             _inClassBody = false;
@@ -1535,13 +2159,59 @@ namespace IronPython.Compiler.PublicAst {
                 : new HashSet<string>(previousTypeParameterNames, StringComparer.Ordinal);
             activeTypeParameterNames.UnionWith(rawTypeParameterNames);
             _activeTypeParameterNames = activeTypeParameterNames;
+            Dictionary<string, CompilerAst.Expression>? previousBindings =
+                _typeParameterBindings;
+            Dictionary<string, CompilerAst.Expression>? functionBindings =
+                previousBindings is null
+                    ? null
+                    : new Dictionary<string, CompilerAst.Expression>(
+                        previousBindings,
+                        StringComparer.Ordinal);
+            if (functionBindings is not null) {
+                foreach (string typeParameterName in rawTypeParameterNames) {
+                    functionBindings.Remove(typeParameterName);
+                }
+                foreach (AstNodes.Arg parameter in arguments.Posonlyargs
+                    .Concat(arguments.Args)
+                    .Concat(arguments.Kwonlyargs)) {
+                    functionBindings.Remove(parameter.ArgName);
+                }
+                if (arguments.Vararg is not null) {
+                    functionBindings.Remove(arguments.Vararg.ArgName);
+                }
+                if (arguments.Kwarg is not null) {
+                    functionBindings.Remove(arguments.Kwarg.ArgName);
+                }
+                foreach (string localName in CollectAssignedNames(body)) {
+                    functionBindings.Remove(localName);
+                }
+                if (rawTypeParameterNames.Length != 0
+                    && _classTypeParameterNames is not null) {
+                    foreach (string className in _classTypeParameterNames) {
+                        if (className.Length > 2
+                            && className[0] == '_'
+                            && className[1] == '_'
+                            && functionBindings.ContainsKey(className)) {
+                            functionBindings[className] =
+                                new CompilerAst.NameExpression(
+                                    MangleIdentifier(className)) {
+                                    SuppressDebugInfo = true
+                                };
+                        }
+                    }
+                }
+            }
+            _typeParameterBindings = functionBindings;
             CompilerAst.SuiteStatement loweredBody;
+            _functionDepth++;
             try {
                 loweredBody = LowerSuite(body);
             } finally {
+                _functionDepth--;
                 _functionQualname = previousFunctionQualname;
                 _inClassBody = previousInClassBody;
                 _activeTypeParameterNames = previousTypeParameterNames;
+                _typeParameterBindings = previousBindings;
             }
             bool hasYield = ContainsYield(body);
             if (!isAsync && !hasYield && body.Count != 0 && body[body.Count - 1] is AstNodes.Match) {
@@ -1635,7 +2305,32 @@ namespace IronPython.Compiler.PublicAst {
         }
 
         private static CompilerAst.LambdaExpression LowerLambda(AstNodes.Lambda lambda) {
-            CompilerAst.Expression body = LowerExpression(lambda.Body);
+            Dictionary<string, CompilerAst.Expression>? bindings =
+                _typeParameterBindings is null
+                    ? null
+                    : new Dictionary<string, CompilerAst.Expression>(
+                        _typeParameterBindings,
+                        StringComparer.Ordinal);
+            if (bindings is not null) {
+                foreach (AstNodes.Arg parameter in lambda.Args.Posonlyargs
+                    .Concat(lambda.Args.Args)
+                    .Concat(lambda.Args.Kwonlyargs)) {
+                    bindings.Remove(parameter.ArgName);
+                }
+                if (lambda.Args.Vararg is not null) {
+                    bindings.Remove(lambda.Args.Vararg.ArgName);
+                }
+                if (lambda.Args.Kwarg is not null) {
+                    bindings.Remove(lambda.Args.Kwarg.ArgName);
+                }
+            }
+            _typeParameterBindings = bindings;
+            CompilerAst.Expression body;
+            try {
+                body = LowerExpression(lambda.Body);
+            } finally {
+                _typeParameterBindings = bindings;
+            }
             var function = new CompilerAst.FunctionDefinition(
                 null,
                 LowerParameters(lambda.Args, null),
@@ -1684,8 +2379,8 @@ namespace IronPython.Compiler.PublicAst {
                 _moduleHasDirectAnnotations = true;
             }
             return new CompilerAst.AnnotatedAssignStatement(
-                LowerExpression(assign.Target),
-                LowerExpression(assign.Annotation),
+                LowerAssignmentTarget(assign.Target),
+                LowerClassAssignmentValue(assign.Annotation),
                 assign.Value is null ? null : LowerExpression(assign.Value),
                 assign.Simple != 0,
                 GetSourceText(assign.Annotation));
@@ -1695,16 +2390,25 @@ namespace IronPython.Compiler.PublicAst {
             CompilerAst.Expression[] decorators = @class.DecoratorList.Select(LowerExpression).ToArray();
             string? previousClass = _className;
             string? previousClassQualname = _classQualname;
-            string classQualname = _functionQualname is not null
-                ? _functionQualname + ".<locals>." + @class.Name
-                : previousClassQualname is null
-                    ? @class.Name
-                    : previousClassQualname + "." + @class.Name;
+            bool classIsNestedInFunction = _functionQualname is not null
+                && previousClassQualname is not null
+                && _functionQualname.StartsWith(
+                    previousClassQualname + ".",
+                    StringComparison.Ordinal);
+            string classQualname = previousClassQualname is not null
+                && !classIsNestedInFunction
+                    ? previousClassQualname + "." + @class.Name
+                    : _functionQualname is not null
+                        ? _functionQualname + ".<locals>." + @class.Name
+                        : @class.Name;
 
             CompilerAst.AssignmentStatement? typeParameterAssignment = null;
             CompilerAst.Expression? typeParameterReference = null;
             string? classTypeParameterTemporaryName = null;
             Dictionary<string, CompilerAst.Expression>? previousBindings = _typeParameterBindings;
+            Dictionary<string, CompilerAst.Expression>?
+                previousComprehensionBindings =
+                    _comprehensionTypeParameterBindings;
             string[] typeParameterNames = Array.Empty<string>();
             if (@class.TypeParams.Count != 0) {
                 ValidateTypeParameters(@class.TypeParams);
@@ -1726,37 +2430,43 @@ namespace IronPython.Compiler.PublicAst {
                 string temporaryName = "$class_type_params_" +
                     Interlocked.Increment(ref _typeParameterTemp);
                 classTypeParameterTemporaryName = temporaryName;
-                if (_classDefinition is not null) {
-                    _classDefinition.ExposedLocalNames.Add(temporaryName);
-                    _classDefinition.NeedsLocalsDictionary = true;
-                }
                 var bindings = previousBindings is null
                     ? new Dictionary<string, CompilerAst.Expression>(StringComparer.Ordinal)
                     : new Dictionary<string, CompilerAst.Expression>(
                         previousBindings,
                         StringComparer.Ordinal);
+                var comprehensionBindings =
+                    previousComprehensionBindings is not null
+                        ? new Dictionary<string, CompilerAst.Expression>(
+                            previousComprehensionBindings,
+                            StringComparer.Ordinal)
+                        : new Dictionary<string, CompilerAst.Expression>(
+                            bindings,
+                            StringComparer.Ordinal);
                 _typeParameterBindings = bindings;
                 var typeParameterExpressions = new List<CompilerAst.Expression>();
                 for (int i = 0; i < @class.TypeParams.Count; i++) {
                     typeParameterExpressions.Add(LowerTypeParameter(@class.TypeParams[i]));
-                    bindings[GetTypeParameterName(@class.TypeParams[i])] =
-                        new CompilerAst.IndexExpression(
+                    var tupleItem = new CompilerAst.IndexExpression(
                             new CompilerAst.NameExpression(temporaryName),
                             new CompilerAst.ConstantExpression(i));
+                    string typeParameterName =
+                        GetTypeParameterName(@class.TypeParams[i]);
+                    bindings[typeParameterName] = tupleItem;
+                    comprehensionBindings[typeParameterName] = tupleItem;
                 }
                 var typeParameterTuple = new CompilerAst.TupleExpression(
                     false,
                     typeParameterExpressions.ToArray());
                 SetLocation(typeParameterTuple, @class);
-                typeParameterReference = _classDefinition is null
-                    && _functionQualname is null
-                    ? new CompilerAst.NameExpression(temporaryName)
-                    : typeParameterTuple;
+                typeParameterReference =
+                    new CompilerAst.NameExpression(temporaryName);
                 typeParameterAssignment = new CompilerAst.AssignmentStatement(
                     new CompilerAst.Expression[] {
                         new CompilerAst.NameExpression(temporaryName)
                     },
                     typeParameterTuple);
+                _comprehensionTypeParameterBindings = comprehensionBindings;
             }
 
             CompilerAst.Expression[] bases;
@@ -1777,20 +2487,13 @@ namespace IronPython.Compiler.PublicAst {
                         "__build_generic_base__",
                         new CompilerAst.NameExpression(
                             classTypeParameterTemporaryName));
-                    var orderedBases = bases.ToList();
-                    int objectIndex = orderedBases.FindLastIndex(
-                        expression => expression is CompilerAst.NameExpression {
-                            Name: "object"
-                        });
-                    if (objectIndex >= 0) {
-                        orderedBases.Insert(objectIndex, genericBase);
-                    } else {
-                        orderedBases.Add(genericBase);
-                    }
-                    bases = orderedBases.ToArray();
+                    bases = bases
+                        .Append(genericBase)
+                        .ToArray();
                 }
-            } finally {
+            } catch {
                 _typeParameterBindings = previousBindings;
+                throw;
             }
 
             var definition = new CompilerAst.ClassDefinition(
@@ -1803,10 +2506,31 @@ namespace IronPython.Compiler.PublicAst {
             if (@class.TypeParams.Count != 0) {
                 definition.TypeParameterNames = typeParameterNames;
                 definition.TypeParameters = typeParameterReference;
+                definition.TypeParameterTupleName =
+                    classTypeParameterTemporaryName;
             }
 
             CompilerAst.ClassDefinition? previousClassDefinition = _classDefinition;
             bool previousInClassBody = _inClassBody;
+            HashSet<string>? previousClassTypeParameterNames =
+                _classTypeParameterNames;
+            if (typeParameterNames.Length != 0) {
+                _classTypeParameterNames =
+                    new HashSet<string>(
+                        @class.TypeParams.Select(GetTypeParameterName),
+                        StringComparer.Ordinal);
+            }
+            if (classTypeParameterTemporaryName is not null
+                && _typeParameterBindings is not null) {
+                for (int i = 0; i < @class.TypeParams.Count; i++) {
+                    _typeParameterBindings[GetTypeParameterName(@class.TypeParams[i])] =
+                        new CompilerAst.NameExpression(
+                            CompilerAst.ClassDefinition.GetTypeParameterVariableName(
+                                typeParameterNames[i])) {
+                            SuppressDebugInfo = true
+                        };
+                }
+            }
             _classDefinition = definition;
             _className = @class.Name;
             _classQualname = classQualname;
@@ -1820,6 +2544,11 @@ namespace IronPython.Compiler.PublicAst {
                 _classQualname = previousClassQualname;
                 _classDefinition = previousClassDefinition;
                 _inClassBody = previousInClassBody;
+                _typeParameterBindings = previousBindings;
+                _comprehensionTypeParameterBindings =
+                    previousComprehensionBindings;
+                _classTypeParameterNames =
+                    previousClassTypeParameterNames;
             }
 
             definition.Body = body;
@@ -2060,13 +2789,11 @@ namespace IronPython.Compiler.PublicAst {
             System.Collections.Generic.IReadOnlyList<AstNodes.Comprehension> generators) {
             var iterators = new System.Collections.Generic.List<CompilerAst.ComprehensionIterator>();
             foreach (AstNodes.Comprehension generator in generators) {
-                if (generator.IsAsync != 0) {
-                    throw new NotSupportedException(
-                        "Async comprehensions require async comprehension lowering.");
-                }
                 iterators.Add(new CompilerAst.ComprehensionFor(
-                    LowerExpression(generator.Target),
-                    LowerExpression(generator.Iter)));
+                    LowerAssignmentTarget(generator.Target),
+                    LowerExpression(generator.Iter)) {
+                    IsAsync = generator.IsAsync != 0
+                });
                 iterators.AddRange(generator.Ifs.Select(
                     condition => (CompilerAst.ComprehensionIterator)new CompilerAst.ComprehensionIf(
                         LowerExpression(condition))));
@@ -2081,26 +2808,20 @@ namespace IronPython.Compiler.PublicAst {
             if (generators.Count == 0) {
                 throw new InvalidOperationException("Comprehension has no generators.");
             }
-            if (generators.Any(item => item.IsAsync != 0)) {
-                throw new NotSupportedException(
-                    "Async starred comprehensions require async lowering.");
-            }
 
             AstNodes.Comprehension first = generators[0];
-            var root = new CompilerAst.ForStatement(
-                LowerExpression(first.Target),
-                new CompilerAst.NameExpression("__starred_comp_iterable"),
-                null!,
-                null!);
+            var root = CreateComprehensionLoop(
+                first,
+                LowerAssignmentTarget(first.Target),
+                new CompilerAst.NameExpression("__starred_comp_iterable"));
             CompilerAst.Statement current = root;
             for (int i = 0; i < generators.Count; i++) {
                 AstNodes.Comprehension generator = generators[i];
                 if (i > 0) {
-                    var loop = new CompilerAst.ForStatement(
-                        LowerExpression(generator.Target),
-                        LowerExpression(generator.Iter),
-                        null!,
-                        null!);
+                    var loop = CreateComprehensionLoop(
+                        generator,
+                        LowerAssignmentTarget(generator.Target),
+                        LowerExpression(generator.Iter));
                     SetGeneratorBody(current, loop);
                     current = loop;
                 }
@@ -2131,11 +2852,14 @@ namespace IronPython.Compiler.PublicAst {
             var function = new CompilerAst.FunctionDefinition(
                 "<starred comp genexpr>",
                 new[] { parameter },
-                root) {
+                root,
+                isAsync: generators.Any(item => item.IsAsync != 0)) {
                 IsGenerator = true,
                 IsGeneratorExpression = true,
                 GeneratorStop = true
             };
+            SetLocation(function, first.Target);
+            function.HeaderIndex = function.StartIndex;
             return new CompilerAst.CallExpression(
                 new CompilerAst.NameExpression(factoryName),
                 new CompilerAst.Expression[] {
@@ -2151,26 +2875,20 @@ namespace IronPython.Compiler.PublicAst {
             if (generator.Generators.Count == 0) {
                 throw new InvalidOperationException("Generator expression has no generators.");
             }
-            if (generator.Generators.Any(item => item.IsAsync != 0)) {
-                throw new NotSupportedException(
-                    "Async generator expressions require async comprehension lowering.");
-            }
 
             AstNodes.Comprehension first = generator.Generators[0];
-            var root = new CompilerAst.ForStatement(
-                LowerExpression(first.Target),
-                new CompilerAst.NameExpression("__gen_$_parm__"),
-                null!,
-                null!);
+            var root = CreateComprehensionLoop(
+                first,
+                LowerAssignmentTarget(first.Target),
+                new CompilerAst.NameExpression("__gen_$_parm__"));
             CompilerAst.Statement current = root;
 
             void AddIterators(AstNodes.Comprehension comprehension, bool firstGenerator) {
                 if (!firstGenerator) {
-                    var loop = new CompilerAst.ForStatement(
-                        LowerExpression(comprehension.Target),
-                        LowerExpression(comprehension.Iter),
-                        null!,
-                        null!);
+                    var loop = CreateComprehensionLoop(
+                        comprehension,
+                        LowerAssignmentTarget(comprehension.Target),
+                        LowerExpression(comprehension.Iter));
                     SetGeneratorBody(current, loop);
                     current = loop;
                 }
@@ -2201,14 +2919,35 @@ namespace IronPython.Compiler.PublicAst {
             var function = new CompilerAst.FunctionDefinition(
                 "<genexpr>",
                 new[] { parameter },
-                root);
+                root,
+                isAsync: generator.Generators.Any(item => item.IsAsync != 0));
             function.IsGenerator = true;
             function.IsGeneratorExpression = true;
             function.GeneratorStop = true;
-            function.HeaderIndex = root.StartIndex;
+            SetLocation(function, generator);
+            function.HeaderIndex = function.StartIndex;
             return new CompilerAst.GeneratorExpression(
                 function,
                 LowerExpression(first.Iter));
+        }
+
+        private static CompilerAst.Statement CreateComprehensionLoop(
+            AstNodes.Comprehension comprehension,
+            CompilerAst.Expression target,
+            CompilerAst.Expression iterable) {
+            CompilerAst.Statement loop = comprehension.IsAsync != 0
+                ? new CompilerAst.AsyncForStatement(
+                    target,
+                    iterable,
+                    null!,
+                    null!)
+                : new CompilerAst.ForStatement(
+                    target,
+                    iterable,
+                    null!,
+                    null!);
+            SetLocation(loop, comprehension.Target);
+            return loop;
         }
 
         private static void SetGeneratorBody(
@@ -2216,6 +2955,9 @@ namespace IronPython.Compiler.PublicAst {
             CompilerAst.Statement body) {
             switch (current) {
                 case CompilerAst.ForStatement loop:
+                    loop.Body = body;
+                    break;
+                case CompilerAst.AsyncForStatement loop:
                     loop.Body = body;
                     break;
                 case CompilerAst.IfStatement conditional:

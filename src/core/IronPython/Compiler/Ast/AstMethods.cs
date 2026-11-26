@@ -19,10 +19,11 @@ namespace IronPython.Compiler.Ast {
         public static readonly MethodInfo IsTrue = GetMethod((Func<object, bool>)PythonOps.IsTrue);
         public static readonly MethodInfo RaiseAssertionError = GetMethod((Action<CodeContext, object>)PythonOps.RaiseAssertionError);
         public static readonly MethodInfo RaiseAssertionErrorNoMessage = GetMethod((Action<CodeContext>)PythonOps.RaiseAssertionError);
-        public static readonly MethodInfo MakeClass = GetMethod((Func<FunctionCode, Func<CodeContext, CodeContext>, CodeContext, string, PythonTuple, PythonDictionary, string, object>)PythonOps.MakeClass);
+        public static readonly MethodInfo MakeClass = GetMethod((Func<FunctionCode, Func<CodeContext, PythonTuple, CodeContext>, CodeContext, string, PythonTuple, PythonDictionary, string, PythonTuple, object>)PythonOps.MakeClass);
         public static readonly MethodInfo PrintExpressionValue = GetMethod((Action<CodeContext, object>)PythonOps.PrintExpressionValue);
         public static readonly MethodInfo ImportWithNames = GetMethod((Func<CodeContext, string, string[], int, object>)PythonOps.ImportWithNames);
         public static readonly MethodInfo LazyImportFrom = GetMethod((Func<CodeContext, string, string, int, object>)PythonOps.LazyImportFrom);
+        public static readonly MethodInfo ImportFromOrLazy = GetMethod((Func<CodeContext, string, string, int, object>)PythonOps.ImportFromOrLazy);
         public static readonly MethodInfo ImportFrom = GetMethod((Func<CodeContext, object, string, object>)PythonOps.ImportFrom);
         public static readonly MethodInfo ImportStar = GetMethod((Action<CodeContext, string, int>)PythonOps.ImportStar);
         public static readonly MethodInfo SaveCurrentExceptionState = GetMethod((Func<object>)PythonOps.SaveCurrentExceptionState);
@@ -54,6 +55,8 @@ namespace IronPython.Compiler.Ast {
         public static readonly MethodInfo ImportBottom = GetMethod((Func<CodeContext, string, int, object>)PythonOps.ImportBottom);
         public static readonly MethodInfo LazyImportTop = GetMethod((Func<CodeContext, string, int, object>)PythonOps.LazyImportTop);
         public static readonly MethodInfo LazyImportBottom = GetMethod((Func<CodeContext, string, int, object>)PythonOps.LazyImportBottom);
+        public static readonly MethodInfo ImportTopOrLazy = GetMethod((Func<CodeContext, string, int, object>)PythonOps.ImportTopOrLazy);
+        public static readonly MethodInfo ImportBottomOrLazy = GetMethod((Func<CodeContext, string, int, object>)PythonOps.ImportBottomOrLazy);
         public static readonly MethodInfo MakeEmptyList = GetMethod((Func<PythonList>)PythonOps.MakeEmptyList);
         public static readonly MethodInfo MakeListNoCopy = GetMethod((Func<object[], PythonList>)PythonOps.MakeListNoCopy);
         public static readonly MethodInfo GetEnumeratorValues = GetMethod((Func<CodeContext, object, int, int, object>)PythonOps.GetEnumeratorValues);
@@ -82,10 +85,12 @@ namespace IronPython.Compiler.Ast {
         public static readonly MethodInfo SetAnnotation = GetMethod((Action<CodeContext, bool, string, string, Func<object>, bool>)PythonOps.SetAnnotation);
         public static readonly MethodInfo MakeHomogeneousDictFromKeyValueItems = GetMethod((Func<object[], PythonDictionary>)PythonOps.MakeHomogeneousDictFromKeyValueItems);
         public static readonly MethodInfo CreateLocalContext = GetMethod((Func<CodeContext, MutableTuple, string[], int, int, bool, CodeContext>)PythonOps.CreateLocalContext);
+        public static readonly MethodInfo CreateClassLocalContext = GetMethod((Func<CodeContext, MutableTuple, string[], int, int, bool, CodeContext>)PythonOps.CreateClassLocalContext);
         public static readonly MethodInfo UpdateStackTrace = GetMethod((Action<Exception, CodeContext, FunctionCode, int>)PythonOps.UpdateStackTrace);
         public static readonly MethodInfo ForLoopDispose = GetMethod((Action<KeyValuePair<IEnumerator, IDisposable>>)PythonOps.ForLoopDispose);
         public static readonly MethodInfo GetClosureTupleFromContext = GetMethod((Func<CodeContext, MutableTuple>)PythonOps.GetClosureTupleFromContext);
         public static readonly MethodInfo PushFrame = GetMethod((Func<CodeContext, FunctionCode, List<FunctionStack>>)PythonOps.PushFrame);
+        public static readonly MethodInfo UpdateCurrentLine = GetMethod((Action<int>)PythonOps.UpdateCurrentLine);
 #if DEBUG
         public static readonly MethodInfo PopFrame = GetMethod((Action<CodeContext, FunctionCode, List<FunctionStack>>)PythonOps.PopFrame);
 #endif

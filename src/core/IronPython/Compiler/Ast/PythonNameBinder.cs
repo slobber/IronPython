@@ -196,6 +196,15 @@ namespace IronPython.Compiler.Ast {
             return variable;
         }
 
+        internal bool IsAnnotationReference(
+            FunctionDefinition function,
+            PythonReference reference) {
+            return _functionAnnotationReferences.TryGetValue(
+                function,
+                out List<PythonReference> references)
+                && references.Contains(reference);
+        }
+
         internal void ReportSyntaxWarning(string message, Node node) {
             Context.Errors.Add(Context.SourceUnit, message, node.Span, ErrorCodes.SyntaxError, Severity.Warning);
         }

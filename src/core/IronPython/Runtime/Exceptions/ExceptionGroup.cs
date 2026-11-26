@@ -43,7 +43,7 @@ namespace IronPython.Runtime.Exceptions {
                         Exception,
                         typeof(_ExceptionGroup),
                         (message, innerException) => new PythonException(message, innerException));
-                    groupType.BaseTypes = new[] { Exception, BaseExceptionGroup };
+                    groupType.BaseTypes = new[] { BaseExceptionGroup, Exception };
                     groupType.ResolutionOrder = Mro.Calculate(groupType, groupType.BaseTypes);
                     System.Threading.Interlocked.CompareExchange(
                         ref ExceptionGroupStorage,
@@ -64,24 +64,56 @@ namespace IronPython.Runtime.Exceptions {
             public _BaseExceptionGroup([NotNone] PythonType type) : base(type) {
             }
 
-            public void __init__([NotNone] object message, [NotNone] object exceptions) {
+            [System.Diagnostics.CodeAnalysis.SuppressMessage(
+                "Usage",
+                "IPY01",
+                Justification = "Null arguments are rejected with Python-specific constructor errors.")]
+            public static object __new__(
+                CodeContext context,
+                [NotNone] PythonType cls,
+                [NotNone] params object[] args) {
+                if (args.Length != 2) {
+                    throw PythonOps.TypeError(
+                        "BaseExceptionGroup.__new__() takes exactly 2 arguments");
+                }
+                object message = args[0];
+                object exceptions = args[1];
                 if (message is not string) {
                     throw PythonOps.TypeError(
                         "argument 1 must be str, not {0}",
                         PythonOps.GetPythonTypeName(message));
                 }
                 if (exceptions is null || exceptions is SetCollection) {
-                    throw PythonOps.TypeError("second argument (exceptions) must be a sequence");
+                    throw PythonOps.TypeError(
+                        "second argument (exceptions) must be a sequence");
                 }
-                _exceptionsWereTuple = exceptions is PythonTuple;
-                _exceptionsContainerName = PythonOps.GetPythonTypeName(exceptions);
-                PythonTuple items = PythonTuple.Make(exceptions);
-                Initialize(message, items);
-                base.__init__(message, exceptions);
-            }
-
-            public void __init__([NotNone] object message, [NotNone] object exceptions, [NotNone] params object[] extra) {
-                throw PythonOps.TypeError("BaseExceptionGroup.__new__() takes exactly 2 arguments");
+                PythonTuple items;
+                try {
+                    items = PythonTuple.Make(exceptions);
+                } catch (Exception) {
+                    throw PythonOps.TypeError(
+                        "second argument (exceptions) must be a sequence");
+                }
+                // CPython validates the sequence repr even when construction succeeds.
+                try {
+                    PythonOps.Repr(DefaultContext.Default, exceptions);
+                } catch (TypeErrorException) {
+                    throw PythonOps.TypeError(
+                        "{0}.__repr__() must return a str, not NoneType",
+                        PythonOps.GetPythonTypeName(exceptions));
+                }
+                PythonType actualType =
+                    cls == BaseExceptionGroup
+                    && items.All(item => PythonOps.IsInstance(context, item, Exception))
+                        ? ExceptionGroup
+                        : cls;
+                var group = (_BaseExceptionGroup)Activator.CreateInstance(
+                    actualType.UnderlyingSystemType,
+                    actualType)!;
+                group._exceptionsWereTuple = exceptions is PythonTuple;
+                group._exceptionsContainerName = PythonOps.GetPythonTypeName(exceptions);
+                group.Initialize(message, items);
+                return group;
             }
 
             private void Initialize(object message, PythonTuple items) {
@@ -119,37 +151,66 @@ namespace IronPython.Runtime.Exceptions {
                 base.__init__(message, items);
             }
 
-            public object? message => _message;
+            [System.Diagnostics.CodeAnalysis.SuppressMessage(
+                "Usage",
+                "IPY01",
+                Justification = "The setter deliberately raises a Python-facing read-only error.")]
+            public object? message {
+                get => _message;
+                set => throw PythonOps.AttributeError(
+                    "readonly attribute 'message'");
+            }
 
-            public PythonTuple exceptions => _exceptions;
+            [System.Diagnostics.CodeAnalysis.SuppressMessage(
+                "Usage",
+                "IPY01",
+                Justification = "The setter deliberately raises a Python-facing read-only error.")]
+            public object exceptions {
+                get => _exceptions;
+                set => throw PythonOps.AttributeError(
+                    "readonly attribute 'exceptions'");
+            }
 
             public object derive(CodeContext context, [NotNone] object exceptions)
             {
                 PythonTuple derivedExceptions = exceptions is PythonTuple tuple
                     ? tuple
                     : PythonTuple.Make(exceptions);
-                object result;
-                if (GetType() == typeof(_BaseExceptionGroup) || GetType() == typeof(_ExceptionGroup)) {
-                    var group = (_BaseExceptionGroup)Activator.CreateInstance(
-                        GetType(),
-                        DynamicHelpers.GetPythonType(this))!;
-                    group.InitializeDerived(message ?? string.Empty, derivedExceptions);
-                    result = group;
-                } else {
-                    result = PythonCalls.Call(
-                        context,
-                        DynamicHelpers.GetPythonType(this),
-                        message ?? string.Empty,
-                        derivedExceptions)!;
+                Type resultType = derivedExceptions.All(item =>
+                    PythonOps.IsInstance(DefaultContext.Default, item, Exception))
+                    ? typeof(_ExceptionGroup)
+                    : typeof(_BaseExceptionGroup);
+                var group = (_BaseExceptionGroup)Activator.CreateInstance(
+                    resultType,
+                    resultType == typeof(_ExceptionGroup)
+                        ? ExceptionGroup
+                        : BaseExceptionGroup)!;
+                group.InitializeDerived(message ?? string.Empty, derivedExceptions);
+                return group;
+            }
+
+            private static object InvokeDerive(
+                CodeContext context,
+                _BaseExceptionGroup group,
+                PythonTuple exceptions) {
+                object result = PythonCalls.Call(
+                    context,
+                    PythonOps.GetBoundAttr(context, group, "derive"),
+                    exceptions)!;
+                if (result is not _BaseExceptionGroup) {
+                    throw PythonOps.TypeError(
+                        "derive must return an instance of BaseExceptionGroup");
                 }
-                if (result is BaseException derived) {
-                    derived.__cause__ = __cause__;
-                    derived.__context__ = __context__;
-                    derived.__traceback__ = __traceback__;
-                    if (__dict__.TryGetValue("__notes__", out object? notes)) {
-                        derived.__dict__["__notes__"] = notes is PythonList list
-                            ? new PythonList(list)
-                            : notes;
+                var derived = (BaseException)result;
+                derived.Cause = group.Cause;
+                derived.Context = group.Context;
+                derived.Traceback = group.Traceback;
+                if (group.__dict__.TryGetValue("__notes__", out object? notes)) {
+                    derived.__dict__["__notes__"] = notes is PythonList list
+                        ? new PythonList(list)
+                        : notes;
+                    if (notes is not PythonList) {
+                        derived.__dict__.Remove("__notes__");
                     }
                 }
                 return result;
@@ -167,14 +228,10 @@ namespace IronPython.Runtime.Exceptions {
                 return PythonTuple.MakeTuple(
                     matching.Count == 0
                         ? null
-                        : matching.Count == _exceptions.Count
-                            ? this
-                            : derive(context, PythonTuple.Make(matching)),
+                        : InvokeDerive(context, this, PythonTuple.Make(matching)),
                     rest.Count == 0
                         ? null
-                        : rest.Count == _exceptions.Count
-                            ? this
-                            : derive(context, PythonTuple.Make(rest)));
+                        : InvokeDerive(context, this, PythonTuple.Make(rest)));
             }
 
             public object? subgroup(CodeContext context, [NotNone] object condition) {
@@ -187,8 +244,12 @@ namespace IronPython.Runtime.Exceptions {
                 var rest = new List<object>();
                 SplitChildren(context, condition, matching, rest);
                 if (matching.Count == 0) return null;
-                if (matching.Count == _exceptions.Count) return this;
-                return derive(context, PythonTuple.Make(matching));
+                if (matching.Count == _exceptions.Count
+                    && condition is not PythonType
+                    && condition is not PythonTuple) {
+                    return this;
+                }
+                return InvokeDerive(context, this, PythonTuple.Make(matching));
             }
 
             private void SplitChildren(
@@ -198,14 +259,28 @@ namespace IronPython.Runtime.Exceptions {
                 List<object> rest) {
                 foreach (object exception in _exceptions) {
                     if (exception is _BaseExceptionGroup nested) {
-                        var nestedMatching = new List<object>();
-                        var nestedRest = new List<object>();
-                        nested.SplitChildren(context, condition, nestedMatching, nestedRest);
-                        if (nestedMatching.Count != 0) {
-                            matching.Add(nested.derive(context, PythonTuple.Make(nestedMatching)));
-                        }
-                        if (nestedRest.Count != 0) {
-                            rest.Add(nested.derive(context, PythonTuple.Make(nestedRest)));
+                        if (Matches(context, condition, nested)) {
+                            matching.Add(nested);
+                        } else {
+                            var nestedMatching = new List<object>();
+                            var nestedRest = new List<object>();
+                            nested.SplitChildren(
+                                context,
+                                condition,
+                                nestedMatching,
+                                nestedRest);
+                            if (nestedMatching.Count != 0) {
+                                matching.Add(InvokeDerive(
+                                    context,
+                                    nested,
+                                    PythonTuple.Make(nestedMatching)));
+                            }
+                            if (nestedRest.Count != 0) {
+                                rest.Add(InvokeDerive(
+                                    context,
+                                    nested,
+                                    PythonTuple.Make(nestedRest)));
+                            }
                         }
                     } else if (Matches(context, condition, exception)) {
                         matching.Add(exception);
@@ -271,6 +346,12 @@ namespace IronPython.Runtime.Exceptions {
         public class _ExceptionGroup : _BaseExceptionGroup {
             public _ExceptionGroup([NotNone] PythonType type) : base(type) {
             }
+
+            public static new object __new__(
+                CodeContext context,
+                [NotNone] PythonType cls,
+                [NotNone] params object[] args)
+                => _BaseExceptionGroup.__new__(context, cls, args);
         }
     }
 }

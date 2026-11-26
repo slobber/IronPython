@@ -90,12 +90,17 @@ namespace IronPython.Runtime {
 
             var scopeStatement = _code.PythonCode;
             if (scopeStatement.IsClosure && Closure is not null) {
+                string[] freeVarNames = Enumerable.Range(0, closure!.Count)
+                    .Select(index => index < scopeStatement.FreeVariables.Count
+                        ? scopeStatement.FreeVariables[index].Name
+                        : null)
+                    .ToArray();
                 _context = new CodeContext(
                     new PythonDictionary(new RuntimeVariablesDictionaryStorage(
                         Closure,
-                        Array.Empty<string>(),
-                        Closure.Capacity,
-                        0,
+                        freeVarNames,
+                        freeVarNames.Length,
+                        -1,
                         globals._storage)),
                     new ModuleContext(
                         globals,
@@ -598,7 +603,10 @@ namespace IronPython.Runtime {
         #region ICodeFormattable Members
 
         public string/*!*/ __repr__(CodeContext/*!*/ context) {
-            return string.Format("<function {0} at {1}>", __name__, PythonOps.HexId(this));
+            string name = string.IsNullOrEmpty(__qualname__)
+                ? __name__
+                : __qualname__;
+            return string.Format("<function {0} at {1}>", name, PythonOps.HexId(this));
         }
 
         #endregion

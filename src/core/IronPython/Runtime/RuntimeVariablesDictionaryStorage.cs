@@ -7,6 +7,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 
 using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
@@ -17,12 +18,25 @@ namespace IronPython.Runtime {
         private readonly string?[] _args;
         private readonly int _numFreeVars;
         private readonly int _arg0Idx;
+        private readonly bool _isClassNamespace;
+        private ClassAnnotationScope? _annotationScope;
 
         public RuntimeVariablesDictionaryStorage(RuntimeVariablesDictionaryStorage vars, DictionaryStorage storage)
-            : this(vars._boxes, vars._args, vars._numFreeVars, vars._arg0Idx, storage) {
+            : this(vars._boxes, vars._args, vars._numFreeVars, vars._arg0Idx, storage, false) {
+            _annotationScope = vars._annotationScope;
         }
 
         public RuntimeVariablesDictionaryStorage(MutableTuple boxes, string?[] args, int numFreeVars, int arg0Idx, DictionaryStorage storage)
+            : this(boxes, args, numFreeVars, arg0Idx, storage, false) {
+        }
+
+        internal RuntimeVariablesDictionaryStorage(
+            MutableTuple boxes,
+            string?[] args,
+            int numFreeVars,
+            int arg0Idx,
+            DictionaryStorage storage,
+            bool isClassNamespace)
             : base(storage) {
 
             Debug.Assert(0 <= numFreeVars && numFreeVars <= args.Length);
@@ -32,6 +46,7 @@ namespace IronPython.Runtime {
             _args = args;
             _numFreeVars = numFreeVars;
             _arg0Idx = arg0Idx;
+            _isClassNamespace = isClassNamespace;
         }
 
         /// <summary>
@@ -60,6 +75,18 @@ namespace IronPython.Runtime {
         /// For performance reasons, Arg0Idx is only tracked when deemed necessary to support super().
         /// </remarks>
         internal int Arg0Idx => _arg0Idx;
+
+        /// <summary>
+        /// True when this storage is the live namespace of a class body.
+        /// Function scopes expose a snapshot from locals(), while a class
+        /// namespace must remain writable through the mapping returned there.
+        /// </summary>
+        internal bool IsClassNamespace => _isClassNamespace;
+
+        internal ClassAnnotationScope? AnnotationScope {
+            get => _annotationScope;
+            set => _annotationScope = value;
+        }
 
         protected override IEnumerable<KeyValuePair<string, object?>> GetExtraItems() {
             for (int i = 0; i < _args.Length; i++) {
@@ -115,5 +142,33 @@ namespace IronPython.Runtime {
             // the tuple is created from the closure cells of the scope, see ScopeStatement.CreateLocalContext
             return _boxes.GetNestedValue(_args.Length, i) as ClosureCell ?? throw new InvalidOperationException($"Closure tuple item {i} is not a closure cell.");
         }
+
+        internal bool TryGetCell(string name, out ClosureCell cell) {
+            for (int i = 0; i < _args.Length; i++) {
+                if (_args[i] == name) {
+                    cell = GetCell(i);
+                    return true;
+                }
+            }
+            cell = null!;
+            return false;
+        }
+    }
+
+    internal sealed class ClassAnnotationScope {
+        public ClassAnnotationScope(
+            PythonDictionary outerLocals,
+            IEnumerable<string> shadowedNames,
+            IEnumerable<string> classBoundNames) {
+            OuterLocals = outerLocals;
+            ShadowedNames = new HashSet<string>(shadowedNames, StringComparer.Ordinal);
+            ClassBoundNames = new HashSet<string>(classBoundNames, StringComparer.Ordinal);
+        }
+
+        public PythonDictionary OuterLocals { get; }
+
+        public HashSet<string> ShadowedNames { get; }
+
+        public HashSet<string> ClassBoundNames { get; }
     }
 }

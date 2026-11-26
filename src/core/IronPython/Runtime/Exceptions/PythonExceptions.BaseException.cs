@@ -104,14 +104,226 @@ namespace IronPython.Runtime.Exceptions {
                 _args = PythonTuple.MakeTuple(args ?? new object?[] { null });
             }
 
+            public void __init__(
+                [ParamDictionary] IDictionary<string, object> kwargs,
+                [NotNone] params object[] args) {
+                __init__(args);
+                bool isAttributeError =
+                    PythonOps.IsSubClass(_type, PythonExceptions.AttributeError);
+                foreach (KeyValuePair<string, object> pair in kwargs) {
+                    if (isAttributeError && pair.Key == "name") {
+                        name = pair.Value;
+                    } else if (isAttributeError && pair.Key == "obj") {
+                        obj = pair.Value;
+                    } else {
+                        throw PythonOps.TypeError(
+                            "{0}() got an unexpected keyword argument '{1}'",
+                            _type.Name,
+                            pair.Key);
+                    }
+                }
+            }
+
             public void add_note([NotNone] string note) {
                 EnsureDict();
                 if (!_dict!.TryGetValue("__notes__", out object notesValue)
                     || notesValue is not PythonList notes) {
+                    if (notesValue is not null) {
+                        throw PythonOps.TypeError(
+                            "__notes__ must be a list, not {0}",
+                            PythonOps.GetPythonTypeName(notesValue));
+                    }
                     notes = new PythonList();
                     _dict["__notes__"] = notes;
                 }
                 notes.append(note);
+            }
+
+            [SpecialName, PropertyMethod]
+            public object? Get__notes__() {
+                if (_dict != null
+                    && _dict.TryGetValue("__notes__", out object? notes)) {
+                    return notes;
+                }
+                throw PythonOps.AttributeError("__notes__");
+            }
+
+            [SpecialName, PropertyMethod]
+            public void Set__notes__([AllowNull] object value) {
+                EnsureDict();
+                _dict!["__notes__"] = value;
+            }
+
+            [SpecialName, PropertyMethod]
+            public void Delete__notes__() {
+                if (_dict == null || !_dict.Remove("__notes__")) {
+                    throw PythonOps.AttributeError("__notes__");
+                }
+            }
+
+            public object? name {
+                get {
+                    if (PythonOps.IsSubClass(_type, PythonExceptions.NameError)
+                        || PythonOps.IsSubClass(_type, PythonExceptions.AttributeError)) {
+                        return GetDiagnosticValue("name");
+                    }
+                    throw PythonOps.AttributeError("name");
+                }
+                set {
+                    if (!PythonOps.IsSubClass(_type, PythonExceptions.NameError)
+                        && !PythonOps.IsSubClass(_type, PythonExceptions.AttributeError)) {
+                        throw PythonOps.AttributeError("name");
+                    }
+                    SetDiagnosticValue("name", value!);
+                }
+            }
+
+            public object? obj {
+                get {
+                    if (PythonOps.IsSubClass(_type, PythonExceptions.AttributeError)) {
+                        return GetDiagnosticValue("obj");
+                    }
+                    throw PythonOps.AttributeError("obj");
+                }
+                set {
+                    if (!PythonOps.IsSubClass(_type, PythonExceptions.AttributeError)) {
+                        throw PythonOps.AttributeError("obj");
+                    }
+                    SetDiagnosticValue("obj", value!);
+                }
+            }
+
+            private object? GetDiagnosticValue(string name) {
+                return _dict != null && _dict.TryGetValue(name, out object? value)
+                    ? value
+                    : null;
+            }
+
+            private void SetDiagnosticValue(string name, object value) {
+                EnsureDict();
+                _dict![name] = value;
+            }
+
+            public void __delattr__([NotNone] string name) {
+                if (name is "args" or "__traceback__" or "__cause__"
+                    or "__context__") {
+                    throw PythonOps.TypeError(
+                        "{0} may not be deleted",
+                        name);
+                }
+
+                if (name == "__suppress_context__") {
+                    throw PythonOps.TypeError(
+                        "can't delete numeric/char attribute");
+                }
+
+                if (PythonOps.IsSubClass(_type, PythonExceptions.SyntaxError)) {
+                    var syntaxError = (PythonExceptions._SyntaxError)this;
+                    switch (name) {
+                        case "msg":
+                            syntaxError.msg = null;
+                            return;
+                        case "filename":
+                            syntaxError.filename = null;
+                            return;
+                        case "lineno":
+                            syntaxError.lineno = null;
+                            return;
+                        case "offset":
+                            syntaxError.offset = null;
+                            return;
+                        case "end_lineno":
+                            syntaxError.end_lineno = null;
+                            return;
+                        case "end_offset":
+                            syntaxError.end_offset = null;
+                            return;
+                        case "text":
+                            syntaxError.text = null;
+                            return;
+                        case "print_file_and_line":
+                            syntaxError.print_file_and_line = null;
+                            return;
+                        case "_metadata":
+                            syntaxError._metadata = null;
+                            return;
+                    }
+                }
+
+                if (PythonOps.IsSubClass(_type, PythonExceptions.ImportError)) {
+                    var importError = (PythonExceptions._ImportError)this;
+                    switch (name) {
+                        case "msg":
+                            importError.msg = null;
+                            return;
+                        case "name":
+                            importError.name = null;
+                            return;
+                        case "path":
+                            importError.path = null;
+                            return;
+                        case "name_from":
+                            importError.name_from = null;
+                            return;
+                    }
+                }
+
+                if (PythonOps.IsSubClass(_type, PythonExceptions.SystemExit)) {
+                    ((PythonExceptions._SystemExit)this).code = null;
+                    return;
+                }
+
+                if (PythonOps.IsSubClass(_type, PythonExceptions.StopIteration)) {
+                    ((PythonExceptions._StopIteration)this).value = null;
+                    return;
+                }
+
+                if (PythonOps.IsSubClass(_type, PythonExceptions.NameError)) {
+                    SetDiagnosticValue("name", null!);
+                    return;
+                }
+
+                if (PythonOps.IsSubClass(_type, PythonExceptions.AttributeError)
+                    && name is ("name" or "obj")) {
+                    SetDiagnosticValue(name, null!);
+                    return;
+                }
+
+                if (PythonOps.IsSubClass(_type, PythonExceptions.OSError)) {
+                    var osError = (PythonExceptions._OSError)this;
+                    switch (name) {
+                        case "errno":
+                            osError.errno = null;
+                            return;
+                        case "strerror":
+                            osError.strerror = null;
+                            return;
+                        case "filename":
+                            osError.filename = null;
+                            return;
+                        case "filename2":
+                            osError.filename2 = null;
+                            return;
+                        case "winerror":
+                            osError.winerror = null;
+                            return;
+                    }
+                }
+
+                if (PythonOps.IsSubClass(_type, PythonExceptions.UnicodeDecodeError)
+                    && name == "reason") {
+                    ((PythonExceptions._UnicodeDecodeError)this).reason = null;
+                    return;
+                }
+
+                if (_dict != null && _dict.Remove(name)) {
+                    return;
+                }
+
+                throw PythonOps.AttributeError(
+                    "{0} object attribute '{1}' is read-only",
+                    PythonOps.GetPythonTypeName(this),
+                    name);
             }
 
             /// <summary>
@@ -124,7 +336,7 @@ namespace IronPython.Runtime.Exceptions {
             }
 
             public object with_traceback(TraceBack? tb) {
-                __traceback__ = tb;
+                Traceback = tb;
                 return this;
             }
 
@@ -140,7 +352,16 @@ namespace IronPython.Runtime.Exceptions {
             /// <summary>
             /// Returns a tuple of (type, (arg0, ..., argN)) for implementing pickling/copying
             /// </summary>
-            public virtual object/*!*/ __reduce_ex__(int protocol) {
+            public virtual object/*!*/ __reduce_ex__(
+                CodeContext context,
+                int protocol) {
+                if (PythonOps.TryGetBoundAttr(
+                        context,
+                        this,
+                        "__reduce__",
+                        out object? reduce)) {
+                    return PythonCalls.Call(context, reduce)!;
+                }
                 return __reduce__();
             }
 
@@ -167,10 +388,16 @@ namespace IronPython.Runtime.Exceptions {
             /// <summary>
             /// Updates the exception's state (dictionary) with the new values
             /// </summary>
-            public void __setstate__(PythonDictionary? state) {
-                if (state == null) return;
-                foreach (KeyValuePair<object, object> pair in state) {
-                    __dict__[pair.Key] = pair.Value;
+            public void __setstate__([NotNone] object state) {
+                if (state is not PythonDictionary dictionary) {
+                    throw PythonOps.TypeError("state is not a dictionary");
+                }
+                foreach (KeyValuePair<object, object> pair in dictionary) {
+                    if (pair.Key is string key && key == "args") {
+                        args = pair.Value;
+                    } else {
+                        __dict__[pair.Key] = pair.Value;
+                    }
                 }
             }
 
@@ -277,34 +504,72 @@ namespace IronPython.Runtime.Exceptions {
                 get { return _type; }
             }
 
-            public BaseException? __cause__ {
-                get { return _cause; }
+            internal BaseException? Cause {
+                get => _cause;
                 set {
                     _cause = value;
-                    __suppress_context__ = true;
+                    SuppressContext = true;
                 }
             }
 
-            public BaseException? __context__ {
-                get {
-                    return _context ?? __cause__;
-                }
-                internal set {
-                    _context = value;
-                }
+            internal BaseException? Context {
+                get => _context ?? Cause;
+                set => _context = value;
             }
 
             internal BaseException? RawContext => _context;
 
-            public bool __suppress_context__ { get; set; }
+            internal bool SuppressContext { get; set; }
 
-            public TraceBack? __traceback__ {
+            [SpecialName, PropertyMethod]
+            public BaseException? Get__cause__() => Cause;
+
+            [SpecialName, PropertyMethod]
+            public void Set__cause__([AllowNull] object value) {
+                Cause = RequireException(value, "cause");
+            }
+
+            [SpecialName, PropertyMethod]
+            public BaseException? Get__context__() => Context;
+
+            [SpecialName, PropertyMethod]
+            public void Set__context__([AllowNull] object value) {
+                Context = RequireException(value, "context");
+            }
+
+            [SpecialName, PropertyMethod]
+            public bool Get__suppress_context__() => SuppressContext;
+
+            [SpecialName, PropertyMethod]
+            public void Set__suppress_context__([NotNone] object value) {
+                if (value is not bool suppress) {
+                    throw PythonOps.TypeError("attribute value type must be bool");
+                }
+                SuppressContext = suppress;
+            }
+
+            [SpecialName, PropertyMethod]
+            public void Delete__suppress_context__() {
+                throw PythonOps.TypeError("can't delete numeric/char attribute");
+            }
+
+            private static BaseException? RequireException(
+                object? value,
+                string attribute) {
+                if (value is null) return null;
+                if (value is BaseException exception) return exception;
+                throw PythonOps.TypeError(
+                    "exception {0} must be None or derive from BaseException",
+                    attribute);
+            }
+
+            internal TraceBack? Traceback {
                 get {
                     if (!_tracebackSet && _traceback == null) {
                         var clrException = GetClrException();
                         var frames = clrException.GetFrameList();
                         if (frames != null) {
-                            __traceback__ = PythonOps.CreateTraceBack(clrException, frames, null, frames.Count);
+                            Traceback = PythonOps.CreateTraceBack(clrException, frames, null, frames.Count);
                         }
                     }
                     return _traceback;
@@ -315,7 +580,27 @@ namespace IronPython.Runtime.Exceptions {
                 }
             }
 
-            internal bool HasCause => __cause__ != null;
+            [SpecialName, PropertyMethod]
+            public TraceBack? Get__traceback__() => Traceback;
+
+            [SpecialName, PropertyMethod]
+            public void Set__traceback__([AllowNull] object value) {
+                if (value is null) {
+                    Traceback = null;
+                } else if (value is TraceBack traceback) {
+                    Traceback = traceback;
+                } else {
+                    throw PythonOps.TypeError(
+                        "__traceback__ must be a traceback or None");
+                }
+            }
+
+            [SpecialName, PropertyMethod]
+            public void Delete__traceback__() {
+                throw PythonOps.TypeError("__traceback__ may not be deleted");
+            }
+
+            internal bool HasCause => Cause != null;
 
             void IPythonObject.SetPythonType(PythonType/*!*/ newType) {
                 if (_type.IsSystemType || newType.IsSystemType) {
@@ -349,6 +634,13 @@ namespace IronPython.Runtime.Exceptions {
                 } else {
                     __init__();
                 }
+
+                if (exception is UnboundNameException nameError) {
+                    name = nameError.Name;
+                } else if (exception is AttributeErrorException attributeError) {
+                    name = attributeError.PythonName;
+                    obj = attributeError.PythonObject;
+                }
             }
 
             /// <summary>
@@ -375,7 +667,7 @@ namespace IronPython.Runtime.Exceptions {
             internal Exception CreateClrExceptionWithCause(BaseException? cause, BaseException? context, bool suppressContext) {
                 _cause = cause;
                 _context = context;
-                __suppress_context__ = suppressContext;
+                SuppressContext = suppressContext;
                 _traceback = null;
                 _tracebackSet = false;
 

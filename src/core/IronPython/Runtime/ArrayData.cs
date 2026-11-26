@@ -133,6 +133,14 @@ namespace IronPython.Runtime {
             }
         }
 
+        internal void ClearAndRelease() {
+            lock (this) {
+                CheckBuffer();
+                _items = [];
+                _size = 0;
+            }
+        }
+
         public bool Contains(T item)
             => _size != 0 && IndexOf(item) != -1;
 

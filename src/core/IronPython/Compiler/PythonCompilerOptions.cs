@@ -16,6 +16,7 @@ namespace IronPython.Compiler {
         private string _moduleName;
         private int[] _initialIndentation;
         private CompilationMode _compilationMode;
+        private bool _allowLazyImportsInExec = true;
 
         /// <summary>
         /// Creates a new PythonCompilerOptions with the default language features enabled.
@@ -116,6 +117,11 @@ namespace IronPython.Compiler {
         public bool SkipFirstLine {
             get { return _skipFirstLine; }
             set { _skipFirstLine = value; }
+        }
+
+        public bool AllowLazyImportsInExec {
+            get { return _allowLazyImportsInExec; }
+            set { _allowLazyImportsInExec = value; }
         }
 
         internal bool FutureAnnotations { get; set; }

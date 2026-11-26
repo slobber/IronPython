@@ -568,7 +568,7 @@ namespace IronPython.Runtime.Operations {
             } else {
                 if (x == BigInteger.Zero) {
                     if (y.Sign < 0)
-                        throw PythonOps.ZeroDivisionError("0.0 cannot be raised to a negative power");
+                        throw PythonOps.ZeroDivisionError("zero to a negative power");
                     return BigInteger.Zero;
                 } else if (x == BigInteger.One) {
                     return BigInteger.One;
@@ -734,6 +734,17 @@ namespace IronPython.Runtime.Operations {
 #else
             return MathUtils.BitLength(self);
 #endif
+        }
+
+        public static int bit_count(BigInteger self) {
+            byte[] bytes = BigInteger.Abs(self).ToByteArray(
+                isUnsigned: true,
+                isBigEndian: false);
+            int count = 0;
+            foreach (byte value in bytes) {
+                count += BitOperations.PopCount(value);
+            }
+            return count;
         }
 
         [PythonHidden]

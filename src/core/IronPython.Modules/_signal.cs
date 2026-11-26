@@ -275,6 +275,25 @@ namespace IronPython.Modules {
 
         public static int NSIG => RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? 23 : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? 32 : 65;
 
+        public static SetCollection valid_signals() {
+            var result = new SetCollection();
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows)) {
+                foreach (int signalNumber in new[] {
+                    SIGABRT, SIGBREAK, SIGFPE, SIGILL, SIGINT,
+                    SIGSEGV, SIGTERM
+                }) {
+                    result.add(signalNumber);
+                }
+            } else {
+                for (int signalNumber = 1; signalNumber < NSIG; signalNumber++) {
+                    if (signalNumber is not 32 and not 33) {
+                        result.add(signalNumber);
+                    }
+                }
+            }
+            return result;
+        }
+
         public const int SIG_DFL = 0;
         public const int SIG_IGN = 1;
 

@@ -21,6 +21,7 @@ namespace IronPython.Runtime.Types {
     [PythonType("GenericAlias")]
     public class GenericAlias : ICodeFormattable, IPythonMembersList, IWeakReferenceable {
         private bool _unpacked;
+        private PythonTuple? _parameters;
         private WeakRefTracker? _weakref;
 
         protected GenericAlias() {
@@ -65,11 +66,53 @@ namespace IronPython.Runtime.Types {
 
         public bool __unpacked__ => _unpacked;
 
+        public object? __typing_unpacked_tuple_args__ {
+            get {
+                if (!_unpacked) return null;
+                if (__origin__ is PythonType origin && origin.Name is "tuple") {
+                    if (__args__.Count == 1
+                        && __args__[0] is PythonTuple emptyTuple
+                        && emptyTuple.Count == 0) {
+                        return PythonTuple.EMPTY;
+                    }
+                    return __args__;
+                }
+                if (PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        __origin__,
+                        "__typing_unpacked_tuple_args__",
+                        out object? nestedUnpacked)
+                    && nestedUnpacked is PythonTuple nestedUnpackedTuple) {
+                    return nestedUnpackedTuple;
+                }
+                if (PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        __origin__,
+                        "__origin__",
+                        out object? nestedOrigin)
+                    && nestedOrigin is PythonType nestedType
+                    && nestedType.Name is "tuple"
+                    && PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        __origin__,
+                        "__args__",
+                        out object? nestedArguments)
+                    && nestedArguments is PythonTuple nestedTuple) {
+                    return nestedTuple;
+                }
+                throw PythonOps.TypeError(
+                    "Unpack[...] must be used with a tuple type");
+            }
+        }
+
         public PythonTuple __parameters__ {
             get {
-                var parameters = new List<object>();
-                AddParameters(parameters, __args__);
-                return PythonTuple.MakeTuple(parameters.ToArray());
+                if (_parameters is null) {
+                    var parameters = new List<object>();
+                    AddParameters(parameters, __args__);
+                    _parameters = PythonTuple.MakeTuple(parameters.ToArray());
+                }
+                return _parameters;
             }
         }
 
@@ -81,8 +124,25 @@ namespace IronPython.Runtime.Types {
             PythonTuple parameters = __parameters__;
             if (parameters.Count == 0) {
                 throw PythonOps.TypeError(
-                    "There are no type variables left in {0}",
+                    "{0} is not a generic class",
                     PythonOps.Repr(DefaultContext.Default, this));
+            }
+            if (parameters.Count(IsTypeVarTuple) > 1) {
+                throw PythonOps.TypeError(
+                    "More than one TypeVarTuple parameter in {0}",
+                    PythonOps.Repr(DefaultContext.Default, this));
+            }
+            if (parameters.Count > 1
+                && parameters.Any(IsParamSpec)
+                && !parameters.Any(IsTypeVarTuple)
+                && !__args__.Any(IsConcatenateAlias)
+                && normalized.Count != parameters.Count) {
+                throw PythonOps.TypeError(
+                    "{0} arguments for {1}; actual {2}, expected {3}",
+                    normalized.Count > parameters.Count ? "Too many" : "Too few",
+                    PythonOps.Repr(DefaultContext.Default, this),
+                    normalized.Count,
+                    parameters.Count);
             }
             if (parameters.Any(parameter =>
                     IsTypeVarTuple(parameter)
@@ -133,14 +193,26 @@ namespace IronPython.Runtime.Types {
         }
 
         public object __call__(CodeContext context, [NotNone] params object?[] args) {
-            return PythonCalls.Call(context, __origin__, args)!;
+            object result = PythonCalls.Call(context, __origin__, args)!;
+            try {
+                PythonOps.SetAttr(context, result, "__orig_class__", this);
+            } catch (Exception) {
+                // Instances without a writable dictionary cannot retain the alias.
+            }
+            return result;
         }
 
         public object __call__(
             CodeContext context,
             [ParamDictionary] IDictionary<object, object> keywordArgs,
             [NotNone] params object?[] args) {
-            return PythonCalls.CallWithKeywordArgs(context, __origin__, args, keywordArgs)!;
+            object result = PythonCalls.CallWithKeywordArgs(context, __origin__, args, keywordArgs)!;
+            try {
+                PythonOps.SetAttr(context, result, "__orig_class__", this);
+            } catch (Exception) {
+                // Instances without a writable dictionary cannot retain the alias.
+            }
+            return result;
         }
 
         [SpecialName]
@@ -168,19 +240,36 @@ namespace IronPython.Runtime.Types {
             new GenericAliasIterator(new GenericAlias(__origin__, __args__, true));
 
         public object __or__(object? other) {
-            return new UnionType(this, other);
+            return UnionType.MakeUnion(this, other);
         }
 
         public object __ror__(object? other) {
-            return new UnionType(other, this);
+            return UnionType.MakeUnion(other, this);
         }
 
         public string __repr__(CodeContext context) {
-            string arguments = __args__.Count == 0
-                ? "()"
-                : string.Join(
+            string arguments;
+            PythonType? originType = __origin__ as PythonType;
+            bool isCollectionsCallable = originType?.Name is "Callable";
+            if (isCollectionsCallable
+                && __args__.Count != 0
+                && !IsUnbracketedCallableParameter(__args__[0])) {
+                int parameterCount = __args__.Count - 1;
+                string parameters = string.Join(
                     ", ",
-                    __args__.Select(item => FormatAliasArgument(context, item)));
+                    Enumerable.Range(0, parameterCount)
+                        .Select(index => FormatAliasArgument(context, __args__[index])));
+                arguments = $"[{parameters}]";
+                if (parameterCount < __args__.Count) {
+                    arguments += ", " + FormatAliasArgument(context, __args__[__args__.Count - 1]);
+                }
+            } else {
+                arguments = __args__.Count == 0
+                    ? "()"
+                    : string.Join(
+                        ", ",
+                        __args__.Select(item => FormatAliasArgument(context, item)));
+            }
             string origin = __origin__ is PythonType type
                 ? type.IsSystemType
                     ? type.Name
@@ -191,6 +280,12 @@ namespace IronPython.Runtime.Types {
                     ? $"{aliasModule}.{alias.__qualname__}"
                     : PythonOps.Repr(context, __origin__);
             return $"{(_unpacked ? "*" : string.Empty)}{origin}[{arguments}]";
+        }
+
+        private static bool IsUnbracketedCallableParameter(object? item) {
+            if (item is Ellipsis) return true;
+            string typeName = DynamicHelpers.GetPythonType(item).Name;
+            return typeName is "ParamSpec" or "_ConcatenateGenericAlias";
         }
 
         private static string FormatAliasArgument(CodeContext context, object? item) {
@@ -291,6 +386,21 @@ namespace IronPython.Runtime.Types {
                 && PythonOps.TryGetBoundAttr(
                     DefaultContext.Default,
                     value,
+                    "__typing_subst__",
+                    out object? unlistedSubstitution)
+                && unlistedSubstitution is not null
+                && PythonOps.IsCallable(DefaultContext.Default, unlistedSubstitution)) {
+                if (!parameters.Any(parameter => PythonOps.EqualRetBool(parameter, value))) {
+                    parameters.Add(value);
+                }
+                return;
+            }
+
+            if (value is not null
+                && value is not PythonType
+                && PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    value,
                     "__parameters__",
                     out object? nestedParameters)
                 && nestedParameters is PythonTuple nestedTuple) {
@@ -314,6 +424,11 @@ namespace IronPython.Runtime.Types {
         }
 
         internal static PythonTuple NormalizeArguments(PythonTuple arguments) {
+            if (arguments.Count == 1
+                && arguments[0] is PythonTuple emptyTuple
+                && emptyTuple.Count == 0) {
+                return PythonTuple.EMPTY;
+            }
             var normalized = new List<object?>(arguments.Count);
             foreach (object? argument in arguments) {
                 if (argument is GenericAlias directAlias && directAlias.__unpacked__) {
@@ -324,6 +439,21 @@ namespace IronPython.Runtime.Types {
                 string typeName = DynamicHelpers.GetPythonType(argument).Name;
                 if (typeName != "_UnpackGenericAlias") {
                     normalized.Add(argument);
+                    continue;
+                }
+
+                if (PythonOps.TryGetBoundAttr(
+                        DefaultContext.Default,
+                        argument,
+                        "__typing_unpacked_tuple_args__",
+                        out object? tupleArguments)
+                    && tupleArguments is PythonTuple tupleArgumentsTuple) {
+                    if (tupleArgumentsTuple.Count != 0
+                        && tupleArgumentsTuple[tupleArgumentsTuple.Count - 1] is Ellipsis) {
+                        normalized.Add(argument);
+                    } else {
+                        normalized.AddRange(tupleArgumentsTuple);
+                    }
                     continue;
                 }
 
@@ -393,6 +523,7 @@ namespace IronPython.Runtime.Types {
                 }
             }
             if (value is not null
+                && value is not PythonType
                 && PythonOps.TryGetBoundAttr(
                     DefaultContext.Default,
                     value,
@@ -428,7 +559,13 @@ namespace IronPython.Runtime.Types {
                 throw PythonOps.TypeError("Unpack[...] must be used with a tuple type");
             }
             if (alias.__args__.Any(item => item is Ellipsis)) {
-                throw PythonOps.TypeError("*tuple[..., ...] is not valid as type argument");
+                normalized.Add(alias);
+                return;
+            }
+            if (alias.__args__.Count == 1
+                && alias.__args__[0] is PythonTuple emptyTuple
+                && emptyTuple.Count == 0) {
+                return;
             }
             normalized.AddRange(alias.__args__);
         }
@@ -445,13 +582,38 @@ namespace IronPython.Runtime.Types {
                             "__typing_subst__",
                             out object? substitute)
                         && substitute is not null) {
-                        return PythonCalls.Call(
+                        object substituted = PythonCalls.Call(
                             DefaultContext.Default,
                             substitute,
-                            replacements[i]);
+                            replacements[i])!;
+                        if (PythonOps.TryGetBoundAttr(
+                                DefaultContext.Default,
+                                parameters[i],
+                                "__typing_is_unpacked_typevartuple__",
+                                out object? isUnpacked)
+                            && PythonOps.IsTrue(isUnpacked)
+                            && substituted is not PythonTuple) {
+                            throw PythonOps.TypeError(
+                                "Invalid result from __typing_subst__: expected tuple, got {0}",
+                                PythonOps.GetPythonTypeName(substituted));
+                        }
+                        return substituted;
                     }
                     return replacements[i];
                 }
+            }
+            if (value is not null
+                && value is not PythonType
+                && PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    value,
+                    "__typing_subst__",
+                    out object? unlistedSubstitution)
+                && unlistedSubstitution is not null
+                && PythonOps.IsCallable(DefaultContext.Default, unlistedSubstitution)) {
+                throw PythonOps.TypeError(
+                    "{0} is not found in __parameters__",
+                    PythonOps.Repr(DefaultContext.Default, value));
             }
             if (value is PythonList list) {
                 var result = new PythonList();
@@ -472,6 +634,7 @@ namespace IronPython.Runtime.Types {
                     alias.__unpacked__);
             }
             if (value is not null
+                && value is not PythonType
                 && PythonOps.TryGetBoundAttr(
                     DefaultContext.Default,
                     value,
@@ -505,6 +668,62 @@ namespace IronPython.Runtime.Types {
         private static PythonTuple BindReplacements(
             PythonTuple parameters,
             PythonTuple arguments) {
+            int spreadIndex = -1;
+            PythonTuple? spreadArguments = null;
+            for (int i = 0; i < arguments.Count; i++) {
+                PythonTuple? candidate = GetSpreadArguments(arguments[i]);
+                if (candidate is null) continue;
+                if (spreadIndex >= 0) {
+                    throw PythonOps.TypeError(
+                        "Multiple unpacked variadic tuples are not supported");
+                }
+                spreadIndex = i;
+                spreadArguments = candidate;
+            }
+
+            int typeVarTupleIndex = -1;
+            for (int i = 0; i < parameters.Count; i++) {
+                if (IsTypeVarTuple(parameters[i])) {
+                    typeVarTupleIndex = i;
+                    break;
+                }
+            }
+            if (spreadIndex >= 0
+                && spreadArguments is not null
+                && typeVarTupleIndex >= 0) {
+                object spreadElement = spreadArguments[0]!;
+                var bound = new object?[parameters.Count];
+                var consumed = new bool[arguments.Count];
+
+                for (int i = 0; i < typeVarTupleIndex; i++) {
+                    if (i < spreadIndex) {
+                        bound[i] = arguments[i];
+                        consumed[i] = true;
+                    } else {
+                        bound[i] = spreadElement;
+                    }
+                }
+
+                int fixedAfter = parameters.Count - typeVarTupleIndex - 1;
+                for (int offset = 1; offset <= fixedAfter; offset++) {
+                    int fixedArgumentIndex = arguments.Count - offset;
+                    int parameterIndex = parameters.Count - offset;
+                    if (fixedArgumentIndex > spreadIndex) {
+                        bound[parameterIndex] = arguments[fixedArgumentIndex];
+                        consumed[fixedArgumentIndex] = true;
+                    } else {
+                        bound[parameterIndex] = spreadElement;
+                    }
+                }
+
+                var variadic = new List<object?>();
+                for (int i = 0; i < arguments.Count; i++) {
+                    if (!consumed[i]) variadic.Add(arguments[i]);
+                }
+                bound[typeVarTupleIndex] = PythonTuple.MakeTuple(variadic.ToArray());
+                return PythonTuple.MakeTuple(bound);
+            }
+
             var replacements = new List<object?>(parameters.Count);
             int argumentIndex = 0;
             for (int i = 0; i < parameters.Count; i++) {
@@ -549,6 +768,29 @@ namespace IronPython.Runtime.Types {
         private static bool IsTypeVarTuple(object? value) =>
             value is not null
             && DynamicHelpers.GetPythonType(value).Name == "TypeVarTuple";
+
+        private static bool IsParamSpec(object? value) =>
+            value is not null
+            && DynamicHelpers.GetPythonType(value).Name == "ParamSpec";
+
+        private static bool IsConcatenateAlias(object? value) =>
+            value is not null
+            && DynamicHelpers.GetPythonType(value).Name == "_ConcatenateGenericAlias";
+
+        private static PythonTuple? GetSpreadArguments(object? value) {
+            if (value is null
+                || !PythonOps.TryGetBoundAttr(
+                    DefaultContext.Default,
+                    value,
+                    "__typing_unpacked_tuple_args__",
+                    out object? unpacked)
+                || unpacked is not PythonTuple tuple
+                || tuple.Count == 0
+                || tuple[tuple.Count - 1] is not Ellipsis) {
+                return null;
+            }
+            return tuple;
+        }
     }
 
     [PythonType("generic_alias_iterator")]
@@ -592,16 +834,23 @@ namespace IronPython.Runtime.Types {
     public sealed class UnionType : ICodeFormattable {
         public static object __class_getitem__([NotNone] PythonTuple parameters) {
             if (parameters.Count == 2) {
-                return new UnionType(parameters[0], parameters[1]);
+                return MakeUnion(parameters[0], parameters[1]);
             }
             if (parameters.Count == 0) {
                 throw PythonOps.TypeError("UnionType requires at least two arguments");
             }
             object result = parameters[0]!;
             for (int i = 1; i < parameters.Count; i++) {
-                result = new UnionType(result, parameters[i]);
+                result = MakeUnion(result, parameters[i]);
             }
             return result;
+        }
+
+        internal static object MakeUnion(object? left, object? right) {
+            var union = new UnionType(left, right);
+            return union.__args__.Count == 1
+                ? union.__args__[0]!
+                : union;
         }
 
         public UnionType(object? left, object? right) {
@@ -612,6 +861,18 @@ namespace IronPython.Runtime.Types {
         }
 
         public PythonTuple __args__ { get; }
+
+        public string __name__ => "Union";
+
+        public string __qualname__ => "Union";
+
+        public string __module__ => "typing";
+
+        public bool _typing_is_non_iterable => true;
+
+        public object? __iter__() => throw PythonOps.TypeError(
+            "'{0}' object is not iterable",
+            PythonOps.GetPythonTypeName(this));
 
         public PythonTuple __parameters__ {
             get {
@@ -643,17 +904,17 @@ namespace IronPython.Runtime.Types {
                 }
                 result = result is null
                     ? specialized
-                    : new UnionType(result, specialized);
+                    : MakeUnion(result, specialized);
             }
             return result!;
         }
 
         public object __or__(object? other) {
-            return new UnionType(this, other);
+            return MakeUnion(this, other);
         }
 
         public object __ror__(object? other) {
-            return new UnionType(other, this);
+            return MakeUnion(other, this);
         }
 
         public string __repr__(CodeContext context) {
@@ -669,6 +930,34 @@ namespace IronPython.Runtime.Types {
             }
             return result;
         }
+
+        public PythonTuple __reduce_ex__(int protocol) {
+            object typing = Importer.ImportModule(
+                DefaultContext.Default,
+                null,
+                "typing",
+                false,
+                0);
+            object union = PythonOps.GetBoundAttr(
+                DefaultContext.Default,
+                typing,
+                "Union");
+            object operatorModule = Importer.ImportModule(
+                DefaultContext.Default,
+                null,
+                "operator",
+                false,
+                0);
+            object getItem = PythonOps.GetBoundAttr(
+                DefaultContext.Default,
+                operatorModule,
+                "getitem");
+            return PythonTuple.MakeTuple(
+                getItem,
+                PythonTuple.MakeTuple(union, __args__));
+        }
+
+        public PythonTuple __reduce__() => __reduce_ex__(0);
 
         public object __eq__([NotNone] object other) {
             var members = new List<object>();

@@ -49,14 +49,16 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         public static object __build_type_alias__(
             CodeContext context,
             [NotNone] string name,
-            [NotNone] object thunk,
+            object? thunk,
             [NotNone] PythonTuple typeParameters,
             string? qualname = null,
             object? module = null,
             string? source = null,
             bool useSource = false,
             PythonTuple? enclosingTypeParameters = null,
-            bool includeClassScope = true) {
+            bool includeClassScope = true,
+            bool cacheValue = true,
+            bool evaluateThunk = true) {
             PythonTuple enclosingParameters = enclosingTypeParameters ?? PythonTuple.EMPTY;
             string resolvedQualname = qualname ?? name;
             if (module is null
@@ -73,7 +75,9 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 source,
                 useSource,
                 enclosingParameters,
-                includeClassScope);
+                includeClassScope,
+                cacheValue,
+                evaluateThunk);
         }
 
         public static object __build_generic_base__(
@@ -81,9 +85,31 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             [NotNone] PythonTuple typeParameters) {
             object typing = Importer.ImportModule(context, null, "typing", false, 0);
             object generic = PythonOps.GetBoundAttr(context, typing, "Generic");
-            object item = typeParameters.Count == 1
-                ? typeParameters[0]!
-                : typeParameters;
+            object makeUnpack = null!;
+            var normalized = new object[typeParameters.Count];
+            for (int i = 0; i < normalized.Length; i++) {
+                object parameter = typeParameters[i]!;
+                if (parameter is PythonTuple tuple
+                    && tuple.Count == 1) {
+                    parameter = tuple[0]!;
+                }
+                if (DynamicHelpers.GetPythonType(parameter).Name == "TypeVarTuple") {
+                    if (makeUnpack is null) {
+                        makeUnpack = PythonOps.GetBoundAttr(
+                            context,
+                            typing,
+                            "_make_unpack_for_type_parameter");
+                    }
+                    parameter = PythonCalls.Call(
+                        context,
+                        makeUnpack,
+                        parameter)!;
+                }
+                normalized[i] = parameter;
+            }
+            object item = normalized.Length == 1
+                ? normalized[0]
+                : PythonTuple.MakeTuple(normalized);
             return PythonOps.GetIndex(context, generic, item)!;
         }
 
@@ -125,7 +151,10 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             object constructor = PythonOps.GetBoundAttr(context, typeParameters, kind);
             var args = new List<object?> { name };
             var names = new List<string>();
-            if (hasConstraints && kind == "TypeVar" && constraintsThunk is not null) {
+            if (hasConstraints
+                && kind == "TypeVar"
+                && constraintsThunk is not null
+                && boundSource is null) {
                 object constraints = PythonCalls.Call(context, constraintsThunk)!;
                 if (constraints is not PythonTuple tuple) {
                     throw PythonOps.TypeError("type parameter constraints must be a tuple");
@@ -431,6 +460,67 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             }
         }
 
+        [Documentation("__lazy_import__(name, globals=None, locals=None, fromlist=(), level=0) -> lazy module")]
+        public static object __lazy_import__(
+            CodeContext context,
+            [NotNone] object name,
+            object? globals = null,
+            object? locals = null,
+            object? fromlist = null,
+            int level = 0) {
+            if (name is not string moduleName) {
+                throw PythonOps.TypeError(
+                    "__lazy_import__() argument 1 must be str, not {0}",
+                    PythonOps.GetPythonTypeName(name));
+            }
+            if (level < 0) {
+                throw PythonOps.ValueError("level must be >= 0");
+            }
+            if (globals is not null && globals is not PythonDictionary) {
+                throw PythonOps.TypeError(
+                    "globals must be a dict");
+            }
+            if (locals is not null && locals is not PythonDictionary) {
+                throw PythonOps.TypeError(
+                    "locals must be a dict");
+            }
+            if (fromlist is not null) {
+                IEnumerable items = fromlist is string
+                    ? new object[] { fromlist }
+                    : fromlist as IEnumerable
+                        ?? throw PythonOps.TypeError("fromlist must be a sequence");
+                foreach (object? item in items) {
+                    if (item is not string) {
+                        throw PythonOps.TypeError(
+                            "Item in ``from list'' must be str, not {0}",
+                            PythonOps.GetPythonTypeName(item));
+                    }
+                }
+            }
+
+            if (!SysModule.ShouldUseExplicitLazyImport(context, moduleName, fromlist)) {
+                return __import__(context, moduleName, globals, locals, fromlist, level);
+            }
+            var fromNames = new List<object>();
+            if (fromlist is not null) {
+                IEnumerable items = fromlist is string
+                    ? new object[] { fromlist }
+                    : (IEnumerable)fromlist;
+                foreach (object item in items) {
+                    fromNames.Add(item);
+                }
+            }
+            PythonDictionary importGlobals =
+                globals as PythonDictionary ?? context.GlobalDict;
+            SysModule.TrackLazyModule(context, moduleName);
+            return new LazyImport(
+                moduleName,
+                null,
+                level,
+                importGlobals,
+                fromList: PythonTuple.MakeTuple(fromNames.ToArray()));
+        }
+
         [Documentation("abs(number) -> number\n\nReturn the absolute value of the argument.")]
         public static object abs(CodeContext/*!*/ context, object? o) {
             if (o is int i32) return Int32Ops.Abs(i32);
@@ -675,8 +765,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 try {
                     return code.Call(evalContext);
                 } finally {
-                    PythonOps.AssertOwnFrameOnTop(evalContext, code, stack);
-                    stack.RemoveAt(stack.Count - 1);
+                    PythonOps.PopFrame(evalContext, code, stack);
                 }
             }
             return code.Call(evalContext);
@@ -745,8 +834,7 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 try {
                     code.Call(execContext);
                 } finally {
-                    PythonOps.AssertOwnFrameOnTop(execContext, code, stack);
-                    stack.RemoveAt(stack.Count - 1);
+                    PythonOps.PopFrame(execContext, code, stack);
                 }
             } else {
                 code.Call(execContext);
@@ -757,6 +845,10 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
         public static void exec(CodeContext/*!*/ context, [NotNone] string code, PythonDictionary? globals = null, object? locals = null) {
             SourceUnit source = context.LanguageContext.CreateSnippet(code, "<string>", SourceCodeKind.Statements);
             PythonCompilerOptions compilerOptions = Builtin.GetRuntimeGeneratedCodeCompilerOptions(context, true, 0);
+            object effectiveGlobals = globals ?? context.GlobalDict;
+            object effectiveLocals = locals ?? (globals is null ? context.Dict : globals);
+            compilerOptions.AllowLazyImportsInExec =
+                ReferenceEquals(effectiveGlobals, effectiveLocals);
             var funcCode = FunctionCode.FromSourceUnit(source, compilerOptions, false);
 
             exec(context, funcCode, globals, locals);
@@ -771,6 +863,10 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 "<string>",
                 SourceCodeKind.Statements);
             PythonCompilerOptions compilerOptions = Builtin.GetRuntimeGeneratedCodeCompilerOptions(context, true, 0);
+            object effectiveGlobals = globals ?? context.GlobalDict;
+            object effectiveLocals = locals ?? (globals is null ? context.Dict : globals);
+            compilerOptions.AllowLazyImportsInExec =
+                ReferenceEquals(effectiveGlobals, effectiveLocals);
             var funcCode = FunctionCode.FromSourceUnit(source, compilerOptions, false);
 
             exec(context, funcCode, globals, locals);
@@ -1073,6 +1169,14 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
                 return ScriptingRuntimeHelpers.False;
             }
 
+            if (typeinfo is not PythonType
+                && PythonOps.TryGetBoundAttr(
+                    context,
+                    typeinfo,
+                    "__subclasscheck__",
+                    out object? subclassCheck)) {
+                return PythonCalls.Call(context, subclassCheck, o)!;
+            }
 
             if (!PythonOps.TryGetBoundAttr(o, "__bases__", out object? bases) || !(bases is PythonTuple tupleBases)) {
                 return LightExceptions.Throw(PythonOps.TypeError("issubclass() arg 1 must be a class"));
@@ -1153,6 +1257,9 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             }
 
             if (dict._storage is RuntimeVariablesDictionaryStorage) {
+                if (((RuntimeVariablesDictionaryStorage)dict._storage).IsClassNamespace) {
+                    return dict;
+                }
                 // Function locals are exposed as a snapshot. The compiler may
                 // predeclare later assignment targets in the backing tuple.
                 return dict.copy(context);
@@ -1437,6 +1544,43 @@ Noteworthy: None is the `nil' object; Ellipsis represents `...' in slices.";
             try {
                 return next(context, iter);
             } catch (StopIterationException) {
+                return defaultVal;
+            }
+        }
+
+        /// <summary>
+        /// Returns the next item from an asynchronous iterator by invoking its
+        /// <c>__anext__</c> method. The returned value is awaitable.
+        /// </summary>
+        public static object? anext(CodeContext/*!*/ context, object? asyncIterator) {
+            if (PythonTypeOps.TryInvokeUnaryOperator(
+                    context,
+                    asyncIterator,
+                    "__anext__",
+                    out object? value)) {
+                return value;
+            }
+
+            throw PythonOps.TypeError(
+                "'{0}' object is not an async iterator",
+                PythonOps.GetPythonTypeName(asyncIterator));
+        }
+
+        public static object? anext(
+            CodeContext/*!*/ context,
+            object? asyncIterator,
+            object? defaultVal) {
+            return AwaitAnExtOrDefault(context, asyncIterator, defaultVal);
+        }
+
+        private static async System.Threading.Tasks.Task<object?> AwaitAnExtOrDefault(
+            CodeContext context,
+            object? asyncIterator,
+            object? defaultVal) {
+            try {
+                object? awaitable = anext(context, asyncIterator);
+                return await PythonOps.AsTaskForAwait(awaitable);
+            } catch (StopAsyncIterationException) {
                 return defaultVal;
             }
         }

@@ -377,7 +377,14 @@ namespace IronPython.Modules {
         public static void close(CodeContext/*!*/ context, int fd) {
             PythonFileManager fileManager = context.LanguageContext.FileManager;
             StreamBox streams = fileManager.GetStreams(fd);
-            streams.CloseStreams(fileManager);
+            try {
+                streams.CloseStreams(fileManager);
+            } catch (Exception) {
+                fileManager.Remove(fd);
+                throw PythonOps.OSError(
+                    PythonErrno.EBADF,
+                    "Bad file descriptor");
+            }
         }
 
         public static void closerange(CodeContext/*!*/ context, int fd_low, int fd_high) {

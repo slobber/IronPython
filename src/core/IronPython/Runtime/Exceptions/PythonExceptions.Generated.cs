@@ -229,9 +229,11 @@ namespace IronPython.Runtime.Exceptions {
             public _ImportError() : base(ImportError) { }
             public _ImportError(PythonType type) : base(type) { }
 
-            public object name { get; set; }
+            public new object name { get; set; }
 
             public object path { get; set; }
+
+            public object name_from { get; set; }
         }
 
         [MultiRuntimeAware]
@@ -574,6 +576,8 @@ namespace IronPython.Runtime.Exceptions {
             public object offset { get; set; }
 
             public object msg { get; set; }
+
+            public object _metadata { get; set; }
         }
 
         [MultiRuntimeAware]

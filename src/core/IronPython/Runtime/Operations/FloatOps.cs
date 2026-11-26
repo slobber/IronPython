@@ -52,6 +52,10 @@ namespace IronPython.Runtime.Operations {
                 throw PythonOps.TypeErrorForBadInstance($"{type.Name}() argument must be a string or a number, not '{{0}}'", x);
             }
 
+            if (TryParseSpecialFloat(str) is double special) {
+                return special;
+            }
+
             if (LiteralParser.TryParseFloat(str, out var res, replaceUnicode: replaceUnicode))
                 return res;
 
@@ -330,8 +334,10 @@ namespace IronPython.Runtime.Operations {
                     return Double.NegativeInfinity;
                 case "nan":
                 case "+nan":
+                    return BitConverter.Int64BitsToDouble(0x7ff8000000000000L);
                 case "-nan":
-                    return Double.NaN;
+                    return BitConverter.Int64BitsToDouble(
+                        unchecked((long)0xfff8000000000000L));
             }
             return null;
         }
@@ -667,8 +673,9 @@ namespace IronPython.Runtime.Operations {
         internal static int Sign(double value) {
             if (value == 0.0) {
                 return double.IsPositiveInfinity(1.0 / value) ? 1 : -1;
+            } else if (Double.IsNaN(value)) {
+                return BitConverter.DoubleToInt64Bits(value) < 0 ? -1 : 1;
             } else {
-                // note: NaN intentionally shows up as negative
                 return value > 0 ? 1 : -1;
             }
         }

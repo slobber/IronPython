@@ -6,10 +6,12 @@
 
 using System.Runtime.CompilerServices;
 using System.Linq;
+using System.Collections.Generic;
 
 using IronPython.Runtime.Operations;
 using IronPython.Runtime.Types;
 
+using Microsoft.Scripting;
 using Microsoft.Scripting.Runtime;
 
 namespace IronPython.Runtime {
@@ -19,26 +21,31 @@ namespace IronPython.Runtime {
         private readonly string _name;
         private readonly string _qualname;
         private object? _module;
-        private readonly object _thunk;
+        private readonly object? _thunk;
         private readonly PythonTuple _typeParameters;
         private readonly CodeContext? _context;
         private readonly string? _source;
         private readonly bool _useSource;
         private readonly PythonTuple _enclosingTypeParameters;
         private readonly bool _includeClassScope;
+        private readonly bool _cacheValue;
+        private readonly bool _evaluateThunk;
+        private object? _classOwner;
         private object? _value;
 
         internal TypeAliasObject(
             string name,
             string qualname,
             object? module,
-            object thunk,
+            object? thunk,
             PythonTuple typeParameters,
             CodeContext? context = null,
             string? source = null,
             bool useSource = false,
             PythonTuple? enclosingTypeParameters = null,
-            bool includeClassScope = true) {
+            bool includeClassScope = true,
+            bool cacheValue = true,
+            bool evaluateThunk = true) {
             _name = name;
             _qualname = qualname;
             _module = module;
@@ -49,6 +56,8 @@ namespace IronPython.Runtime {
             _useSource = useSource;
             _enclosingTypeParameters = enclosingTypeParameters ?? PythonTuple.EMPTY;
             _includeClassScope = includeClassScope;
+            _cacheValue = cacheValue;
+            _evaluateThunk = evaluateThunk;
             if (context is not null) {
                 PythonOps.ConfigureTypeParameterExpressions(context, typeParameters);
             }
@@ -120,9 +129,9 @@ namespace IronPython.Runtime {
                 false);
         }
 
-        public object __or__(object? other) => new UnionType(this, other);
+        public object __or__(object? other) => UnionType.MakeUnion(this, other);
 
-        public object __ror__(object? other) => new UnionType(other, this);
+        public object __ror__(object? other) => UnionType.MakeUnion(other, this);
 
         public GenericAliasIterator __iter__(CodeContext context) {
             object typing = Importer.ImportModule(context, null, "typing", false, 0);
@@ -134,7 +143,14 @@ namespace IronPython.Runtime {
         [SpecialName]
         public object? GetCustomMember(CodeContext context, [NotNone] string name) {
             if (name == "__value__") {
-                return _value ??= Evaluate(context);
+                if (!_evaluateThunk
+                    && _source is not null
+                    && _source.TrimStart().StartsWith(
+                        "lambda",
+                        System.StringComparison.Ordinal)) {
+                    return _value ??= new TypeAliasLambda(this, context);
+                }
+                return EvaluateWithCaching(context);
             }
             if (name == "evaluate_value") {
                 return new TypeAliasEvaluator(this, context);
@@ -147,7 +163,7 @@ namespace IronPython.Runtime {
 
         internal object EvaluateValue(int format = 1) {
             CodeContext context = _context ?? DefaultContext.Default;
-            object? value = _value ??= Evaluate(context);
+            object? value = EvaluateWithCaching(context);
             if (format == 4) {
                 object annotationlib = Importer.ImportModule(
                     DefaultContext.Default,
@@ -164,18 +180,59 @@ namespace IronPython.Runtime {
             return value!;
         }
 
+        internal void SetClassOwner(object owner) {
+            _classOwner = owner;
+        }
+
+        internal object? EvaluateLambda(CodeContext context) {
+            if (_context is null || _source is null) {
+                return Evaluate(context);
+            }
+            return LightExceptions.CheckAndThrow(PythonOps.EvalAnnotationSource(
+                _context,
+                _source,
+                _typeParameters,
+                GetEnclosingTypeParameters(context),
+                _includeClassScope,
+                _classOwner));
+        }
+
+        private PythonTuple GetEnclosingTypeParameters(CodeContext context) {
+            if (_classOwner is not null
+                && PythonOps.TryGetBoundAttr(
+                    context,
+                    _classOwner,
+                    "__type_params__",
+                    out object? ownerTypeParameters)
+                && ownerTypeParameters is PythonTuple ownerParameters) {
+                return ownerParameters;
+            }
+            return _enclosingTypeParameters;
+        }
+
         private object? Evaluate(CodeContext context) =>
             _useSource && _context is not null && _source is not null
                 ? LightExceptions.CheckAndThrow(PythonOps.EvalAnnotationSource(
                     _context,
                     _source,
                     _typeParameters,
-                    _enclosingTypeParameters,
-                    _includeClassScope))
-                : PythonCalls.Call(
-                    context,
-                    _thunk,
-                    _typeParameters.ToArray());
+                    GetEnclosingTypeParameters(context),
+                    _includeClassScope,
+                    _classOwner))
+                : _evaluateThunk
+                    ? PythonCalls.Call(
+                        context,
+                        _thunk,
+                        _typeParameters.ToArray())
+                    : _thunk;
+
+        private object? EvaluateWithCaching(CodeContext context) {
+            if (!_cacheValue || _includeClassScope) {
+                return Evaluate(context);
+            }
+            return _value ??= Evaluate(context);
+        }
+
 
         public object __reduce_ex__(CodeContext context, int protocol) {
             if (_module is string moduleName
@@ -204,6 +261,31 @@ namespace IronPython.Runtime {
 
         void IWeakReferenceable.SetFinalizer(WeakRefTracker value) =>
             ((IWeakReferenceable)this).SetWeakRef(value);
+    }
+
+    [PythonType("_type_alias_lambda")]
+    public sealed class TypeAliasLambda {
+        private readonly TypeAliasObject _alias;
+        private readonly CodeContext _context;
+
+        internal TypeAliasLambda(TypeAliasObject alias, CodeContext context) {
+            _alias = alias;
+            _context = context;
+        }
+
+        public object? __call__(
+            CodeContext context,
+            [ParamDictionary] IDictionary<object, object> kwargs,
+            [NotNone] params object[] args) {
+            object callable = _alias.EvaluateLambda(_context)!;
+            return PythonCalls.CallWithKeywordArgs(
+                _context,
+                callable,
+                args,
+                kwargs);
+        }
+
+        public string __repr__() => "<type alias lambda>";
     }
 
     [PythonType("_TypeAliasEvaluator")]

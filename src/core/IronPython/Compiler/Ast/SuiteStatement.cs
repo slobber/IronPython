@@ -46,6 +46,9 @@ namespace IronPython.Compiler.Ast {
                 } else {
                     if (statement.CanThrow && newline != -1) {
                         statements.Add(UpdateLineNumber(newline));
+                        if (statement is ExpressionStatement) {
+                            Parent.AddTracebackSpan(statement.Span);
+                        }
                     }
 
                     statements.Add(statement);

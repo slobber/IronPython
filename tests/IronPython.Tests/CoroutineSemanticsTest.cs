@@ -3,6 +3,7 @@ using IronPython.Hosting;
 using Microsoft.Scripting.Hosting;
 using NUnit.Framework;
 using System.Collections.Generic;
+using System.Linq;
 using Assert = NUnit.Framework.Assert;
 
 namespace IronPython.Tests {
@@ -159,6 +160,195 @@ aclose_log = list(close_log)
             var acloseLog = scope.GetVariable<IronPython.Runtime.PythonList>("aclose_log");
             Assert.That(acloseLog, Does.Contain("cleanup"));
             Assert.That(acloseLog.Count, Is.EqualTo(1));
+        }
+
+        [Test]
+        public void AsyncComprehensionsAndGeneratorExpressionsAreSupported() {
+            var options = new Dictionary<string, object> {
+                ["NoSite"] = true
+            };
+            ScriptEngine engine = Python.CreateEngine(options);
+            ScriptScope scope = engine.CreateScope();
+            bool useGeneratedParser = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(@"
+def run_coro(coro):
+    value = None
+    while True:
+        try:
+            task = coro.send(value)
+            task.Wait()
+            value = None
+        except StopIteration as exc:
+            return exc.value
+
+async def source():
+    yield 1
+    yield 2
+    yield 3
+
+async def list_values():
+    return [item async for item in source()]
+
+async def set_values():
+    return sorted({item * 2 async for item in source()})
+
+async def dict_values():
+    return {item: item * 10 async for item in source()}
+
+async def generator_values():
+    items = (item + 10 async for item in source())
+    return [item async for item in items]
+
+async def nested_values():
+    return [[item async for item in source()] for prefix in range(2)]
+
+list_result = run_coro(list_values())
+set_result = run_coro(set_values())
+dict_result = run_coro(dict_values())
+generator_result = run_coro(generator_values())
+nested_result = run_coro(nested_values())
+", scope);
+            } finally {
+                Parser.UseGeneratedParser = useGeneratedParser;
+            }
+
+            Assert.That(
+                scope.GetVariable<IronPython.Runtime.PythonList>("list_result")
+                    .Select(item => (int)item),
+                Is.EqualTo(new[] { 1, 2, 3 }));
+            Assert.That(
+                scope.GetVariable<IronPython.Runtime.PythonList>("set_result")
+                    .Select(item => (int)item),
+                Is.EqualTo(new[] { 2, 4, 6 }));
+            var dictResult =
+                scope.GetVariable<IronPython.Runtime.PythonDictionary>("dict_result");
+            Assert.That(
+                dictResult.ContainsKey(1) && dictResult.ContainsKey(2)
+                    && dictResult.ContainsKey(3),
+                Is.True);
+            Assert.That(
+                scope.GetVariable<IronPython.Runtime.PythonList>("generator_result")
+                    .Select(item => (int)item),
+                Is.EqualTo(new[] { 11, 12, 13 }));
+            Assert.That(
+                scope.GetVariable<IronPython.Runtime.PythonList>("nested_result")
+                    .Select(row => ((IronPython.Runtime.PythonList)row).Select(item => (int)item).ToArray()),
+                Is.EqualTo(new[] {
+                    new[] { 1, 2, 3 },
+                    new[] { 1, 2, 3 }
+                }));
+        }
+
+        [Test]
+        public void AsyncWithUsesFullContextManagerProtocol() {
+            var options = new Dictionary<string, object> {
+                ["NoSite"] = true
+            };
+            ScriptEngine engine = Python.CreateEngine(options);
+            ScriptScope scope = engine.CreateScope();
+            bool useGeneratedParser = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(@"
+import asyncio
+
+log = []
+
+class SuppressingContext:
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        log.append('%s:%s:%s' % (
+            exc_type.__name__,
+            str(exc),
+            traceback is not None,
+        ))
+        return True
+
+class BrokenEnter:
+    async def __aenter__(self):
+        raise RuntimeError('enter failed')
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        log.append('broken-exit')
+
+async def values():
+    yield 1
+
+async def main():
+    async with SuppressingContext():
+        raise ValueError('body failed')
+
+    try:
+        async with BrokenEnter():
+            pass
+    except RuntimeError as exc:
+        log.append(str(exc))
+
+    iterator = values()
+    first = await anext(iterator)
+    default = await anext(iterator, 42)
+    log.append('%s:%s' % (first, default))
+
+asyncio.run(main())
+", scope);
+            } finally {
+                Parser.UseGeneratedParser = useGeneratedParser;
+            }
+
+            var log = scope.GetVariable<IronPython.Runtime.PythonList>("log");
+            Assert.That(
+                log.Select(item => item?.ToString()),
+                Is.EqualTo(new[] {
+                    "ValueError:body failed:True",
+                    "enter failed",
+                    "1:42"
+                }));
+        }
+
+        [Test]
+        public void AwaitInFinallyResumesBeforePropagatingHandledException() {
+            var options = new Dictionary<string, object> {
+                ["NoSite"] = true
+            };
+            ScriptEngine engine = Python.CreateEngine(options);
+            ScriptScope scope = engine.CreateScope();
+            bool useGeneratedParser = Parser.UseGeneratedParser;
+            Parser.UseGeneratedParser = true;
+            try {
+                engine.Execute(@"
+import asyncio
+
+events = []
+
+async def main():
+    try:
+        try:
+            raise ValueError('body')
+        finally:
+            events.append('before')
+            await asyncio.sleep(0)
+            events.append('after')
+    except ValueError as exc:
+        events.append('caught:' + str(exc))
+
+asyncio.run(main())
+", scope);
+            } finally {
+                Parser.UseGeneratedParser = useGeneratedParser;
+            }
+
+            var events = scope.GetVariable<IronPython.Runtime.PythonList>("events");
+            Assert.That(
+                events.Select(item => item?.ToString()),
+                Is.EqualTo(new[] {
+                    "before",
+                    "after",
+                    "caught:body"
+                }));
         }
 
     }

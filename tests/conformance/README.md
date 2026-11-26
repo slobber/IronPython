@@ -25,6 +25,8 @@ Every waiver must include an owner, reason, linked issue, and review date.
 Language, AST, compiler, protocol, and pure-Python stdlib tests should not use a
 general waiver.
 
+Approved waivers are recorded in `waivers.json`.
+
 ## Release Gate
 
 - Zero unexplained failures

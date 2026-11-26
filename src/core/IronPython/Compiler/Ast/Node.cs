@@ -173,7 +173,46 @@ namespace IronPython.Compiler.Ast {
                 return null;
             }
 
-            return stmt.Documentation;
+            return CleanDocstring(stmt.Documentation);
+        }
+
+        private static string? CleanDocstring(string? documentation) {
+            if (string.IsNullOrEmpty(documentation)) {
+                return documentation;
+            }
+
+            string[] lines = documentation.Split('\n');
+            lines[0] = lines[0].TrimStart();
+
+            int margin = int.MaxValue;
+            for (int i = 1; i < lines.Length; i++) {
+                string line = lines[i];
+                int indentation = 0;
+                while (indentation < line.Length
+                    && line[indentation] != '\r'
+                    && char.IsWhiteSpace(line[indentation])) {
+                    indentation++;
+                }
+                if (indentation < line.Length && line[indentation] != '\r') {
+                    margin = Math.Min(margin, indentation);
+                }
+            }
+
+            if (margin != int.MaxValue && margin != 0) {
+                for (int i = 1; i < lines.Length; i++) {
+                    string line = lines[i];
+                    int remove = 0;
+                    while (remove < line.Length
+                        && remove < margin
+                        && line[remove] != '\r'
+                        && char.IsWhiteSpace(line[remove])) {
+                        remove++;
+                    }
+                    lines[i] = line[remove..];
+                }
+            }
+
+            return string.Join('\n', lines);
         }
 
         #endregion
@@ -300,14 +339,16 @@ namespace IronPython.Compiler.Ast {
                 if (block.Expressions[0] is MSAst.DebugInfoExpression dbgInfo && dbgInfo.StartLine == prevStart) {
                     // we remove the debug info based upon how it's generated in DebugStatement.AddDebugInfo which is
                     // the helper method which adds the debug info.
-                    if (block.Type == typeof(void)) {
-                        Debug.Assert(block.Expressions.Count == 3);
-                        Debug.Assert(block.Expressions[2] is MSAst.DebugInfoExpression && ((MSAst.DebugInfoExpression)block.Expressions[2]).IsClear);
+                    if (block.Type == typeof(void)
+                        && block.Expressions.Count == 3
+                        && block.Expressions[2] is MSAst.DebugInfoExpression { IsClear: true }) {
                         res = block.Expressions[1];
-                    } else {
-                        Debug.Assert(block.Expressions.Count == 4);
-                        Debug.Assert(block.Expressions[3] is MSAst.DebugInfoExpression && ((MSAst.DebugInfoExpression)block.Expressions[2]).IsClear);
-                        Debug.Assert(block.Expressions[1] is MSAst.BinaryExpression && ((MSAst.BinaryExpression)block.Expressions[2]).NodeType == MSAst.ExpressionType.Assign);
+                    } else if (block.Type != typeof(void)
+                        && block.Expressions.Count == 4
+                        && block.Expressions[3] is MSAst.DebugInfoExpression { IsClear: true }
+                        && block.Expressions[1] is MSAst.BinaryExpression {
+                            NodeType: MSAst.ExpressionType.Assign
+                        }) {
                         res = ((MSAst.BinaryExpression)block.Expressions[1]).Right;
                     }
                 }
@@ -531,7 +572,11 @@ namespace IronPython.Compiler.Ast {
         }
         
         internal static MSAst.Expression UpdateLineNumber(int line) {
-            return Ast.Assign(LineNumberExpression, AstUtils.Constant(line));
+            return Ast.Block(
+                Ast.Assign(LineNumberExpression, AstUtils.Constant(line)),
+                Ast.Call(
+                    AstMethods.UpdateCurrentLine,
+                    AstUtils.Constant(line)));
         }
 
         internal static MSAst.Expression UpdateLineUpdated(bool updated) {

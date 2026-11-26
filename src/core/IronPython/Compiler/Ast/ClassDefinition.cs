@@ -35,6 +35,7 @@ namespace IronPython.Compiler.Ast {
         private static int _classId;
 
         private static readonly MSAst.ParameterExpression _outerContextParam = Ast.Parameter(typeof(CodeContext), "$outerContext");
+        private static readonly MSAst.ParameterExpression _typeParametersParam = Ast.Parameter(typeof(PythonTuple), "$typeParameters");
         private static readonly MSAst.Expression _tupleExpression = MSAst.Expression.Call(AstMethods.GetClosureTupleFromContext, _outerContextParam);
 
         public ClassDefinition(string name, IReadOnlyList<Expression>? bases, IReadOnlyList<Keyword>? keywords, Statement? body = null) {
@@ -64,8 +65,12 @@ namespace IronPython.Compiler.Ast {
 
         internal IReadOnlyList<string> TypeParameterNames { get; set; } = Array.Empty<string>();
         internal bool HasDirectAnnotations { get; set; }
+        internal string? TypeParameterTupleName { get; set; }
 
         internal PythonVariable[] TypeParameterVariables { get; private set; } = Array.Empty<PythonVariable>();
+        internal PythonVariable[] TypeParameterAliasVariables { get; private set; } = Array.Empty<PythonVariable>();
+        internal int[] TypeParameterAliasIndexes { get; private set; } = Array.Empty<int>();
+        private PythonVariable? TypeParameterTupleVariable { get; set; }
 
         internal HashSet<string> ExposedLocalNames { get; } = new(StringComparer.Ordinal);
 
@@ -75,12 +80,53 @@ namespace IronPython.Compiler.Ast {
                 && TypeParameterNames.Contains(variable.Name, StringComparer.Ordinal));
 
         internal void DefineTypeParameterVariables() {
-            TypeParameterVariables = TypeParameterNames
-                .Select(name => TryGetVariable(name, out PythonVariable? variable)
-                    ? variable!
-                    : CreateVariable(name, VariableKind.Local))
-                .ToArray();
+            if (TypeParameterTupleName is not null) {
+                PythonVariable? tupleVariable;
+                if (!TryGetVariable(
+                        TypeParameterTupleName,
+                        out tupleVariable)) {
+                    tupleVariable = CreateVariable(
+                        TypeParameterTupleName,
+                        VariableKind.Local);
+                }
+                TypeParameterTupleVariable = tupleVariable!;
+                ExposedLocalNames.Add(TypeParameterTupleName);
+            }
+            var typeParameterVariables = new List<PythonVariable>();
+            var aliasVariables = new List<PythonVariable>();
+            var aliasIndexes = new List<int>();
+            for (int parameterIndex = 0;
+                parameterIndex < TypeParameterNames.Count;
+                parameterIndex++) {
+                    string name = TypeParameterNames[parameterIndex];
+                    string variableName = GetTypeParameterVariableName(name);
+                    PythonVariable variable = TryGetVariable(
+                            variableName,
+                            out PythonVariable? existing)
+                        ? existing!
+                        : CreateVariable(name, VariableKind.Local, variableName);
+                    ExposedLocalNames.Add(variableName);
+                    typeParameterVariables.Add(variable);
+
+                    if (name.StartsWith('_')) {
+                        PythonVariable alias = TryGetVariable(
+                                name,
+                                out PythonVariable? existingAlias)
+                            ? existingAlias!
+                            : CreateVariable(name, VariableKind.Local);
+                        alias.IsCompilerGenerated = true;
+                        ExposedLocalNames.Add(name);
+                        aliasVariables.Add(alias);
+                        aliasIndexes.Add(parameterIndex);
+                    }
+            }
+            TypeParameterVariables = typeParameterVariables.ToArray();
+            TypeParameterAliasVariables = aliasVariables.ToArray();
+            TypeParameterAliasIndexes = aliasIndexes.ToArray();
         }
+
+        internal static string GetTypeParameterVariableName(string name)
+            => "$type_param_" + name;
 
         /// <summary>
         /// Variable corresponding to the class name, set during name binding
@@ -140,6 +186,7 @@ namespace IronPython.Compiler.Ast {
             if ((TypeParameterNames.Contains(reference.Name, StringComparer.Ordinal)
                     || ExposedLocalNames.Contains(reference.Name))
                 && TryGetVariable(reference.Name, out variable)) {
+                ContainsNestedFreeVariables = true;
                 variable.AccessedInNestedScope = true;
                 from.AddFreeVariable(variable, true);
                 for (ScopeStatement? scope = from.Parent; scope != this; scope = scope.Parent) {
@@ -225,7 +272,7 @@ namespace IronPython.Compiler.Ast {
             );
         }
 
-        private static readonly MSAst.Expression NullLambda = AstUtils.Default(typeof(Func<CodeContext, CodeContext>));
+        private static readonly MSAst.Expression NullLambda = AstUtils.Default(typeof(Func<CodeContext, PythonTuple, CodeContext>));
 
         public override MSAst.Expression Reduce() {
             var codeObj = GetOrMakeFunctionCode();
@@ -233,7 +280,7 @@ namespace IronPython.Compiler.Ast {
             FuncCodeExpr = funcCode;
 
             MSAst.Expression lambda;
-            if (EmitDebugSymbols) {
+            if (EmitDebugSymbols || TypeParameters is not null) {
                 lambda = GetLambda();
             } else {
                 lambda = NullLambda;
@@ -253,7 +300,10 @@ namespace IronPython.Compiler.Ast {
                 AstUtils.Constant(_name),
                 UnpackBasesHelper(_bases),
                 UnpackKeywordsHelper(Parent.LocalContext, _keywords),
-                AstUtils.Constant(FindSelfNames())
+                AstUtils.Constant(FindSelfNames()),
+                TypeParameters is null
+                    ? AstUtils.Constant(null, typeof(PythonTuple))
+                    : AstUtils.Convert(TypeParameters, typeof(PythonTuple))
             );
 
             classDef = AddDecorators(classDef, Decorators);
@@ -310,7 +360,7 @@ namespace IronPython.Compiler.Ast {
         private MSAst.Expression SetLocalName(string name, MSAst.Expression expression)
             => Ast.Call(AstMethods.SetName, LocalContext, Ast.Constant(name), expression);
 
-        private Microsoft.Scripting.Ast.LightExpression<Func<CodeContext, CodeContext>> MakeClassBody() {
+        private Microsoft.Scripting.Ast.LightExpression<Func<CodeContext, PythonTuple, CodeContext>> MakeClassBody() {
             // we always need to create a nested context for class defs            
 
             var init = new List<MSAst.Expression>();
@@ -328,6 +378,22 @@ namespace IronPython.Compiler.Ast {
             var createLocal = CreateLocalContext(_outerContextParam, newNamespace: false);
 
             init.Add(Ast.Assign(LocalCodeContextVariable, createLocal));
+            init.Add(Ast.Call(
+                typeof(PythonOps).GetMethod(
+                    nameof(PythonOps.SetClassAnnotationScope))!,
+                LocalContext,
+                Ast.Call(
+                    typeof(PythonOps).GetMethod(
+                        nameof(PythonOps.MakeClassAnnotationScope))!,
+                    _outerContextParam,
+                    Ast.NewArrayInit(
+                        typeof(string),
+                        GetAnnotationShadowedNames()
+                            .Select(name => Ast.Constant(name, typeof(string)))),
+                    Ast.NewArrayInit(
+                        typeof(string),
+                        GetAnnotationClassBoundNames()
+                            .Select(name => Ast.Constant(name, typeof(string)))))));
             if (HasDirectAnnotations) {
                 init.Add(Ast.Call(
                     typeof(PythonOps).GetMethod(
@@ -338,11 +404,11 @@ namespace IronPython.Compiler.Ast {
 
             MSAst.ParameterExpression? typeParameterValues = null;
             if (TypeParameters is not null) {
-                typeParameterValues = Ast.Variable(typeof(PythonTuple), "$typeParameters");
-                locals.Add(typeParameterValues);
-                init.Add(Ast.Assign(
-                    typeParameterValues,
-                    AstUtils.Convert(TypeParameters, typeof(PythonTuple))));
+                typeParameterValues = _typeParametersParam;
+                Assert.NotNull(TypeParameterTupleVariable);
+                init.Add(AssignValue(
+                    GetVariableExpression(TypeParameterTupleVariable!),
+                    typeParameterValues));
                 for (int i = 0; i < TypeParameterVariables.Length; i++) {
                     MSAst.Expression value = Ast.Property(
                         typeParameterValues,
@@ -352,6 +418,16 @@ namespace IronPython.Compiler.Ast {
                         Ast.Constant(i));
                     init.Add(SetLocalName(TypeParameterNames[i], value));
                     init.Add(AssignValue(GetVariableExpression(TypeParameterVariables[i]), value));
+                }
+                for (int i = 0; i < TypeParameterAliasVariables.Length; i++) {
+                    init.Add(AssignValue(
+                        GetVariableExpression(TypeParameterAliasVariables[i]),
+                        Ast.Property(
+                            typeParameterValues,
+                            typeof(PythonTuple).GetProperty(
+                                "Item",
+                                new[] { typeof(int) })!,
+                            Ast.Constant(TypeParameterAliasIndexes[i]))));
                 }
                 init.Add(Ast.Call(
                     typeof(PythonOps).GetMethod(
@@ -417,12 +493,6 @@ namespace IronPython.Compiler.Ast {
                         : Ast.Block(
                             SetLocalName("__type_params__", typeParameterValues),
                             SetLocalName(
-                                "__parameters__",
-                                Ast.Call(
-                                    typeof(PythonOps).GetMethod(
-                                        nameof(PythonOps.ExpandTypeParameters))!,
-                                    typeParameterValues)),
-                            SetLocalName(
                                 "__class_getitem__",
                                 Ast.Call(
                                     typeof(PythonOps).GetMethod(
@@ -434,17 +504,35 @@ namespace IronPython.Compiler.Ast {
                 Body.CanThrow
             );
 
-            var lambda = AstUtils.LightLambda<Func<CodeContext, CodeContext>>(
+            var lambda = AstUtils.LightLambda<Func<CodeContext, PythonTuple, CodeContext>>(
                 typeof(CodeContext),
                 Ast.Block(
                     locals,
                     bodyStmt
                 ),
                 Name + "$" + Interlocked.Increment(ref _classId),
-                new[] { _outerContextParam }
+                new[] { _outerContextParam, _typeParametersParam }
                 );
 
             return lambda;
+        }
+
+        private string[] GetAnnotationShadowedNames() {
+            if (Variables is null) return Array.Empty<string>();
+            return Variables.Values
+                .Where(variable => variable.Kind is not VariableKind.Nonlocal)
+                .Select(variable => variable.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+        }
+
+        private string[] GetAnnotationClassBoundNames() {
+            if (Variables is null) return Array.Empty<string>();
+            return Variables.Values
+                .Where(variable => variable.Kind is VariableKind.Attribute)
+                .Select(variable => variable.Name)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
         }
 
         internal override LightLambdaExpression GetLambda() {

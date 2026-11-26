@@ -4,6 +4,7 @@
 
 #nullable enable
 
+using System;
 using System.Threading;
 
 using IronPython.Runtime.Binding;
@@ -48,6 +49,12 @@ namespace IronPython.Compiler.Ast {
         private Statement BuildDesugared() {
             var parent = Parent;
             var span = IndexSpan;
+            int start = Math.Min(span.Start, Math.Min(Left.StartIndex, List.StartIndex));
+            int end = Math.Max(span.End, Math.Max(Left.EndIndex, List.EndIndex));
+            if (end < start) {
+                end = start;
+            }
+            span = new Microsoft.Scripting.IndexSpan(start, end - start);
             var id = Interlocked.Increment(ref _counter);
 
             // async for TARGET in ITER:

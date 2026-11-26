@@ -199,6 +199,39 @@ namespace IronPython.Runtime {
             }
         }
 
+        public Bytes take_bytes(CodeContext context, object? n = null) {
+            int requested = 0;
+            if (n is not null) {
+                requested = Converter.ConvertToIndex(n);
+            }
+
+            lock (this) {
+                _bytes.CheckBuffer();
+                int count = _bytes.Count;
+                int takeCount = n is null
+                    ? count
+                    : requested >= 0
+                        ? requested
+                        : count + requested;
+                if (takeCount < 0 || takeCount > count) {
+                    throw PythonOps.IndexError(
+                        "bytearray index out of range");
+                }
+
+                byte[] data = new byte[takeCount];
+                for (int i = 0; i < takeCount; i++) {
+                    data[i] = _bytes[i];
+                }
+
+                if (takeCount == count) {
+                    _bytes.ClearAndRelease();
+                } else if (takeCount != 0) {
+                    _bytes.RemoveRange(0, takeCount);
+                }
+                return new Bytes(data);
+            }
+        }
+
         private void RemoveByte(byte value) {
             var idx = _bytes.IndexOfByte(value, 0, _bytes.Count);
             if (idx == -1)

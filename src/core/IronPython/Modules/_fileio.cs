@@ -106,6 +106,12 @@ namespace IronPython.Modules {
                 this.mode = NormalizeMode(mode, out int flags);
 
                 if (opener is null) {
+                    if (Directory.Exists(name)) {
+                        throw PythonOps.OSError(
+                            PythonErrno.EISDIR,
+                            "Is a directory",
+                            name);
+                    }
                     if ((RuntimeInformation.IsOSPlatform(OSPlatform.Linux) || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) && !ClrModule.IsMono) {
                         // Use PosixFileStream to operate on fd directly
                         // On Mono, we must use FileStream due to limitations in MemoryMappedFile

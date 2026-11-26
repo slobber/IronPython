@@ -16,6 +16,7 @@ using Microsoft.Scripting.Utils;
 
 using IronPython.Runtime.Types;
 using IronPython.Runtime.Binding;
+using IronPython.Runtime.Exceptions;
 
 namespace IronPython.Runtime.Operations {
     
@@ -271,7 +272,13 @@ namespace IronPython.Runtime.Operations {
                 return callSite.Data.Target(callSite.Data, context, value, name);
             }
 
-            throw PythonOps.AttributeError(name);
+            throw new AttributeErrorException(
+                string.Format(
+                    "'{0}' object has no attribute '{1}'",
+                    PythonOps.GetPythonTypeName(self),
+                    name),
+                name,
+                self);
         }
 
         public static object GetAttributeNoThrow(CodeContext/*!*/ context, object self, string name, PythonTypeSlot getAttributeSlot, PythonTypeSlot getAttrSlot, SiteLocalStorage<CallSite<Func<CallSite, CodeContext, object, string, object>>>/*!*/ callSite) {

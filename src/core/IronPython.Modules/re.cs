@@ -72,6 +72,7 @@ namespace IronPython.Modules {
         public const int A = (int)ReFlags.ASCII;
 
         // long forms
+        public const int NOFLAG = 0;
         public const int TEMPLATE = (int)ReFlags.TEMPLATE;
         public const int IGNORECASE = (int)ReFlags.IGNORECASE;
         public const int LOCALE = (int)ReFlags.LOCALE;
