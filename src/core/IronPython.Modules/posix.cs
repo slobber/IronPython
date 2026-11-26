@@ -142,17 +142,8 @@ namespace IronPython.Modules {
                 }
             }
 
-            IntPtr attributes = Marshal.AllocHGlobal(
-                SpawnAttributesBufferSize);
-            rc = posix_spawnattr_init(attributes);
-            if (rc != 0) {
-                if (actionsInitialized) {
-                    posix_spawn_file_actions_destroy(actions);
-                    Marshal.FreeHGlobal(actions);
-                }
-                Marshal.FreeHGlobal(attributes);
-                throw GetLastUnixError(executable);
-            }
+            IntPtr attributes = IntPtr.Zero;
+            bool attributesInitialized = false;
 
             try {
                 NativeStringArray nativeArgv = new NativeStringArray(argv);
@@ -186,8 +177,10 @@ namespace IronPython.Modules {
                     nativeEnv.Dispose();
                 }
             } finally {
-                posix_spawnattr_destroy(attributes);
-                Marshal.FreeHGlobal(attributes);
+                if (attributesInitialized) {
+                    posix_spawnattr_destroy(attributes);
+                    Marshal.FreeHGlobal(attributes);
+                }
                 if (actionsInitialized) {
                     posix_spawn_file_actions_destroy(actions);
                     Marshal.FreeHGlobal(actions);
