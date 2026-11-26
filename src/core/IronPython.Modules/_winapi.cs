@@ -25,7 +25,9 @@ namespace IronPython.Modules {
 
         public static object? ConnectNamedPipe(BigInteger handle, bool overlapped = false) {
             if (overlapped) {
-                throw new NotImplementedException();
+                var result = new PythonOverlapped.Overlapped(null);
+                result.ConnectNamedPipe(handle);
+                return result;
             }
             else {
                 var result = ConnectNamedPipe(checked((IntPtr)(long)handle), IntPtr.Zero);
@@ -47,10 +49,10 @@ namespace IronPython.Modules {
             return (long)handle;
         }
 
-        public static BigInteger CreateNamedPipe([NotNone] string name, int open_mode, int pipe_mode, int max_instances, int out_buffer_size, int in_buffer_size, int default_timeout, int security_attributes) {
+        public static BigInteger CreateNamedPipe([NotNone] string name, int open_mode, int pipe_mode, int max_instances, int out_buffer_size, int in_buffer_size, uint default_timeout, int security_attributes) {
             if (security_attributes != 0) throw new NotImplementedException();
 
-            var handle = CreateNamedPipePI(name, (uint)open_mode, (uint)pipe_mode, (uint)max_instances, (uint)out_buffer_size, (uint)in_buffer_size, (uint)default_timeout, IntPtr.Zero);
+            var handle = CreateNamedPipePI(name, (uint)open_mode, (uint)pipe_mode, (uint)max_instances, (uint)out_buffer_size, (uint)in_buffer_size, default_timeout, IntPtr.Zero);
 
             if (handle == new IntPtr(-1)) throw PythonNT.GetLastWin32Error();
 
@@ -230,8 +232,10 @@ namespace IronPython.Modules {
             if (!result) throw PythonNT.GetLastWin32Error();
         }
 
-        public static int WaitForSingleObject(BigInteger handle, int dwMilliseconds) {
-            return WaitForSingleObjectPI(new IntPtr((long)handle), dwMilliseconds);
+        public static int WaitForSingleObject(BigInteger handle, uint dwMilliseconds) {
+            return WaitForSingleObjectPI(
+                new IntPtr((long)handle),
+                unchecked((int)dwMilliseconds));
         }
 
         public static void SetNamedPipeHandleState(BigInteger named_pipe, object? mode, object? max_collection_count, object? collect_data_timeout) {

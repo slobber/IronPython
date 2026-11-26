@@ -27,7 +27,7 @@ def native_posix_spawn():
 
 def synchronous():
     if sys.platform == "win32":
-        command = [sys.executable, "-c", "print('subprocess-ok')"]
+        command = [sys.executable, "-c", "import sys; sys.stdout.write('subprocess-ok')"]
     else:
         command = ["/bin/sh", "-c", "printf subprocess-ok"]
     result = subprocess.run(
@@ -41,14 +41,16 @@ def synchronous():
 
 async def asynchronous():
     if sys.platform == "win32":
-        command = [sys.executable, "-c", "print('subprocess-ok')"]
+        command = [sys.executable, "-c", "import sys; sys.stdout.write('subprocess-ok')"]
     else:
         command = ["/bin/sh", "-c", "printf subprocess-ok"]
     process = await asyncio.create_subprocess_exec(
         *command,
         stdout=asyncio.subprocess.PIPE,
     )
+    print("ASYNC_PROCESS_CREATED", flush=True)
     output, _ = await process.communicate()
+    print("ASYNC_PROCESS_COMMUNICATED", flush=True)
     assert output == b"subprocess-ok"
     assert process.returncode == 0
 
@@ -82,8 +84,17 @@ async def event_loop_round_trip():
 def main():
     native_posix_spawn()
     synchronous()
+    print("SYNCHRONOUS_OK", flush=True)
     asyncio.run(asynchronous())
-    asyncio.run(event_loop_round_trip())
+    print("ASYNC_SUBPROCESS_OK", flush=True)
+    if sys.platform == "win32":
+        from asyncio import windows_events
+        asyncio.run(
+            event_loop_round_trip(),
+            loop_factory=windows_events.SelectorEventLoop,
+        )
+    else:
+        asyncio.run(event_loop_round_trip())
     print("SUBPROCESS_OK")
 
 
