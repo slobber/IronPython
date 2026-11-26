@@ -34,7 +34,12 @@ namespace IronPythonTest.Cases {
 
         private static string GetName(string path, string baseName, string rootDir) {
             var root = CaseExecuter.FindRoot();
-            var dir = System.IO.Path.GetDirectoryName(path).Replace(root, string.Empty).Replace(rootDir, string.Empty).Replace('\\', '.').Replace('/', '.').TrimStart('.');
+            var dir = System.IO.Path.GetDirectoryName(path)
+                .Replace(rootDir, string.Empty)
+                .Replace(root, string.Empty)
+                .Replace('\\', '.')
+                .Replace('/', '.')
+                .TrimStart('.');
             if (string.IsNullOrWhiteSpace(dir)) {
                 return $"{baseName}.{System.IO.Path.GetFileNameWithoutExtension(path)}";
             }
