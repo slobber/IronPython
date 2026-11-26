@@ -76,17 +76,6 @@
       ]
     },
     {
-      "id": "asyncio-subprocess-threaded-watcher",
-      "category": "platform-unavailable",
-      "owner": "slobber",
-      "linkedIssue": "openspec:python-315-support#17.12",
-      "reason": "The threaded subprocess watcher depends on native process and pidfd support that is not available in the current IronPython runtime build. Milestone-level subprocess implementation remains tracked separately.",
-      "reviewDate": "2026-12-31",
-      "tests": [
-        "test.test_asyncio.test_subprocess.SubprocessThreadedWatcherTests.*"
-      ]
-    },
-    {
       "id": "exception-group-recursion-stress",
       "category": "stress-resource",
       "owner": "slobber",

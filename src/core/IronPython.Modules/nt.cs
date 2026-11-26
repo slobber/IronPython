@@ -2018,6 +2018,29 @@ namespace IronPython.Modules {
         public static int umask(CodeContext/*!*/ context, object? mask)
             => umask(context, Converter.ConvertToIndex(mask, throwOverflowError: true));
 
+        public static void set_blocking(int fd, bool blocking) {
+#if FEATURE_NATIVE
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+                || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
+                setBlockingUnix(fd, blocking);
+                return;
+            }
+#endif
+            throw PythonOps.NotImplementedError(
+                "set_blocking is only supported on POSIX");
+        }
+
+        public static bool get_blocking(int fd) {
+#if FEATURE_NATIVE
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+                || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
+                return getBlockingUnix(fd);
+            }
+#endif
+            throw PythonOps.NotImplementedError(
+                "get_blocking is only supported on POSIX");
+        }
+
 #if FEATURE_FILESYSTEM
 
         [Documentation("utime(path, times=None, *[, ns], dir_fd=None, follow_symlinks=True)")]
@@ -2112,6 +2135,12 @@ namespace IronPython.Modules {
             Process? process;
             lock (_processToIdMapping) {
                 if (!_processToIdMapping.TryGetValue(pid, out process)) {
+#if FEATURE_NATIVE
+                    if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+                        || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
+                        return WaitPidUnix(pid, options);
+                    }
+#endif
                     throw GetOsError(PythonErrno.ECHILD);
                 }
             }

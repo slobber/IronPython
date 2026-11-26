@@ -35,7 +35,10 @@ An `asyncio.start_server()`/`open_connection()` echo smoke test passes.
   `cpython-internal` waivers.
 - Barrier tests depend on CPython's inline coroutine ordering.
 - ResourceWarning collection timing depends on CPython refcounting.
-- Threaded subprocess watcher coverage is tracked by task 17.12.
+- Unix subprocess creation now uses `posix_spawn` with real PID tracking;
+  `tests/conformance/subprocess_smoke.py` covers synchronous subprocess,
+  `asyncio.create_subprocess_exec`, and an event-loop TCP echo on every CI
+  platform.
 - Native SSL protocol tests are unavailable under the current runtime build.
 - The remaining event-loop `connect_accepted_socket` failure appears only in
   full-suite state and needs isolation in task 13.12.
@@ -46,6 +49,18 @@ Remaining outcomes are covered by the asyncio entries in
 `tests/conformance/waivers.json`:
 
 - CPython refcount, referrer, traceback-line, and inline-scheduling assertions;
-- the threaded subprocess watcher, tracked for implementation by task 17.12;
 - native SSL protocol tests skipped by the current runtime build's platform
   guards.
+
+## 17.12 Closure
+
+Unix child processes are launched through `posix_spawn` file actions rather
+than executing managed code after `fork`. Real child PIDs flow through
+`os.waitpid`, and `select.select()` uses libc `poll()` so subprocess pipes and
+sockets share one readiness path.
+
+The Linux x64 `net10.0`/`net11.0` smoke passed:
+
+- `subprocess.run(..., capture_output=True, text=True)`
+- `asyncio.create_subprocess_exec(..., stdout=PIPE)`
+- `asyncio.start_server()` / `asyncio.open_connection()` echo round trip

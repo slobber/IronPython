@@ -8,6 +8,8 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Net.Sockets;
+using System.Runtime.InteropServices;
+using System.Runtime.Versioning;
 
 using IronPython.Runtime;
 using IronPython.Runtime.Exceptions;
@@ -41,6 +43,11 @@ namespace IronPython.Modules {
             + "files or other objects."
             )]
         public static PythonTuple select(CodeContext/*!*/ context, object iwtd, object owtd, object ewtd, object timeout=null) {
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Linux)
+                || RuntimeInformation.IsOSPlatform(OSPlatform.OSX)) {
+                return SelectUnix(context, iwtd, owtd, ewtd, timeout);
+            }
+
             PythonList readerList, writerList, errorList;
             Dictionary<Socket, object> readerOriginals, writerOriginals, errorOriginals;
             ProcessSocketSequence(context, iwtd, out readerList, out readerOriginals);
@@ -74,6 +81,164 @@ namespace IronPython.Modules {
             for (int i = 0; i < errorList.__len__(); i++) errorList[i] = errorOriginals[(Socket)errorList[i]];
 
             return PythonTuple.MakeTuple(readerList, writerList, errorList);
+        }
+
+        private const short PollIn = 0x001;
+        private const short PollOut = 0x004;
+        private const short PollError = 0x008;
+        private const short PollHup = 0x010;
+        private const short PollNVal = 0x020;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PollFd {
+            internal int fd;
+            internal short events;
+            internal short revents;
+        }
+
+        [DllImport("libc", EntryPoint = "poll", SetLastError = true)]
+        private static extern int poll(
+            [In, Out] PollFd[] fds,
+            nuint count,
+            int timeout);
+
+        [SupportedOSPlatform("linux")]
+        [SupportedOSPlatform("macos")]
+        private static PythonTuple SelectUnix(
+            CodeContext context,
+            object iwtd,
+            object owtd,
+            object ewtd,
+            object timeout) {
+            var readers = ReadFileDescriptorSequence(context, iwtd);
+            var writers = ReadFileDescriptorSequence(context, owtd);
+            var errors = ReadFileDescriptorSequence(context, ewtd);
+
+            int count = readers.Count + writers.Count + errors.Count;
+            var pollFds = new PollFd[count];
+            int index = 0;
+            foreach (SelectItem item in readers) {
+                pollFds[index++] = new PollFd {
+                    fd = item.Descriptor,
+                    events = PollIn
+                };
+            }
+            foreach (SelectItem item in writers) {
+                pollFds[index++] = new PollFd {
+                    fd = item.Descriptor,
+                    events = PollOut
+                };
+            }
+            foreach (SelectItem item in errors) {
+                pollFds[index++] = new PollFd {
+                    fd = item.Descriptor,
+                    events = 0
+                };
+            }
+
+            int timeoutMilliseconds;
+            if (timeout is null) {
+                timeoutMilliseconds = -1;
+            } else {
+                if (!Converter.TryConvertToDouble(
+                        timeout,
+                        out double seconds)) {
+                    throw PythonOps.TypeErrorForTypeMismatch(
+                        "float or None",
+                        timeout);
+                }
+                if (seconds < 0) {
+                    timeoutMilliseconds = -1;
+                } else {
+                    timeoutMilliseconds = (int)Math.Min(
+                        Math.Ceiling(seconds * 1000),
+                        int.MaxValue);
+                }
+            }
+
+            int result;
+            do {
+                result = poll(
+                    pollFds,
+                    (nuint)pollFds.Length,
+                    timeoutMilliseconds);
+            } while (result < 0
+                && Marshal.GetLastPInvokeError() == 4);
+            if (result < 0) {
+                throw PythonOps.OSError(
+                    Marshal.GetLastPInvokeError(),
+                    "poll failed");
+            }
+
+            var readyReaders = new PythonList();
+            var readyWriters = new PythonList();
+            var readyErrors = new PythonList();
+            index = 0;
+            foreach (SelectItem item in readers) {
+                short events = pollFds[index++].revents;
+                if ((events & (PollIn | PollHup | PollError)) != 0) {
+                    readyReaders.append(item.Original);
+                }
+            }
+            foreach (SelectItem item in writers) {
+                short events = pollFds[index++].revents;
+                if ((events & (PollOut | PollHup | PollError)) != 0) {
+                    readyWriters.append(item.Original);
+                }
+            }
+            foreach (SelectItem item in errors) {
+                short events = pollFds[index++].revents;
+                if ((events & (PollError | PollHup | PollNVal)) != 0) {
+                    readyErrors.append(item.Original);
+                }
+            }
+            return PythonTuple.MakeTuple(
+                readyReaders,
+                readyWriters,
+                readyErrors);
+        }
+
+        private static List<SelectItem> ReadFileDescriptorSequence(
+            CodeContext context,
+            object sequence) {
+            var result = new List<SelectItem>();
+            IEnumerator cursor = PythonOps.GetEnumerator(context, sequence);
+            while (cursor.MoveNext()) {
+                object original = cursor.Current;
+                int descriptor;
+                if (original is PythonSocket.socket socket) {
+                    descriptor = checked((int)socket.fileno());
+                } else if (Converter.TryConvertToInt32(
+                               original,
+                               out int fd)) {
+                    descriptor = fd;
+                } else {
+                    object fileno = PythonCalls.Call(
+                        context,
+                        PythonOps.GetBoundAttr(
+                            context,
+                            original,
+                            "fileno"));
+                    descriptor = Converter.ConvertToInt32(fileno);
+                }
+                if (descriptor < 0) {
+                    throw PythonOps.ValueError(
+                        "file descriptor cannot be a negative number ({0})",
+                        descriptor);
+                }
+                result.Add(new SelectItem(descriptor, original));
+            }
+            return result;
+        }
+
+        private readonly struct SelectItem {
+            internal int Descriptor { get; }
+            internal object Original { get; }
+
+            internal SelectItem(int descriptor, object original) {
+                Descriptor = descriptor;
+                Original = original;
+            }
         }
 
         /// <summary>

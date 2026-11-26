@@ -91,6 +91,13 @@ jobs:
       env:
         IRONPYTHONPATH: ${{ github.workspace }}/src/core/IronPython.StdLib/lib
       shell: pwsh
+    - name: Subprocess and event loop smoke
+      run: >-
+        dotnet "bin/Release/${{ matrix.framework }}/ipy.dll"
+        tests/conformance/subprocess_smoke.py
+      env:
+        IRONPYTHONPATH: ${{ github.workspace }}/src/core/IronPython.StdLib/lib
+      shell: pwsh
     - name: Version Information
       run: |
         dotnet --info
