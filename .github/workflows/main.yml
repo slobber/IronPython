@@ -115,6 +115,10 @@ jobs:
         -f ${{ matrix.framework }}
         -p:StdLibRoot="${{ github.workspace }}/src/core/IronPython.StdLib"
       shell: pwsh
+    - name: Native posix_spawn smoke
+      if: runner.os != 'Windows'
+      run: dotnet run --project tests/NativePosixSpawnSmoke -f net10.0
+      shell: pwsh
     - name: Platform module smoke
       run: >-
         dotnet "bin/Release/${{ matrix.framework }}/ipy.dll"
